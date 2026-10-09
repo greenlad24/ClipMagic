@@ -8,7 +8,7 @@ import wave
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from aieditor import edl, takes  # noqa: E402
+from aieditor import edl, takes, wordiff  # noqa: E402
 
 N = 0
 
@@ -378,5 +378,128 @@ check(takes.fix_phantoms(res, ss, ft) == 1, "phantoms fixed")
 check(res["videos"][0]["segments"][0]["drop"] == [4, 5, 6], f"silent phantoms dropped, mis-heard word over sound kept: {res['videos'][0]['segments'][0]['drop']}")
 res = {"videos": [{"title": "x", "segments": [{"s": 1, "drop": []}]}], "removed": []}
 check(takes.fix_phantoms(res, ss, ft) == 0, "sentences without phantoms untouched")
+
+# ======== G1: narration integrity (Jake 2026-10-09: "it also did cuts inside the narration
+# that I didn't ask for"; REFERENCE-BASELINE §7 JAKE>REF: approved narration keeps all its
+# words; rubric D9). Fixtures are the real words of factory-e2e-test / the creative job.
+
+# ---- takes policy: request -> policy
+check(takes.policy_of({"no_edit": True}) == takes.POLICY_FACTORY, "a no_edit (unreviewed) cut gets the factory policy")
+check(takes.policy_of({"factory": True}) == takes.POLICY_FACTORY, "a factory cut gets the factory policy")
+check(takes.policy_of({}) == takes.POLICY_JAKE and takes.policy_of({"no_edit": True, "takes_policy": "jake"}) == takes.POLICY_JAKE,
+      "the reviewed cut keeps Jake's own rules; an explicit takes_policy wins")
+check(takes.whitelist_of({}) == set() and takes.whitelist_of({"filler_whitelist": ["Uh,"]}) == {"uh"}, "filler whitelist empty by default")
+fsys = takes.factory_system("long")
+check("Delete all off-script talk" not in fsys and "Delete \"um\"" not in fsys and "redundant" not in fsys.split("Return ONLY")[0],
+      "the factory prompt drops Jake's filler / off-script / content rules")
+check("keep \"So\" at the start of a sentence" in fsys and "\"Cool.\"" in fsys and "Return ONLY JSON" in fsys, "factory prompt keeps So/asides/sentences")
+
+# ---- factory policy enforced in code on Claude's REAL answer for factory-e2e-test (excerpt):
+# sentence-initial So, uh/um, the asides "I'm talking about" / "Hold," / "It's," and the whole
+# sentences "Cool." / "Try for yourself." / "Okay." all go back in
+fx = words([("know", 0.0, 0.2), ("are", 0.25, 0.4), ("only", 0.45, 0.7), ("using", 0.75, 1.0), ("I'm", 1.1, 1.2),
+            ("talking", 1.25, 1.5), ("about", 1.55, 1.8), ("10%", 1.9, 2.4), ("of", 2.45, 2.6), ("it.", 2.65, 2.9),   # S0 0-9
+            ("Cool.", 3.5, 3.9),                                                                                   # S1 10
+            ("So", 4.5, 4.7), ("sketching,", 4.8, 5.3), ("uh,", 5.4, 5.6), ("comment", 5.7, 6.0), ("pins,", 6.05, 6.4),
+            ("um,", 6.5, 6.7), ("cutouts.", 6.8, 7.3),                                                             # S2 11-17
+            ("It's,", 8.0, 8.2), ("it's", 8.3, 8.5), ("the", 8.55, 8.65), ("same", 8.7, 8.9), ("idea.", 8.95, 9.3),  # S3 18-22
+            ("Try", 10.0, 10.2), ("for", 10.25, 10.35), ("yourself.", 10.4, 10.9),                                 # S4 23-25
+            ("Okay.", 11.5, 11.9)])                                                                                # S5 26
+fs_ = takes.sentences(fx)
+check(len(fs_) == 6, f"fixture sentences: {len(fs_)}")
+ffeat = [{"ph": [], "ph_silent": [], "fused_so": []} for _ in fs_]
+claude = {"videos": [{"title": "x", "segments": [{"s": 0, "drop": [4, 5, 6]}, {"s": 2, "drop": [11, 13, 16]},
+                                                  {"s": 3, "drop": [18]}]}],
+          "removed": [{"s": 1, "why": "off-script: 'Cool' aside"}, {"s": 4, "why": "off-script: ad-lib"},
+                      {"s": 5, "why": "off-script: 'Okay' between lines"}]}
+fplan, fmeta = takes.finish(json.loads(json.dumps(claude)), fs_, ffeat, False, takes.POLICY_FACTORY)
+check([g["s"] for g in fplan["videos"][0]["segments"]] == [0, 1, 2, 3, 4, 5] and fplan["removed"] == [],
+      f"factory: every sentence said once stays: {[g['s'] for g in fplan['videos'][0]['segments']]}")
+check(all(g["drop"] == [] for g in fplan["videos"][0]["segments"]), "factory: So, uh, um and the asides all stay")
+check(fmeta["restored_by_policy"] == {"sentences": [1, 4, 5], "words": [4, 5, 6, 11, 13, 16, 18]}, f"restored: {fmeta['restored_by_policy']}")
+jplan, _ = takes.finish(json.loads(json.dumps(claude)), fs_, ffeat, False, takes.POLICY_JAKE)
+check([g["s"] for g in jplan["videos"][0]["segments"]] == [0, 2, 3] and "allowed" not in jplan,
+      "Jake's reviewed policy is unchanged (he reviews it on the review page)")
+wl_plan, _ = takes.finish(json.loads(json.dumps(claude)), fs_, ffeat, False, takes.POLICY_FACTORY, whitelist={"uh"})
+check(wl_plan["videos"][0]["segments"][2]["drop"] == [13] and wl_plan["allowed"] == {"13": "filler"}, "a whitelisted filler is removed and approved")
+
+# ---- factory: retakes and false starts (2+ words) are still removed, and approved
+rt = words([("The", 0.0, 0.2), ("toolbar", 0.25, 0.6), ("shows", 0.65, 0.9), ("up", 0.95, 1.1), ("here.", 1.15, 1.4),   # S0 retake
+            ("The", 3.0, 3.2), ("toolbar", 3.25, 3.6), ("shows", 3.65, 3.9), ("up", 3.95, 4.1), ("on", 4.15, 4.3), ("images.", 4.35, 4.8),  # S1
+            ("Open", 5.5, 5.7), ("the", 5.75, 5.85), ("MIT,", 5.9, 6.2), ("open", 6.4, 6.6), ("the", 6.65, 6.75), ("MIT", 6.8, 7.1), ("site.", 7.15, 7.5),  # S2
+            ("Cool.", 8.2, 8.6), ("Cool.", 9.2, 9.6)])                                                            # S3, S4
+rs_ = takes.sentences(rt)
+rfeat = [{"ph": [], "ph_silent": [], "fused_so": []} for _ in rs_]
+check(takes.is_retake(0, rs_, {1, 2, 3, 4}) and not takes.is_retake(3, rs_, {4}), "a 5-word line said again is a retake; 'Cool.' twice is not")
+check(takes.false_start_ids(rs_[2]) == {11, 12, 13}, f"false start = first copy of 'open the MIT': {takes.false_start_ids(rs_[2])}")
+check(takes.false_start_ids(fs_[3]) == set(), "a one-word stutter ('It's, it's') is not a false start")
+bl = takes.factory_baseline(rs_)
+check([g["s"] for g in bl["videos"][0]["segments"]] == [1, 2, 3, 4] and bl["videos"][0]["segments"][1]["drop"] == [11, 12, 13],
+      f"baseline: retake + false start out, the rest in: {bl['videos'][0]['segments']}")
+bplan, _ = takes.finish(bl, rs_, rfeat, False, takes.POLICY_FACTORY)
+check(bplan["allowed"] == {**{str(i): "retake" for i in range(5)}, **{str(i): "false start" for i in (11, 12, 13)}},
+      f"the policy's own removals are recorded as approved: {bplan['allowed']}")
+
+# ---- wordiff: categories, approval, and the D9 count
+def mkvid(kept_ids, joins=()):
+    return {"pieces": [{"word_ids": list(kept_ids)}], "joins": list(joins)}
+vj = mkvid([0, 1, 2, 3, 7, 8, 9, 12, 14, 15, 17, 19, 20, 21, 22, 26],
+           [{"k": 0, "out": 1.0, "left_id": 3, "right_id": 7}, {"k": 1, "out": 3.0, "left_id": 9, "right_id": 12},
+            {"k": 2, "out": 4.0, "left_id": 12, "right_id": 14}, {"k": 3, "out": 5.0, "left_id": 15, "right_id": 17},
+            {"k": 4, "out": 6.0, "left_id": 17, "right_id": 19}, {"k": 5, "out": 7.0, "left_id": 22, "right_id": 26},
+            {"k": 6, "out": 7.5, "left_id": 0, "right_id": 1}])
+wd = wordiff.diff(fx, fs_, [vj])
+# removed: "I'm talking about" (aside), "Cool. So" (aside: a sentence + part of the next),
+# "uh," "um," "It's," (aside), "Try for yourself." (sentence), and one pause-only join
+check(wd["counts"] == {"aside": 3, "sentence": 1, "uh": 1, "um": 1, "pause": 1}, f"categories: {wd['counts']}")
+check(wd["unapproved"] == 6 and wd["joins"] == 7, f"6 unapproved removals, 7 joins: {wd['unapproved']} / {wd['joins']}")
+check("D9 unapproved removals: 6" in wordiff.summary(wd), wordiff.summary(wd))
+wd_ok = wordiff.diff(fx, fs_, [vj], approved_by="review")
+check(wd_ok["unapproved"] == 0 and wd_ok["removed"] == 6, "Jake's review approves every removal")
+wd_none = wordiff.diff(fx, fs_, [mkvid([w["i"] for w in fx])])
+check(wd_none["removed"] == 0 and wd_none["unapproved"] == 0, "a cut that keeps every word has nothing to approve")
+wd_pol = wordiff.diff(rt, rs_, [mkvid([i for i in range(len(rt)) if i not in (0, 1, 2, 3, 4, 11, 12, 13)])], allowed=bplan["allowed"])
+check(wd_pol["unapproved"] == 0 and wd_pol["removed"] == 2, f"retake + false start approved by the policy: {wd_pol['counts']}")
+
+# ---- the REAL factory-e2e-test cut (read only, when it is on this box): exactly the 53
+# joins the gap review counted — So 32, uh 6, um 1, pause-only 8, sentences 3, asides 3
+real = Path("/opt/aieditor-work/jobs/factory-e2e-test")
+if (real / "edl.json").exists() and (real / "words.json").exists():
+    rw = takes.load_words(real / "words.json")
+    rd = wordiff.diff(rw, takes.sentences(rw), json.loads((real / "edl.json").read_text())["videos"])
+    check(rd["joins"] == 53 and rd["counts"] == {"so": 32, "uh": 6, "um": 1, "pause": 8, "sentence": 3, "aside": 3},
+          f"factory-e2e-test: {rd['joins']} joins {rd['counts']}")
+    check(rd["unapproved"] == 45, f"45 unapproved removals (49 words): {rd['unapproved']} / {rd['unapproved_words']}")
+
+# ---- word-timing integrity. Fixture 1: the creative job's words 1985-2002 (659.0-661.7):
+# Whisper laid a hallucinated "that's the obvious way to say it." (said at 652.1) over
+# "That is the phrasing" (RULEBOOK §1 C1: word timings drive every word-cued beat)
+cw = [(1965, "That's", 652.12, 652.361), (1966, "the", 652.401, 652.461), (1967, "obvious", 652.601, 652.943),
+      (1968, "way", 653.023, 653.123), (1969, "to", 653.163, 653.204), (1970, "say", 653.304, 653.505),
+      (1971, "it,", 653.545, 653.645), (1972, "and", 653.806, 653.986),
+      (1985, "background,", 658.407, 659.029), (1986, "for", 659.19, 659.31), (1987, "some", 659.371, 659.531),
+      (1988, "reason,", 659.551, 659.792), (1989, "that's", 659.913, 660.314), (1990, "the", 660.354, 660.415),
+      (1991, "obvious", 660.415, 660.555), (1992, "way", 660.555, 660.635), (1993, "to", 660.635, 660.676),
+      (1994, "say", 660.676, 660.736), (1995, "it.", 660.736, 660.776), (1996, "That", 659.897, 660.138),
+      (1997, "is", 660.218, 660.299), (1998, "the", 660.339, 660.419), (1999, "phrasing", 660.459, 660.8),
+      (2000, "that", 660.82, 660.941), (2001, "lands.", 661.001, 661.382)]
+iss = wordiff.check_words([{"i": i, "word": w, "start": s_, "end": e_} for i, w, s_, e_ in cw])
+check(len(iss) == 1 and iss[0]["kind"] == "duplicate" and iss[0]["ids"] == list(range(1989, 1996)),
+      f"the duplicate 'that's the obvious way to say it' is flagged: {iss}")
+check(abs(iss[0]["t0"] - 659.913) < 1e-6 and abs(iss[0]["t1"] - 660.776) < 1e-6 and abs(iss[0]["repeats"] - 652.12) < 1e-6, "duplicate span 659.9-660.8, repeats 652.1")
+check(wordiff.check_words([{"i": 0, "w": "a", "s": 1.0, "e": 1.5}, {"i": 1, "w": "b", "s": 1.2, "e": 1.8}])[0]["kind"] == "overlap",
+      "a plain overlapping word is flagged as an overlap")
+check(wordiff.check_words(fx) == [], "clean words: nothing flagged")
+# Fixture 2: factory-e2e-test join 50 at output 730.763: a=755.138 < b=755.348 (0.21 s played twice)
+j50 = {"joins": [{"k": 50, "out": 730.763, "left_id": 2265, "right_id": 2266, "a": 755.138, "b": 755.348,
+                  "left_text": "in the description below.", "right_text": "All right, now let's"}]}
+jo = wordiff.check_joins(j50)
+check(len(jo) == 1 and jo[0]["seconds"] == 0.21 and jo[0]["out"] == 730.763, f"the 0.21 s join overlap is flagged: {jo}")
+# ...and edl never builds one: two ranges that overlap in the source share one cut point
+ov = [(10.0, 12.30, [{"i": 0, "w": "below.", "s": 11.5, "e": 12.0}], [[12.1, 12.3]], 0.0, 0.0, {}),
+      (12.09, 13.5, [{"i": 1, "w": "All", "s": 12.4, "e": 12.7}], [[12.09, 12.2]], 0.0, 0.0, {})]
+nv = edl._no_overlap(list(ov))
+check(nv[1][0] >= nv[0][1] - 1e-9 and nv[0][1] >= 12.0 and nv[1][0] <= 12.4, f"no source overlap at a join: {nv[0][:2]} {nv[1][:2]}")
+check(all(y <= nv[0][1] for _, y in nv[0][3]) and all(x >= nv[1][0] for x, _ in nv[1][3]), "muted spans clipped to the new edges")
 
 print(f"test_core: {N} checks passed")

@@ -16,6 +16,7 @@ import json
 import re
 import time
 import urllib.request
+from difflib import SequenceMatcher
 
 from . import config, events
 
@@ -187,6 +188,184 @@ CONTENT_RULE = {
 }
 
 
+# ---- TAKES POLICY (Jake 2026-10-09, on the factory edit he watched: "it also did cuts inside
+# the narration that I didn't ask for"). The "jake" policy above is his own Descript cleanup
+# and is only safe because he REVIEWS every removal on the review page. A cut nobody reviews
+# (a factory / no_edit job) keeps every word except:
+#   * retakes      an earlier take of a line that is said again (the best take stays)
+#   * false starts a phrase of 2+ words abandoned and restarted ("the MIT, the MIT")
+#   * fillers on Jake's whitelist (request.json "filler_whitelist" — EMPTY by default)
+#   * invented words over silence (phantoms(): they were never said)
+# It never removes a sentence-initial "So", an aside ("I'm talking about", "Hold,", a
+# one-word stutter "It's, it's") or a whole sentence said once ("Cool.", "Okay.", "Try for
+# yourself."). Removing spoken words is not something the references license
+# (REFERENCE-BASELINE §7 JAKE>REF); silence trimming is (edl.pause_budget).
+POLICY_JAKE = "jake"
+POLICY_FACTORY = "factory"
+FACTORY_FILLER_WHITELIST = frozenset()     # Jake's list of fillers a factory cut may remove
+RETAKE_MIN_TOKENS = 4                      # a "retake" shorter than this is a line said once
+RETAKE_WINDOW = 8                          # the better take follows within this many sentences
+RETAKE_SIMILARITY = 0.6
+
+
+def policy_of(req):
+    """request.json "takes_policy" ("jake" | "factory"); without it a no_edit or factory
+    job is unreviewed by construction, so it gets the factory policy."""
+    req = req or {}
+    p = req.get("takes_policy")
+    if p in (POLICY_JAKE, POLICY_FACTORY):
+        return p
+    return POLICY_FACTORY if (req.get("no_edit") or req.get("factory")) else POLICY_JAKE
+
+
+def whitelist_of(req):
+    raw = (req or {}).get("filler_whitelist")
+    if not isinstance(raw, list):
+        return set(FACTORY_FILLER_WHITELIST)
+    return {norm(str(x)) for x in raw if norm(str(x))}
+
+
+FACTORY_RULES = """3. This cut will NOT be reviewed by a person, so you remove ONLY: (a) RETAKES — an earlier take of a line that is said again (keep the best take, list the other in "removed" as "retake: ..."); (b) FALSE STARTS — a phrase of two or more words abandoned and restarted ("the MIT, the MIT" -> drop the first copy). Nothing else.
+4. Keep every other word exactly as spoken: keep "So" at the start of a sentence, keep "uh" and "um", keep asides ("I'm talking about", "Hold,"), keep a one-word stutter ("It's, it's"), and keep every sentence that is said only once — even a short one like "Cool.", "Okay." or "Try for yourself."
+5. Never cut a line for content, pace or redundancy."""
+
+
+def factory_system(fmt):
+    """The takes prompt for the factory policy: Jake's rules 3-7 (off-script talk, stumbles,
+    fillers, content cuts, the 5:00 rule) replaced by FACTORY_RULES."""
+    head, rest = SYSTEM.split("3. Delete all off-script talk", 1)
+    tail = rest.split("8. Words marked ~", 1)[1]
+    return (head.replace("{format_rule}", FORMAT_RULE[fmt]) + FACTORY_RULES
+            + "\n8. Words marked ~" + tail)
+
+
+def _toks(ws):
+    return [t for t in (norm(w["w"]) for w in ws) if t and t not in FILLERS]
+
+
+def _similar(a, b):
+    return SequenceMatcher(None, a, b, autojunk=False).ratio() if a and b else 0.0
+
+
+def is_retake(n, sents, kept, window=RETAKE_WINDOW):
+    """Sentence n is an earlier take of a KEPT sentence that follows it within `window`
+    sentences: the same words (similarity >= 0.6), or its first 2+ words abandoned at the
+    start of that sentence (a false start of the whole line). Never a short sentence."""
+    a = _toks(sents[n])
+    for m in range(n + 1, min(len(sents), n + 1 + window)):
+        if m not in kept:
+            continue
+        b = _toks(sents[m])
+        if len(a) >= RETAKE_MIN_TOKENS and _similar(a, b) >= RETAKE_SIMILARITY:
+            return True
+        if 2 <= len(a) < len(b) and b[:len(a)] == a:
+            return True
+    return False
+
+
+def false_start_ids(ws):
+    """Ids of every first copy of a phrase of 2+ words said twice in a row inside `ws`
+    ("the MIT, the MIT" -> the first "the MIT"). Fillers between the copies go with them."""
+    out, toks = set(), [norm(w["w"]) for w in ws]
+    k = 0
+    while k < len(ws):
+        hit = 0
+        for n in range(min(6, (len(ws) - k) // 2), 1, -1):
+            if toks[k:k + n] == toks[k + n:k + 2 * n] and all(toks[k:k + n]):
+                hit = n
+                break
+        if hit:
+            out |= {w["i"] for w in ws[k:k + hit]}
+            k += hit
+        else:
+            k += 1
+    return out
+
+
+def enforce_policy(result, sents, feats, policy, whitelist=()):
+    """Enforce the takes policy in code, whatever the model returned. For the factory
+    policy every removal that is not a retake, a false start, a whitelisted filler or a
+    phantom over silence goes back in. Returns (allowed {word id: reason}, restored
+    {"sentences": [...], "words": [...]}). The "jake" policy is reviewed by Jake: nothing
+    is changed and nothing is pre-approved."""
+    if policy != POLICY_FACTORY:
+        return {}, {"sentences": [], "words": []}
+    wl = {norm(x) for x in whitelist}
+    allowed, back_s, back_w = {}, [], []
+    kept = {g["s"] for v in result["videos"] for g in v["segments"]}
+    # whole sentences: only retakes stay removed
+    for r in list(result["removed"]):
+        n = r["s"]
+        silent = set((feats[n] if n < len(feats) else {}).get("ph_silent", ()))
+        ids = [w["i"] for w in sents[n]]
+        if is_retake(n, sents, kept):
+            allowed.update({i: "retake" for i in ids})
+            continue
+        if silent and set(ids) <= silent:
+            allowed.update({i: "phantom" for i in ids})
+            continue
+        if wl and all(norm(w["w"]) in wl for w in sents[n]):
+            allowed.update({i: "filler" for i in ids})
+            continue
+        v = _video_for(result["videos"], n)
+        pos = next((k for k, g in enumerate(v["segments"]) if g["s"] > n), len(v["segments"]))
+        v["segments"].insert(pos, {"s": n, "drop": []})
+        kept.add(n)
+        result["removed"].remove(r)
+        back_s.append(n)
+    # words dropped inside kept sentences
+    for v in result["videos"]:
+        for g in v["segments"]:
+            n = g["s"]
+            f = feats[n] if n < len(feats) else {}
+            silent = set(f.get("ph_silent", ()))
+            fs = false_start_ids(sents[n])
+            keep_drop = []
+            for w in sents[n]:
+                if w["i"] not in set(g["drop"]):
+                    continue
+                why = ("false start" if w["i"] in fs else "phantom" if w["i"] in silent
+                       else "filler" if norm(w["w"]) in wl else None)
+                if why:
+                    keep_drop.append(w["i"])
+                    allowed[w["i"]] = why
+                else:
+                    back_w.append(w["i"])
+            g["drop"] = keep_drop
+    return allowed, {"sentences": sorted(back_s), "words": sorted(back_w)}
+
+
+def _video_for(videos, n):
+    """The video a restored sentence n belongs in: the one whose kept sentences surround it
+    (else the nearest one)."""
+    best, dist = videos[0], None
+    for v in videos:
+        ss = [g["s"] for g in v["segments"]]
+        if ss and min(ss) <= n <= max(ss):
+            return v
+        d = min(abs(n - x) for x in ss) if ss else 10 ** 9
+        if dist is None or d < dist:
+            best, dist = v, d
+    return best
+
+
+def factory_baseline(sents, title="Video 1"):
+    """The factory takes WITHOUT a model: every sentence kept except detected retakes, every
+    false start's first copy dropped. Used when no model answer exists (offline re-runs,
+    tests) — and the floor the model's answer is checked against."""
+    n_all = len(sents)
+    kept = set(range(n_all))
+    removed = []
+    for n in range(n_all):
+        if is_retake(n, sents, kept):
+            kept.discard(n)
+            removed.append({"s": n, "why": "retake: said again"})
+    segs = [{"s": n, "drop": sorted(false_start_ids(sents[n]))} for n in range(n_all) if n in kept]
+    segs = [g for g in segs if len(g["drop"]) < len(sents[g["s"]])]
+    return {"videos": [{"title": title, "segments": segs, "warnings": []}], "removed": removed,
+            "notes": "Factory takes: every word kept except retakes and false starts (no model)."}
+
+
 def build_prompt(sents, feats, script=None):
     lines = []
     for n, (s, f) in enumerate(zip(sents, feats)):
@@ -315,10 +494,12 @@ def protect_opening(result, sents, sponsored):
     return restored
 
 
-def fix_seams(result, sents):
+def fix_seams(result, sents, allowed=None, min_n=1):
     """A restart across a join ("...people up, Claude Code." + "Claude Code is the one...")
     survives when each sentence looks fine on its own. Check every join of the final cut:
-    if the 2-5 words before it repeat the words right after it, drop the earlier copy."""
+    if the 2-5 words before it repeat the words right after it, drop the earlier copy.
+    `allowed` (factory policy) records the drops as false starts; min_n=2 there (a one-word
+    repeat is a stutter the factory keeps)."""
     fixed = 0
     for v in result["videos"]:
         segs = v["segments"]
@@ -327,9 +508,11 @@ def fix_seams(result, sents):
             wa = [w for w in sents[a["s"]] if w["i"] not in set(a["drop"])]
             wb = [w for w in sents[b["s"]] if w["i"] not in set(b["drop"])]
             ta, tb = [norm(w["w"]) for w in wa], [norm(w["w"]) for w in wb]
-            for n in range(min(5, len(ta) - 1, len(tb)), 0, -1):
+            for n in range(min(5, len(ta) - 1, len(tb)), max(0, min_n - 1), -1):
                 if ta[-n:] == tb[:n] and (n >= 2 or ta[-1] not in STOPWORDS):
                     a["drop"] = sorted(set(a["drop"]) | {w["i"] for w in wa[-n:]})
+                    if allowed is not None:
+                        allowed.update({w["i"]: "false start" for w in wa[-n:]})
                     fixed += 1
                     break
     return fixed
@@ -378,13 +561,37 @@ def keep_fused_so(result, sents, feats):
     return n
 
 
-def pick(words, sents, feats, fmt, sponsored, script=None):
-    system = (SYSTEM.replace("{format_rule}", FORMAT_RULE[fmt])
-              .replace("{content_rule}", CONTENT_RULE[bool(sponsored)]))
-    raw, meta = call_claude(build_prompt(sents, feats, script), system)
+def finish(raw, sents, feats, sponsored, policy=POLICY_JAKE, whitelist=()):
+    """The model's answer (or factory_baseline) -> the plan, every rule enforced in code.
+    Pure: an offline re-run on a recorded answer (plan.raw.json) gives the same plan."""
     result = validate(raw, sents)
-    meta["restored_opening"] = protect_opening(result, sents, sponsored)
+    factory = policy == POLICY_FACTORY
+    meta = {"policy": policy}
+    allowed, restored = enforce_policy(result, sents, feats, policy, whitelist)
+    meta["restored_by_policy"] = restored
+    meta["restored_opening"] = protect_opening(result, sents, sponsored or factory)
     meta["phantoms_fixed"] = fix_phantoms(result, sents, feats)
-    meta["seams_fixed"] = fix_seams(result, sents)
+    if factory:
+        for v in result["videos"]:
+            for g in v["segments"]:
+                silent = set((feats[g["s"]] if g["s"] < len(feats) else {}).get("ph_silent", ()))
+                allowed.update({i: "phantom" for i in g["drop"] if i in silent and i not in allowed})
+    meta["seams_fixed"] = fix_seams(result, sents, allowed if factory else None, min_n=2 if factory else 1)
     meta["fused_so_kept"] = keep_fused_so(result, sents, feats)
+    if factory:
+        # what the factory policy itself removed — wordiff counts these as approved
+        result["policy"] = policy
+        result["allowed"] = {str(i): why for i, why in sorted(allowed.items())}
+    return result, meta
+
+
+def pick(words, sents, feats, fmt, sponsored, script=None, policy=POLICY_JAKE, whitelist=()):
+    if policy == POLICY_FACTORY:
+        system = factory_system(fmt)
+    else:
+        system = (SYSTEM.replace("{format_rule}", FORMAT_RULE[fmt])
+                  .replace("{content_rule}", CONTENT_RULE[bool(sponsored)]))
+    raw, meta = call_claude(build_prompt(sents, feats, script), system)
+    result, m2 = finish(raw, sents, feats, sponsored, policy, whitelist)
+    meta.update(m2)
     return result, raw, meta

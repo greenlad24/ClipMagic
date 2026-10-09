@@ -66,7 +66,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe  # noqa: E402
+from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
@@ -290,6 +290,15 @@ def run_job(job, action):
         w["s"], w["e"] = float(aligned[w["i"]]["start"]), float(aligned[w["i"]]["end"])
     by_id = {w["i"]: w for w in words}
     audio = edl.Audio(d / "audio16k.wav")
+    # word-timing integrity (RULEBOOK §1 C1: word times drive every word-cued beat): a
+    # hallucinated duplicate or an overlapping word is flagged in the log + wordcheck.json
+    issues = wordiff.check_words(words)
+    jdump(d / "wordcheck.json", {"issues": issues})
+    for it in issues[:20]:
+        job.log(f"warning: word timing {it['kind']} at {it['t0']:.2f}-{it['t1']:.2f}s: {it['text'][:80]}")
+    if issues:
+        job.log(f"warning: word timing: {sum(i['kind'] == 'duplicate' for i in issues)} duplicate run(s), "
+                f"{sum(i['kind'] == 'overlap' for i in issues)} overlap(s)")
 
     if creative:
         # workflow 2: the narration is already edited — every sentence is kept, in order
@@ -387,10 +396,20 @@ def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_i
     d = job.d
 
     # 5 takes
+    # Jake 2026-10-09 ("cuts inside the narration that I didn't ask for"): a cut nobody
+    # reviews (no_edit / factory) only removes retakes, false starts and whitelisted fillers
+    policy = takes.policy_of(req)
+
     def do_takes():
         job.progress("Claude is picking the best take of every line…")
         feats = takes.features(sents, audio)
-        plan, raw, meta = takes.pick(words, sents, feats, fmt, sponsored, req.get("script"))
+        kw = ({"policy": policy, "whitelist": takes.whitelist_of(req)}
+              if policy != takes.POLICY_JAKE else {})
+        plan, raw, meta = takes.pick(words, sents, feats, fmt, sponsored, req.get("script"), **kw)
+        rb = meta.get("restored_by_policy") or {}
+        if rb.get("sentences") or rb.get("words"):
+            job.log(f"takes policy {policy}: put back {len(rb.get('sentences', []))} sentence(s) and "
+                    f"{len(rb.get('words', []))} word(s) the model removed")
         jdump(d / "plan.raw.json", {"answer": raw, "meta": meta})
         jdump(d / "plan.json", plan)
         job.st["cost_usd"] = round(job.st["cost_usd"] + meta["usd"], 4)
@@ -407,7 +426,9 @@ def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_i
     if edit:
         plan = {**plan, "videos": takes.validate(edit, sents)["videos"]}
 
-    # review data for the Lab page
+    # review data for the Lab page. "approved" (Jake approved the cut as it is, without
+    # edits) survives a re-run: it is what lets a creative edit start from this cut
+    approved = bool((jload(d / "review.json") or {}).get("approved"))
     jdump(d / "review.json", {
         "sentences": [{"s": n, "start": round(s[0]["s"], 2), "end": round(s[-1]["e"], 2),
                        "words": [{"i": w["i"], "w": w["w"]} for w in s]} for n, s in enumerate(sents)],
@@ -417,6 +438,7 @@ def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_i
         "reasons": {str(r["s"]): r["why"] for r in jload(d / "plan.json")["removed"]},
         "notes": plan.get("notes", ""),
         "edited": bool(edit),
+        **({"approved": True} if approved else {}),
     })
 
     # 6 cut
@@ -429,6 +451,22 @@ def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_i
                                "width": info["width"], "height": info["height"], "videos": built})
         return ", ".join(f"{v['duration']:.0f}s/{v['cuts']} cuts" for v in built)
     step("cut", do_cut, lambda: (d / "edl.json").exists(), rerun=rebuild)
+
+    # narration integrity (rubric D9): every spoken word the cut removed, and who approved it
+    # (Jake's review, or the factory takes policy itself). A factory cut with an unapproved
+    # removal fails here — before anything is built on it.
+    e = jload(d / "edl.json")
+    doc = wordiff.diff(words, sents, e["videos"], allowed=(jload(d / "plan.json") or {}).get("allowed"),
+                       approved_by="review" if (edit or approved) else None)
+    doc["policy"] = policy
+    doc["join_issues"] = [x for v in e["videos"] for x in wordiff.check_joins(v)]
+    jdump(d / "wordiff.json", doc)
+    job.log(("warning: " if doc["unapproved"] else "") + wordiff.summary(doc))
+    for x in doc["join_issues"]:
+        job.log(f"warning: join overlap at {x['out']}s: {x['seconds']:.2f}s of audio plays twice ({x['text'][:80]})")
+    if policy == takes.POLICY_FACTORY and doc["unapproved"]:
+        raise RuntimeError(f"narration integrity: {doc['unapproved']} unapproved removal(s) in a factory cut "
+                           f"(see wordiff.json) — nobody approved removing those words")
 
     # 7 sound check: the exact soundtrack of the current cut, no picture — minutes, not
     # the ~35 a 4K video preview takes (Jake: "can you preview without render?")
