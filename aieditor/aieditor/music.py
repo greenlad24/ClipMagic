@@ -20,9 +20,11 @@ CHANGE   remusic(): queue action "remusic" on a finished long-form job. Music on
          picture of every finished output is kept bit for bit (a stream copy) and only the soundtrack is
          rebuilt with the production graph (compose_long.soundtrack: voice + bed + SFX):
            edit-NN.mp4 / draft-NN.mp4 / final-NN.mp4   new soundtrack, remuxed under the same video stream
-           handoff-NN/                                 audio/music.wav re-rendered, preview.mp4 re-mixed from
-                                                       the stems, the zip re-packed (the timelines point at
-                                                       audio/music.wav with the same length: unchanged)
+           handoff-NN/                                 audio/music.wav re-rendered, the preview re-mixed from the
+                                                       stems, the manifest (handoff-NN.json) updated, and a zip
+                                                       re-packed where the package has one (the Lab may stream it
+                                                       from the folder instead); the timelines point at
+                                                       audio/music.wav with the same length: unchanged
          Nothing is re-recorded, re-planned, re-aligned or re-cut. The voice is the cut the output was made
          from: the preview-NN.mp4 an edit-NN.mp4 was composed on, else the cut's exact sound (render
          audio_only — a 23-min cut in ~3 min on the box). An output older than the current cut, or whose
@@ -372,31 +374,42 @@ def remix_handoff(d, k, v, mus, fps, cancelled, progress):
         progress("Hand-off: the music stem…", None)
         mounts = [(work, "/o")] + ([(Path(mus["path"]).parent, "/music")] if mus else [])
         compose_long._run(music_stem_cmd(mus, vdur, out_dur, "/o/music.wav"), mounts, cancelled)
-        pv = pkg / "preview.mp4"
-        if pv.is_file():
+        # the preview: pkg/preview.mp4 (+ preview-NN.mp4 a hard link to it) in a package built with its zip, or
+        # preview-NN.mp4 alone (manifest key "preview.mp4") in one the Lab streams as a zip at download time
+        pv_pkg, lab_pv = pkg / "preview.mp4", d / f"preview-{k:02d}.mp4"
+        pv = pv_pkg if pv_pkg.is_file() else (lab_pv if lab_pv.is_file() and "preview.mp4" in (summ.get("files") or {}) else None)
+        if pv is not None:
             progress("Hand-off: the preview's sound…", None)
-            compose_long._run("ffmpeg -v error -y -i /p/preview.mp4 -i /p/audio/voice.wav -i /p/audio/sfx.wav -i /o/music.wav "
+            compose_long._run(f"ffmpeg -v error -y -i /v/{pv.name} -i /p/audio/voice.wav -i /p/audio/sfx.wav -i /o/music.wav "
                               "-filter_complex \"[1:a][2:a][3:a]amix=inputs=3:normalize=0:duration=first[a]\" "
                               "-map 0:v -map [a] -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart /o/preview.mp4",
-                              [(pkg, "/p"), (work, "/o")], cancelled)
-        zp = d / f"handoff-{k:02d}.zip"
-        need = (zp.stat().st_size if zp.exists() else 0) + 1e9
-        free = shutil.disk_usage(d).free
-        if free < need:
-            raise RuntimeError(f"not enough disk to re-pack the hand-off zip: {free / 1e9:.1f} GB free, needs {need / 1e9:.1f} GB")
-        old_pv = pv.stat().st_ino if pv.is_file() else None
+                              [(pkg, "/p"), (pv.parent, "/v"), (work, "/o")], cancelled)
+        zp = d / f"handoff-{k:02d}.zip"                   # only a package built with its zip has one
+        if zp.exists():
+            need = zp.stat().st_size + 1e9
+            free = shutil.disk_usage(d).free
+            if free < need:
+                raise RuntimeError(f"not enough disk to re-pack the hand-off zip: {free / 1e9:.1f} GB free, needs {need / 1e9:.1f} GB")
+        old_pv = pv.stat().st_ino if pv is not None else None
         os.replace(work / "music.wav", pkg / "audio" / "music.wav")
-        if (work / "preview.mp4").is_file():
+        if pv is not None and (work / "preview.mp4").is_file():
             os.replace(work / "preview.mp4", pv)
-            lab_pv = d / f"preview-{k:02d}.mp4"             # the Lab's player opens on it (a hard link)
-            if lab_pv.is_file() and lab_pv.stat().st_ino == old_pv:
-                lab_pv.unlink()
+            if pv == pv_pkg and lab_pv.is_file() and lab_pv.stat().st_ino == old_pv:
+                lab_pv.unlink()                                # the Lab's player opens on it (a hard link)
                 os.link(pv, lab_pv)
-        progress("Hand-off: packing the zip…", None)
-        _pack_zip(d, pkg, zp)
+        if zp.exists():
+            progress("Hand-off: packing the zip…", None)
+            _pack_zip(d, pkg, zp)
         if summ:
-            summ["files"] = {str(f.relative_to(pkg)): f.stat().st_size for f in sorted(pkg.rglob("*")) if f.is_file()}
-            summ["zip_bytes"] = zp.stat().st_size
+            had = summ.get("files") or {}
+            files = {str(f.relative_to(pkg)): f.stat().st_size for f in sorted(pkg.rglob("*")) if f.is_file()}
+            if "preview.mp4" in had and "preview.mp4" not in files and lab_pv.is_file():
+                files["preview.mp4"] = lab_pv.stat().st_size
+            summ["files"] = files
+            if "bytes" in summ:
+                summ["bytes"] = sum(files.values())
+            if zp.exists():
+                summ["zip_bytes"] = zp.stat().st_size
             summ["music"] = {"track": (mus or {}).get("id"), "gain_lu": (mus or {}).get("gain_lu", 0), "at": time.time()}
             _jdump(summ_p, summ)
     finally:

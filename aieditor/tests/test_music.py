@@ -218,6 +218,15 @@ def media_check():
         check("no temp files left", not list(d.glob("remusic-*")) and not list(w.glob("remusic-*")) and not list(d.glob("*.part.mp4")))
         a_cello = ahash(d, "edit-01.mp4")
 
+        # the hand-off as the Lab now streams it: no zip, the preview only as preview-NN.mp4 (manifest "preview.mp4")
+        (d / "handoff-01.zip").unlink()
+        os.replace(pkg / "preview.mp4", d / "preview-01.mp4")
+        summ = json.loads((d / "handoff-01.json").read_text())
+        summ.pop("zip_bytes", None)
+        summ["files"]["preview.mp4"] = (d / "preview-01.mp4").stat().st_size
+        summ["bytes"] = 1
+        (d / "handoff-01.json").write_text(json.dumps(summ))
+        pv_before = ahash(d, "preview-01.mp4")
         # "No music": the bed goes, the picture stays
         req = json.loads((d / "request.json").read_text())
         req["music"] = {"track": "none", "gain_lu": 0}
@@ -228,6 +237,13 @@ def media_check():
         silent = ff("ffmpeg -i /d/handoff-01/audio/music.wav -af volumedetect -f null - 2>&1 | grep max_volume || true", d)
         check("none: the hand-off music stem is silence", "-91" in silent or "-inf" in silent)
         check("none: recorded", json.loads((d / music.APPLIED).read_text())["none"] is True)
+        summ = json.loads((d / "handoff-01.json").read_text())
+        check("streamed package: no zip written", not (d / "handoff-01.zip").exists())
+        check("streamed package: the preview re-mixed in place", ahash(d, "preview-01.mp4") != pv_before
+              and not (pkg / "preview.mp4").exists())
+        check("streamed package: the manifest matches the files", summ["files"]["preview.mp4"] == (d / "preview-01.mp4").stat().st_size
+              and summ["files"]["audio/music.wav"] == (pkg / "audio" / "music.wav").stat().st_size
+              and summ["bytes"] == sum(summ["files"].values()))
 
         # nothing to change → the action fails loudly (never "done" with nothing done)
         bare = tmp / "jobs" / "bare-job"
