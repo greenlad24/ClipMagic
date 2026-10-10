@@ -918,7 +918,10 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
             if tool and not tspec.get("typed"):
                 final = None                               # the tool's click, no text at all
             elif on_screen:
-                final = typed or prompt                    # his on-screen words, verbatim — never a look added
+                # his on-screen words VERBATIM first; off camera an IMPRESSIVE result may get one added paragraph after
+                # them (Jake 2026-10-10: "it needs to be word by word like in the script - but you can add a paragraph
+                # to it to make it look impressive"). On camera he types only his words.
+                final = verbatim_plus(typed or prompt, look)
             else:
                 final = with_look(typed or prompt or req["as_words"], look)
             style, subject = "", final or req["as_words"]
@@ -928,7 +931,7 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
                            as_words=with_look(req["as_words"], look) if not on_screen else req["as_words"])
         row["made_from"] = list(made_from)
     else:
-        base = prompt if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
+        base = verbatim_plus(prompt, look) if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
         row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, base, new_photo, look=look)
     row["look"] = look
     if row.get("status") == "ready":
@@ -1000,6 +1003,20 @@ STYLE_RX = re.compile(r",?\s*\b(?:stunning|beautiful|striking|vivid|gorgeous|moo
 def look_style(look, boost=0):
     """The look's cue line for a NEW picture's prompt (plain words a person might type)."""
     return LOOK_CUES.get(look, "") + (LOOK_BOOST.get(look, "") if boost else "")
+
+
+IMPRESSIVE_PARAGRAPH = ("Make this a genuinely impressive, photoreal image: a strong, well-balanced composition, beautiful "
+                        "natural light with depth and soft shadows, rich fine detail and texture, sharp focus on the "
+                        "subject, vivid but believable colour. No text, captions, borders or collage panels.")
+
+
+def verbatim_plus(words, look):
+    """An on-screen prompt off camera: his words exactly as the script has them, then — for an impressive look only —
+    ONE added paragraph that lifts the result. His words are never edited, reordered or trimmed."""
+    w = str(words or "").strip()
+    if look == "impressive" and w:
+        return f"{w}\n\n{IMPRESSIVE_PARAGRAPH}"
+    return w
 
 
 def with_look(text, look, cues=True, boost=0):
