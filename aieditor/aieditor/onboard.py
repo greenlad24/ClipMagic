@@ -721,6 +721,27 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None):
             return old
     except (OSError, ValueError):
         pass
+    # a picture MADE FROM other pictures (a merge of three photos, an edit of a reference) is made for real: its source
+    # pictures first, then the app's own edit with all of them attached — never a single invented "merge" (TEST v3)
+    if not made_from and not getattr(ctx, "_composing", False):
+        plan_in = source_inputs(ctx, desc, sorted(ctx.asset_files))
+        if plan_in.get("needs_inputs") and plan_in.get("inputs"):
+            ids = []
+            ctx._composing = True
+            try:
+                for inp in plan_in["inputs"][:4]:
+                    iid = re.sub(r"[^a-z0-9_]+", "_", str(inp.get("id") or "").lower()).strip("_")[:32] or f"{aid}_src{len(ids) + 1}"
+                    if iid not in ctx.asset_files:
+                        ctx.log(f"{aid}: needs its source picture '{iid}' first — making it")
+                        r_in = produce_asset(ctx, iid, str(inp.get("desc") or iid))
+                        if r_in.get("status") != "ready":
+                            return {"id": aid, "kind": "app_generation", "desc": desc, "status": "needs_asset",
+                                    "file": None, "source": None, "attempts": [f"source picture {iid} failed"],
+                                    "checks": [], "why": f"its source picture '{iid}' could not be made: {r_in.get('why')}"[:400]}
+                    ids.append(iid)
+            finally:
+                ctx._composing = False
+            made_from, prompt = tuple(ids), (plan_in.get("instruction") or desc)
     inputs = [ctx.asset_files.get(m) for m in made_from if ctx.asset_files.get(m)]
     from . import preprod
     new_photo = not made_from and not prompt
@@ -770,6 +791,37 @@ def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo):
     row["attempts"].append(f"in-app: {tries} tries did not pass the check")
     row["why"] = f"every try failed ({'; '.join(row['attempts'][-2:])})"[:400]
     return row
+
+
+INPUTS_SYSTEM = """A video needs a picture made in an app. Decide whether that picture is honestly the app's EDIT of other
+pictures the person brings (e.g. "merge these three photos: the person, the market stall, the bottle", "make my photo
+look like this reference", "restore this old photo"). If so, list each SOURCE picture as a separate photo to make first
+(visible-only description; reuse an AVAILABLE id when one fits) and the instruction he types with them attached.
+A plain new photo, or a result of a single edit whose source is obvious and available, needs no inputs. JSON only."""
+INPUTS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["needs_inputs", "inputs", "instruction"],
+                 "properties": {"needs_inputs": {"type": "boolean"}, "instruction": {"type": "string"},
+                                "inputs": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                                                                      "required": ["id", "desc"],
+                                                                      "properties": {"id": {"type": "string"},
+                                                                                     "desc": {"type": "string"}}}}}}
+
+
+def source_inputs(ctx, desc, available):
+    """Generic (any app): does this picture need source pictures made first? → {needs_inputs, inputs[{id,desc}],
+    instruction}. One cheap call; without a model, or on any error: no inputs."""
+    if getattr(ctx, "llm", None) is None:
+        return {"needs_inputs": False, "inputs": [], "instruction": ""}
+    model = config.OVERLAY_MODEL if hasattr(config, "OVERLAY_MODEL") else config.VISION_MODEL
+    msgs = [{"role": "user", "content": f"PICTURE: {desc}\nAVAILABLE pictures (ids): {', '.join(available) or 'none'}"}]
+    try:
+        ctx.budget.need(llm.estimate(model, INPUTS_SYSTEM, msgs, 500))
+        r = ctx.llm(model, INPUTS_SYSTEM, None, 500, effort="low", msgs=msgs, schema=INPUTS_SCHEMA,
+                    stage=f"preprod.onboard.{ctx.app}", purpose="P3 source pictures of a composite")
+        ctx.budget.add(r.get("usd"))
+        j = json.loads(r.get("text") or "{}")
+        return j if isinstance(j, dict) else {"needs_inputs": False, "inputs": [], "instruction": ""}
+    except Exception:  # noqa: BLE001 — treated as a plain picture
+        return {"needs_inputs": False, "inputs": [], "instruction": ""}
 
 
 IMAGE_SYSTEM = """A video narration describes a picture he shows (a photo he brings, a result). Rewrite it as ONE image

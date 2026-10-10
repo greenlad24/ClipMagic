@@ -500,7 +500,34 @@ def main():
     test_p5()
     test_d()
     test_route()
+    test_composite_sources(Path(tempfile.mkdtemp()))
     print(f"test_onboard: {N} checks passed")
+
+
+def test_composite_sources(tmp):
+    """TEST v3: 'three source photos + the merged result' was asked as ONE picture (an invented merge, text answers).
+    Now: its source pictures are made first, then the app's edit runs with all of them attached."""
+    def llm_call(model, system, content, max_tokens, **kw):
+        if "source pictures" in str(kw.get("purpose")):
+            if "merged" in json.dumps(kw.get("msgs")):
+                return Reply(text=json.dumps({"needs_inputs": True, "instruction": "Merge these three photos",
+                                              "inputs": [{"id": "person", "desc": "a smiling man"},
+                                                         {"id": "stall", "desc": "a market stall"},
+                                                         {"id": "bottle_desk", "desc": "a hot sauce bottle on a desk"}]}), usd=0.001)
+            return Reply(text=json.dumps({"needs_inputs": False, "inputs": [], "instruction": ""}), usd=0.001)
+        return Reply(text=json.dumps({"prompt": "a photo"}), usd=0.001)
+    made = []
+
+    def in_app(a, dst, files):
+        made.append((a["id"], len(files)))
+        Path(dst).write_bytes(PNG)
+        return {"chat_url": "https://chatgpt.com/c/x"}
+    ctx = make_ctx(tmp, llm_call, in_app=in_app)
+    row = onboard.produce_asset(ctx, "merged", "the merged result of three source photos")
+    check(row["status"] == "ready", f"the composite is made: {row.get('why')}")
+    check([m[0] for m in made] == ["person", "stall", "bottle_desk", "merged"], f"sources first, then the merge: {made}")
+    check(made[-1][1] == 3, "the merge runs with all three source pictures attached")
+    check(list(row.get("made_from") or []) == ["person", "stall", "bottle_desk"], "the row names its sources")
 
 
 if __name__ == "__main__":
