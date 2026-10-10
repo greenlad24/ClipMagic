@@ -127,9 +127,9 @@
   "line_piece_offset_s": 0.242,
   "phrase_chain_offset_s": 0.25,
   "accumulate": true,
-  "color": "#dafd29 measured (template #d9fd28 = prompt_highlight's marker)",
+  "color": "#FFD21E rgb(255,210,30) — Jake 2026-10-10 (the reference measured #dafd29, lime)",
   "alpha": 1.0,
-  "blend": "normal, opaque; text under it dark (#041000)",
+  "blend": "normal, opaque; text under it dark (#1a1400)",
   "radius_px_end_view": 4,
   "box_heights_px_end_view": {
    "caps_heading": 36,
@@ -206,8 +206,8 @@
   "composer_surface": "#292926",
   "composer_border": "#32322f",
   "spark": "#d38162",
-  "marker": "#dafd29",
-  "marker_text": "#041000"
+  "marker": "#FFD21E (Jake's ruling; reference #dafd29)",
+  "marker_text": "#1a1400"
  },
  "verification": {
   "compare_sheet": "/opt/aieditor-work/reference/specs/long_prompt_scroll-compare.png",

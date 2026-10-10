@@ -23,10 +23,10 @@
     "_place": "a phrase whose box bottom is below place_bot (the bottom 10 % of the frame) is not 'placed' for reading: the camera scrolls it up (ref phrase 1 sat at 1077 px when its sweep came → a move)"
   },
   "highlight": {
-    "color": "#d9fd28",
+    "color": "#FFD21E",
     "alpha": 1.0,
-    "blend": "normal (opaque box; the text under it is redrawn dark) — measured #dafd29 in the reference = prompt_highlight's marker",
-    "text_color": "#041000",
+    "blend": "normal (opaque box; the text under it is redrawn dark). Jake 2026-10-10: 'I want the color of the highlight to be yellow - rgb(255, 210, 30)' — the reference's lime marker was #dafd29",
+    "text_color": "#1a1400",
     "pad_left_em": 0.36,
     "pad_right_em": 0.27,
     "pad_top_em": 0.17,

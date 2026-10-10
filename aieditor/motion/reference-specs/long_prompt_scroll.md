@@ -20,7 +20,7 @@ Template: `motion/templates/long_prompt_scroll.{js,kf.json,style.json}`. Kit par
    - the Claude spark `#d38162` under the message.
    - the docked composer: 847×121.5 px at (536.5, 914.5), radius 20 css. It holds "Write a message...", +, "Opus 5.5 High", a chevron, a mic and a voice icon.
    - the disclaimer line, centred at y 1060.5.
-3. Marker boxes. They sit inside the text element, above the text, and each one redraws the text in dark (`#041000`).
+3. Marker boxes. They sit inside the text element, above the text, and each one redraws the text in dark (`#1a1400`).
 4. Camera: a zoom about a fixed pivot, then a scroll.
 
 ## Timeline (reference)
@@ -49,7 +49,7 @@ Template: `motion/templates/long_prompt_scroll.{js,kf.json,style.json}`. Kit par
 - **Reading position:** after the zoom, phrase 0's box top sits at **592.9 px** (0.549 fh). At the end of the move, the group's last phrase has its box bottom at **661 px** (0.612 fh) and its first phrase has its box top at 65 px.
 
 ## Marker sweep
-- An opaque rounded box, measured **#dafd29** (the template uses #d9fd28, prompt_highlight's marker), alpha 1, blend normal. The text under it is redrawn dark.
+- An opaque rounded box, measured **#dafd29** in the reference; the template uses **#FFD21E** = rgb(255, 210, 30) (Jake 2026-10-10: "I want the color of the highlight to be yellow"), alpha 1, blend normal. The text under it is redrawn dark.
 - It grows left → right over each **line piece**.
 - **Fixed duration:** every sweep shows the same progress samples (0.044 / 0.156 / 0.317 / 0.50 / 0.683 / 0.844 / 0.956), whatever its width (90–588 px). Duration **0.358 s** (fits range 0.333–0.375 s). Ease **cubic-bezier(0.4, 0.025, 0.5, 0.975)**, max error 0.027.
 - A wrapped phrase's next piece starts **0.242 s** after the previous piece starts, so the pieces overlap. The next phrase is chained 0.25 s after the previous one starts.
@@ -81,8 +81,8 @@ Template: `motion/templates/long_prompt_scroll.{js,kf.json,style.json}`. Kit par
 | composer surface | #292926 |
 | composer border | #32322f |
 | spark | #d38162 |
-| marker | #dafd29 |
-| marker text | #041000 |
+| marker | #FFD21E (Jake 2026-10-10; reference #dafd29) |
+| marker text | #1a1400 |
 
 ## Generalisation (what the template does with other content)
 - **Start scroll:** phrase 0 lands at 592.9 px after the zoom. If the app cannot scroll that far (the phrase is near the top or the end of the message), the zoom pivot moves instead, clamped to the frame.

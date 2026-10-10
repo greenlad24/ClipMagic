@@ -6,7 +6,7 @@ What the viewer sees:
 - It then **scrolls down the text** at a readable pace.
 - A **yellow marker** sweeps each key phrase on the word where the narration says it. The highlights pile up and stay.
 
-This is prompt_highlight's sibling for prompts too long to show whole: same marker, same dark text under it.
+This is prompt_highlight's sibling for prompts too long to show whole. The marker is **yellow #FFD21E = rgb(255, 210, 30)** (Jake 2026-10-10), and the text under it is redrawn dark (#1a1400).
 
 Files:
 - Motion: `motion/templates/long_prompt_scroll.kf.json`
