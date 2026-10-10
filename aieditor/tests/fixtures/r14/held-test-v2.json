@@ -1,0 +1,177 @@
+{
+ "source": "test-v2-chatgpt-images-2-5-cre-10101749-3c27/held.json (copy, 2026-10-10)",
+ "reasons": [
+  {
+   "reason": "needs_primitive",
+   "detail": "No 'Updated' badge exists; the chat framing just holds."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "phone_photo asset is missing; upload_photo needs the file."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "Sketch and Templates are not on the image toolbar."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "Toolbar Sketch missing; no @Sketch action; canvas shown instead."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No drawing action; ready sketch asset revealed."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No submit-sketch check mark action."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No markup box-drag action."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced asset for the markup result."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No comment-pin placement action."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No action drops a comment pin on a photo spot or types in its note box"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "paste_prompt only targets the message box, not a comment note"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "Placing the second and third pins and their notes has no primitive"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "Pins cannot be placed, so three pins and the three-pin edit result cannot be recorded honestly"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No action brushes/highlights a region in erase mode"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "camera.zoom cannot frame the glass-edge region of an in-app result that is not a produced asset."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No action selects a template or fills its name field; the name is pasted into the message box instead."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced asset of the Grandma's Regret logo; only the live in-app result can be framed."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "phone_photo is missing and no scripted instruction or result exists."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No regenerate/rerun action in the closed list and no rerun results produced."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No blurry photo asset to upload; only the + menu and the pasted prompt can be shown."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No download/save action in the closed list."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced photo of the viewer's own picture; phone_photo is missing"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No colorized great-grandma picture among the produced assets"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "The '/' menu has no background skill (slash_newbg missing)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "'/newbg' does nothing in this build; only the plain detail text is pasted"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No '/add_object' skill exists; only the plain object prompt is pasted"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No school community page or asset exists in the action lists"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced asset is a phone photo of a bottle on a desk (phone_photo is missing and shows a kitchen counter)."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "upload_photo needs a file; the product photo does not exist, so only the + menu is shown."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "The result is ChatGPT's generation from the prompt alone, not a listed produced asset of his product."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced three-source merge image exists; the camera only holds the generated bottle image."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "No produced image with a human face exists; the camera can only frame the bottle and label."
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 797.1 s on 'counter': he names counter but no produced asset contains it (RULEBOOK \u00a7S S1/S2, C1) \u2014 pre-production must produce it first; the words stay on the presenter"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 835.5 s on 'market at six': the beat invents counter (not said, in no produced asset) \u2014 dropped, the previous framing holds"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 82.6 s on 'touch it' (close_viewer) is not on screen after the span structure (its screencast is too short or became an A-roll beat): give it a longer segment (whole sentences, >= 2.5 s)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 857.9 s on 'Im curious about' (close_viewer) is not on screen after the span structure (its screencast is too short or became an A-roll beat): give it a longer segment (whole sentences, >= 2.5 s)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 860.1 s on 'editing first' (open_plus_menu) is not on screen after the span structure (its screencast is too short or became an A-roll beat): give it a longer segment (whole sentences, >= 2.5 s)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "beat at 863.2 s on 'photo of your' (close_menus) is not on screen after the span structure (its screencast is too short or became an A-roll beat): give it a longer segment (whole sentences, >= 2.5 s)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "structure share = 0.7133 is outside the reference band (0.72, 0.76) (REFERENCE-BASELINE \u00a71): plan more / fewer / shorter screencast spans"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "he refers to the screen at 709.6-713.0 s (\"Try typing a forward slash and pick the background skill.\") but it stays on the presenter: put the whole sentence inside a screencast (extend the neighbouring one or add one) \u2014 RULEBOOK R13/C8"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "structure share = 0.7133 is outside the reference band (0.72, 0.76) (REFERENCE-BASELINE \u00a71): plan more / fewer / shorter screencast spans \u2014 YOUR section measures share = 0.691: plan MORE screencast here (longer / more spans)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "structure share = 0.7133 is outside the reference band (0.72, 0.76) (REFERENCE-BASELINE \u00a71): plan more / fewer / shorter screencast spans \u2014 YOUR section measures share = 0.694: plan MORE screencast here (longer / more spans)"
+  },
+  {
+   "reason": "needs_primitive",
+   "detail": "structure share = 0.7133 is outside the reference band (0.72, 0.76) (REFERENCE-BASELINE \u00a71): plan more / fewer / shorter screencast spans \u2014 YOUR section measures share = 0.534: plan MORE screencast here (longer / more spans)"
+  }
+ ]
+}
