@@ -1153,13 +1153,17 @@ def onscreen_prompt(ctx, desc, sentence=None, window=None):
     cands = script_prompts(getattr(ctx, "script", ""))
     if not cands:
         return None
-    ctxw = set(_content_words(" ".join(str(x or "") for x in (desc, sentence, window))))
+    ctx_text = " ".join(str(x or "") for x in (desc, sentence, window))
+    ctxw = set(_content_words(ctx_text))
+    ctx_seq = " ".join(_content_words(ctx_text))
     best, score = None, 0.0
     for c in cands:
         cw = _content_words(c)
         if not cw:
             continue
         sc = len([w for w in cw if w in ctxw]) / len(cw)
+        if len(cw) >= 4 and " ".join(cw[:4]) in ctx_seq:
+            sc = max(sc, 0.9)                            # his prompt's opening words name this step
         if sc > score:
             best, score = c, sc
     return best if score >= 0.4 else None
@@ -1179,9 +1183,11 @@ def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=N
     → {"typed", "on_screen", "narrated", "as_words", "look", "expect", "params"}."""
     tspec = tool_spec or {}
     app_name = str(ctx.pb.get("name") or ctx.app)
-    said = None if (tool and not (tool_spec or {}).get("typed")) else onscreen_prompt(ctx, desc, sentence, window)
-    if said and not typed_hint:
-        typed_hint = said                                # his on-screen prompt: typed word for word, nothing added
+    said = None if (tool and not (tool_spec or {}).get("typed")) else \
+        onscreen_prompt(ctx, " ".join(x for x in (str(desc or ""), str(typed_hint or "")) if x), sentence, window)
+    if said:
+        # his on-screen prompt beats ANY internal prompt (the manifest's object-list prompt invented "a glass" — TEST v3)
+        typed_hint = said
     look0 = "faithful" if tool else ("real" if asset_kind(desc) == "photo" else "impressive")
     quoted = re.findall(r"['\"‘“]([^'\"’”]{2,60})['\"’”]", str(desc))
     base = {"typed": typed_hint or (quoted[0] if tool and tspec.get("typed") and quoted else ""), "on_screen": False,

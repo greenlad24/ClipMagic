@@ -580,3 +580,24 @@ def test_verbatim_plus():
 
 if __name__ == "__main__":
     test_verbatim_plus()
+
+
+def test_onscreen_beats_manifest_prompt():
+    """TEST v3 re-run 3: the manifest's object-list prompt ('…, with a glass clearly visible, …') was passed as the
+    asset prompt and beat his on-screen prompt. His prompt wins, found by its opening words."""
+    from aieditor import onboard as ob
+
+    class C:
+        pass
+    c = C()
+    c.script = ('THE PROMPT: "Turn this rough sketch into a realistic photo — a glass squat hot sauce bottle on a '
+                'weathered wooden picnic table, warm late-afternoon light, shallow depth of field." Hit send.')
+    manifest = ("Turn this rough sketch into a realistic photo, with a wood clearly visible, with a glass clearly "
+                "visible, with a napkin clearly visible")
+    got = ob.onscreen_prompt(c, "the realistic photo the app made from the sketch " + manifest)
+    assert got and got.startswith("Turn this rough sketch into a realistic photo — a glass squat"), got
+    print("  on-screen prompt beats the manifest prompt (opening words)")
+
+
+if __name__ == "__main__":
+    test_onscreen_beats_manifest_prompt()
