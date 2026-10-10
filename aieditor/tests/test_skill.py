@@ -73,7 +73,12 @@ def main():
     for k, g in groups.items():
         check(isinstance(g.get("src"), str) and g["src"].strip(), f"rules.json {k} has src")
     check(skill.rules() is skill.rules(), "rules() cached")
-    check(rules["structure"]["screencast_share"] == [0.72, 0.76] and rules["structure"]["span_max_s"] == 30.0, "structure")
+    # Jake R14 P5 (2026-10-10): screencasts a little longer — spans x1.2, share 0.75-0.80; the references kept beside
+    check(rules["structure"]["screencast_share"] == [0.75, 0.8] and rules["structure"]["span_max_s"] == 36.0
+          and rules["structure"]["screencast_share_reference"] == [0.72, 0.76] and rules["structure"]["min_span_s"] == 3.0
+          and rules["structure"]["span_p50_s"] == [12.0, 21.5] and "Jake R14 P5" in rules["structure"]["src"], "structure (R14 P5)")
+    check(rules["pace"]["scale"] == 1.2 and "Jake R14 P5" in rules["pace"]["src"], "pace (R14 P5)")
+    check(rules["caps"]["api_job_usd"]["creative"] == 17.5 and rules["caps"]["onboarding_app_usd"] == 9.5, "caps (R14 P2)")
     check(rules["sync"]["press_offset_s"] == [-0.15, 0.0] and rules["sync"]["max_still_s"] == 3.0, "sync")
     check(rules["camera"]["zoom_cap"] == 1.65 and rules["camera"]["bubble_disc"]["r"] == 179.3, "camera")
     check(rules["aroll"]["cut07"]["enabled"] is True, "CUT07 switch on (A2 wins until M1 is re-confirmed)")

@@ -46,10 +46,10 @@ lines = lambda: apiledger.rows()   # noqa: E731
 # settings: the daily API cap is $30 (Jake decision 1, 2026-10-09)
 s = cloud.settings()
 check(s["api_daily_cap_usd"] == 30 and s["api_daily_cap_pending_jake"] is False, f"daily cap 30, decided: {s}")
-check(s["api_job_cap_usd"] == {"creative": 8, "cut": 1}, "per-job caps creative 8 / cut 1")
+check(s["api_job_cap_usd"] == {"creative": 17.5, "cut": 1}, "per-job caps creative 17.5 (incl. per-video onboarding, R14) / cut 1")
 check(s["require_droplet_key"] is False and s["us_route"]["enabled"] is False, "droplet key + US route defaults")
 check(json.loads(cloud.CFG.read_text())["api_daily_cap_usd"] == 30, "written to the settings file")
-check(apiledger.caps("creative") == (8.0, 30.0) and apiledger.caps("cut") == (1.0, 30.0), "caps by workflow")
+check(apiledger.caps("creative") == (17.5, 30.0) and apiledger.caps("cut") == (1.0, 30.0), "caps by workflow")
 
 # one ledger line per call, priced from the table
 llm.set_context(job="job-a", workflow="creative", stage="graphics")
@@ -189,7 +189,7 @@ check("ANTHROPIC_API_KEY=sk-ant-DROPLET-secret-0003" in env and "ORG" not in env
 check("GROQ_API_KEY=gsk-groq-secret-0002" in env and "AIEDITOR_DROPLET" not in env, "groq still ships; the key name does not")
 check(logs and not any(re.search(r"sk-ant|gsk-|secret", m) for m in logs), f"no key material in the log: {logs}")
 check("AIEDITOR_API_LEDGER" in cloud.api_env("job-x", "creative") and
-      cloud.api_env("job-x", "creative")["AIEDITOR_API_JOB_CAP_USD"] == "8.0000", "the droplet gets its caps")
+      cloud.api_env("job-x", "creative")["AIEDITOR_API_JOB_CAP_USD"] == "17.5000", "the droplet gets its caps")
 src = (ROOT / "aieditor" / "cloud.py").read_text()
 check("env = droplet_env(log, s)" in src and "SHIP_KEYS if config.env_key(k))" not in src, "run_remote ships via droplet_env")
 check('"--exclude", "api-ledger.jsonl"' in src and "merge_ledger(job_dir, log)" in src, "ledger pushed out clean, merged back")

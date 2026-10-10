@@ -2,26 +2,55 @@
  "version": "2026-10-09",
  "note": "Machine numbers for the factory gates. Every group has a 'src' (the rule that fixes the number). Precedence: Jake rulings > RULEBOOK > TECHNIQUES > rest; when this file disagrees with RULEBOOK.md, the RULEBOOK wins and this file is the bug.",
  "structure": {
-  "src": "REFERENCE-BASELINE §1a/§1b + rubric D7; RULEBOOK P4",
+  "src": "REFERENCE-BASELINE §1a/§1b + rubric D7; RULEBOOK P4; Jake R14 P5 (2026-10-10: 'Have screencasts a little bit longer (slower pace a little bit) automatically') — spans x1.2, share +3-4 points, boundaries /1.2; A-roll beats unchanged; the narration is never cut or sped up (only the picture holds longer)",
   "screencast_share": [
+   0.75,
+   0.8
+  ],
+  "screencast_share_reference": [
    0.72,
    0.76
   ],
   "span_p50_s": [
+   12.0,
+   21.5
+  ],
+  "span_p50_reference_s": [
    10.0,
    18.0
   ],
-  "span_max_s": 30.0,
+  "span_max_s": 36.0,
+  "span_target_s": 16.8,
+  "min_span_s": 3.0,
   "aroll_p50_s": [
    5.0,
    6.5
   ],
   "boundaries_per_min": [
-   3.0,
+   2.5,
    6.0
   ],
+  "near_miss_points": 0.03,
+  "near_miss_src": "Jake R14 D: a share within +-3 points of the band is fixed by code (spans extended/shortened at sentence edges), never held",
   "plates_max_frac": 0.015,
   "plates_only_first_s": 40.0
+ },
+ "pace": {
+  "src": "Jake R14 P5 (2026-10-10): screencasts a little longer / slower paced, automatically: +20 % (inside the asked +15-25 %) on holds after each beat and on camera move durations (the reference easing curves unchanged); still-frame cap stays 3 s (constant motion, RULEBOOK P1)",
+  "scale": 1.2,
+  "hold_after_click_s": 0.36,
+  "hold_after_type_s": 0.48,
+  "hold_after_other_s": 0.36,
+  "camera_frames_keys": [
+   "zoom_in_frames",
+   "zoom_in_frames_big",
+   "zoom_out_frames",
+   "entry_frames",
+   "drift_frames",
+   "nav_click_frames",
+   "pan_frames_base"
+  ],
+  "camera_hold_target_scale": 1.2
  },
  "sync": {
   "src": "RULEBOOK C1/C2/M1/K2/P1; REFERENCE-BASELINE §2b/§2c; recommendation §3.3 (live wait)",
@@ -241,11 +270,26 @@
   "api_daily_usd": 30,
   "api_daily_pending": false,
   "onboarding_app_usd": 9.5,
-  "onboarding_src": "Jake 2026-10-09 decision 4: OK, but try to keep a new app's onboarding under $10",
+  "onboarding_src": "Jake 2026-10-09 decision 4: OK, but try to keep a new app's onboarding under $10; Jake R14 P2 (2026-10-10): per app PER VIDEO (every video onboards its own playbook)",
   "api_job_usd": {
-   "creative": 8,
+   "creative": 17.5,
    "cut": 1
-  }
+  },
+  "api_job_src": "Jake R14 P2 (2026-10-10): creative $8 -> $17.50 = the $8 the rest of a creative job needs + the per-video onboarding <= $9.50 (onboarding_app_usd)"
+ },
+ "onboarding": {
+  "src": "Jake R14 P2/P3/P4 (2026-10-10): every missing action is explored, recorded and proven off camera for THIS video (job/preprod/playbook-<app>.json); the shared playbook is only the starting hint and is never written back",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "max_turns_per_action": 14,
+  "fix_rounds": 2,
+  "replays_required": 3,
+  "reprove_existing_replays": 1,
+  "max_rounds": 2,
+  "generation_spacing_s": 45,
+  "max_tries_per_asset": 10,
+  "forbidden": ["delete", "buy", "purchase", "upgrade", "billing", "payment", "publish", "share", "invite", "log out", "sign out"],
+  "old_chats": "never opened or changed: exploration and proofs run in fresh chats or chats this job created"
  },
  "ship": {
   "src": "rubric.md ship rule; recommendation §4 (Jake decision 2, 2026-10-09: 0.80; a held video is not published)",
