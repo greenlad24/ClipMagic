@@ -1134,14 +1134,19 @@ async function act(a) {
       else if (a.show && rec) await hold(a.show);
       await realtime();
       const until = Date.now() + (a.timeout ?? 180) * 1000;
-      let found = false;
+      let found = false, calm = 0;
       while (Date.now() < until) {
-        found = await page.evaluate((txt, gone, sel, min) => {
-          // a finished generation by selector (G3 live counter beat): more matches than "min", none still loading
-          const has = sel ? document.querySelectorAll(sel).length > (min || 0) && !document.querySelector('[aria-busy="true"]')
+        const hit = await page.evaluate((txt, gone, sel, min) => {
+          // a finished generation by selector (G3 live counter beat): more matches than "min" and no in-progress text in
+          // the thread tail. NOT "no [aria-busy]": ChatGPT keeps one aria-busy element up at all times (measured 2026-10-10)
+          const tail = document.body.innerText.slice(-1500);
+          const busy = /Creating image|Sketching|Setting the scene|\b\d{1,3}\s?%/.test(tail);
+          const has = sel ? document.querySelectorAll(sel).length > (min || 0) && !busy
             : document.body.innerText.toLowerCase().includes(String(txt).toLowerCase());
           return gone ? !has : has;
         }, a.text, !!a.gone, a.selector || null, a.min ?? 0).catch(() => false);
+        calm = hit ? calm + 1 : 0;
+        found = a.selector && !a.gone ? calm >= 2 : hit;           // a generation must stay finished for two polls
         if (found) break;
         await sleep(1500);
       }
