@@ -10,8 +10,8 @@ image, the user's bubble). The motion templates (`prompt_menu`, `prompt_card_3d`
 
 | app | folder | status |
 |---|---|---|
-| ChatGPT | `chatgpt/` | captured live 2026-10-09 (dark, Chat mode, Jake Dawson's account); see `chatgpt/NOTES.md` |
-| Claude (claude.ai) | `claude/` | captured separately (see `ui-kits/claude/NOTES.md`) |
+| ChatGPT | `chatgpt/` | captured live 2026-10-09 (dark, Chat mode, Jake Dawson's account); options map live 2026-10-10 → `chatgpt/options.json`; see `chatgpt/NOTES.md` |
+| Claude (claude.ai) | `claude/` | captured separately (see `ui-kits/claude/NOTES.md`); `claude/options.json` = options from public help pages, UNVERIFIED (no claude.ai login) |
 
 ## The rule when there is no kit: the neutral box
 
@@ -20,6 +20,13 @@ image, the user's bubble). The motion templates (`prompt_menu`, `prompt_card_3d`
 **Never another app's UI.** `for_app` never falls back to a different app, and `load()` refuses a kit whose `app`
 is not its folder name. `prompt_result` (prompt → real result in the app's result UI) needs a kit **and** a real
 result asset; without both it is refused and the honest route is a screencast.
+
+## Options map
+
+`<app>/options.json` lists the app's CURRENT composer options: the + menu, the "/" menu, the model picker, modes and toggles. For each
+option it records the composer state it produces (pill, chip, indicator) and whether that was verified live. The prompt_menu
+presets (one variation per option) are built from it. An option that is not verified live is marked so; a video must not show it
+until it has been checked.
 
 ## Format
 

@@ -1,0 +1,325 @@
+{
+ "app": "chatgpt",
+ "captured": {
+  "date": "2026-10-10",
+  "time_utc": "11:40-11:45",
+  "mode": "Chat (and Work for the Work-mode composer)",
+  "theme": "dark",
+  "account": "Jake Dawson (profile opened on a second account; switched through the profile menu first, never logged out)",
+  "source": "live DOM + computed styles + composer screenshots"
+ },
+ "entry_points": {
+  "plus_button": {
+   "selector": "button[aria-label='Add files and more']",
+   "opens": "plus_menu",
+   "anchor": "below on the new-chat screen (4 px gap)"
+  },
+  "slash": {
+   "typed": "/",
+   "opens": "slash_menu",
+   "note": "typing '/' opens a SHORT command menu (4 rows), not the tools list"
+  },
+  "at": {
+   "typed": "@",
+   "opens": "plus_menu",
+   "note": "typing '@' opens the same list as the + button (12 rows; 'Work in a project' absent)"
+  },
+  "model_button": {
+   "selector": "button[aria-label='Select ChatGPT model']",
+   "label": "Instant",
+   "opens": "model_picker"
+  },
+  "mode_toggle": {
+   "labels": [
+    "Chat",
+    "Work"
+   ],
+   "note": "page-top segmented toggle; Work mode has its own composer (placeholder 'Work with ChatGPT', model label 'GPT-6.1 Sol Light', footer 'Choose project' / 'Plugins' / 'Open desktop app')"
+  }
+ },
+ "plus_menu": [
+  {
+   "label": "Add photos & files",
+   "desc": "Upload from computer",
+   "icon": "assets/menu-add-photos-files.svg",
+   "kind": "attach",
+   "effect": {
+    "not_captured": "opens the computer's file picker (native dialog; nothing to capture) — the result is the attachment tile (chip kind image/file)"
+   },
+   "verified": false
+  },
+  {
+   "label": "Add from library",
+   "desc": "Browse and search your files",
+   "icon": "assets/menu-add-from-library.svg",
+   "kind": "attach",
+   "effect": {
+    "not_captured": "opens the account's file library modal — not captured (it shows the account's own files: private)"
+   },
+   "verified": false
+  },
+  {
+   "label": "Create image",
+   "desc": "Visualize anything",
+   "icon": "assets/menu-create-image.svg",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Create image",
+     "hint_type": "picture_v2",
+     "icon": "assets/menu-create-image.svg",
+     "screenshot": "options/pill-create-image.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Web search",
+   "desc": "Find real-time news and info",
+   "icon": "assets/menu-web-search.svg",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Web search",
+     "hint_type": "search",
+     "icon": "assets/menu-web-search.svg",
+     "screenshot": "options/pill-web-search.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Deep research",
+   "desc": "Get a detailed report",
+   "icon": "assets/menu-deep-research.png",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Deep research",
+     "hint_type": null,
+     "icon": "assets/menu-deep-research.png",
+     "screenshot": "options/pill-deep-research.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Sketch",
+   "desc": "Draw and attach an image",
+   "icon": "assets/menu-sketch.svg",
+   "kind": "tool",
+   "effect": {
+    "not_captured": "opens a drawing canvas — not captured (the click missed: the row moved while the menu scrolled)"
+   },
+   "verified": false
+  },
+  {
+   "label": "Template Creator",
+   "desc": "Create reusable templates saved as personal skills",
+   "icon": "assets/menu-template-creator.png",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Template Creator",
+     "hint_type": null,
+     "icon": "assets/menu-template-creator.png",
+     "screenshot": "options/pill-template-creator.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Presentations",
+   "desc": "Create and edit presentations",
+   "icon": "assets/menu-presentations.png",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Presentations",
+     "hint_type": null,
+     "icon": "assets/menu-presentations.png",
+     "screenshot": "options/pill-presentations.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "PDF",
+   "desc": "Read, create, and verify PDFs",
+   "icon": "assets/menu-pdf.png",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "PDF",
+     "hint_type": null,
+     "icon": "assets/menu-pdf.png",
+     "screenshot": "options/pill-pdf.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Documents",
+   "desc": "Create and edit documents",
+   "icon": "assets/menu-documents.png",
+   "kind": "tool",
+   "effect": {
+    "pill": {
+     "label": "Documents",
+     "hint_type": null,
+     "icon": "assets/menu-documents.png",
+     "screenshot": "options/pill-documents.png"
+    }
+   },
+   "verified": true
+  },
+  {
+   "label": "Spreadsheets",
+   "desc": "Create and edit spreadsheets",
+   "icon": "assets/menu-spreadsheets.png",
+   "kind": "tool",
+   "effect": {
+    "not_captured": "row below the menu's visible 378 px; the click missed — not captured (same app-pill family as Documents/PDF, unverified)"
+   },
+   "verified": false
+  },
+  {
+   "label": "OpenAI Platform",
+   "desc": "Manage OpenAI API keys and view organization billing and API usage.",
+   "icon": "assets/menu-openai-platform.png",
+   "kind": "tool",
+   "effect": {
+    "not_captured": "row below the menu's visible 378 px; the click missed — not captured (an app connector; unverified)"
+   },
+   "verified": false
+  },
+  {
+   "label": "Work in a project",
+   "desc": "Start a chat in a project",
+   "icon": "assets/menu-work-in-a-project.svg",
+   "kind": "tool",
+   "effect": {
+    "not_captured": "opens a project chooser — not captured (the click missed); the account has no projects"
+   },
+   "verified": false
+  }
+ ],
+ "slash_menu": [
+  {
+   "label": "Feedback",
+   "desc": "Send feedback about this chat",
+   "icon": "assets/slash-feedback.svg",
+   "verified": true
+  },
+  {
+   "label": "Model",
+   "desc": "Change from Instant",
+   "icon": "assets/slash-model.svg",
+   "verified": true
+  },
+  {
+   "label": "Study",
+   "desc": "Learn a new concept",
+   "icon": "assets/slash-study.svg",
+   "verified": true
+  },
+  {
+   "label": "Work in a project",
+   "desc": "Start a chat in a project",
+   "icon": "assets/slash-work-in-a-project.svg",
+   "verified": true
+  }
+ ],
+ "work_mode_plus_menu": {
+  "note": "Work mode's + menu: the same tools minus 'Deep research' and 'OpenAI Platform', plus 'Pets' (ChatGPT app: animated pets) and the account's PERSONAL SKILLS (custom skills appear as rows with their own icon). The personal skill names are account content and are NOT stored here.",
+  "rows_in_order": [
+   "Add photos & files",
+   "Add from library",
+   "Create image",
+   "Web search",
+   "Sketch",
+   "Template Creator",
+   "Presentations",
+   "PDF",
+   "Documents",
+   "Pets",
+   "Spreadsheets",
+   "Work in a project",
+   "<personal skill>",
+   "<personal skill>"
+  ]
+ },
+ "model_picker": {
+  "verified": "DOM only (the screenshot caught it mid-fade)",
+  "head": "Instant",
+  "head_note": "a 3-step 'power' control: 'Instant, 1 of 3. Use Left and Right arrow keys to adjust power'; one step is 'Locked, opens access options'",
+  "models": [
+   {
+    "label": "GPT-6",
+    "checked": true
+   },
+   {
+    "label": "GPT-5.6 Sol"
+   },
+   {
+    "label": "GPT-5.5",
+    "sub": "Leaving on October 14"
+   }
+  ],
+  "surface": {
+   "width": 254,
+   "radius": 16,
+   "background": "rgba(48,48,48,0.9) + blur 8px",
+   "shadow": "0 0 0 .5px rgba(255,255,255,.15) ×2, 0 8px 16px -4px rgba(0,0,0,.12)",
+   "row_h": 36,
+   "font": "14/20 (head 16/24)"
+  }
+ },
+ "composer_states": {
+  "pill": "picking a tool inserts an inline blue pill (500 weight, rgb(83,130,205), the tool's 20 px icon) at the start of the text line; the composer switches to multi-line (101 tall) and the right button becomes Send. Typed text follows the pill on the same line. → kit.chip kind 'tool' with the menu item's icon_html.",
+  "attach": "an attachment tile above the text (kit.chip kind image/file)",
+  "slash_typed": "'/' typed: multi-line composer with '/' + the 4-row command menu below"
+ },
+ "variations_for_prompt_menu": [
+  {
+   "id": "type-prompt",
+   "steps": "type a prompt in the composer → Send",
+   "verified": true
+  },
+  {
+   "id": "create-image",
+   "steps": "+ → Create image → pill → type prompt",
+   "verified": true
+  },
+  {
+   "id": "web-search",
+   "steps": "+ → Web search → pill → type prompt",
+   "verified": true
+  },
+  {
+   "id": "deep-research",
+   "steps": "+ → Deep research → pill → type prompt",
+   "verified": true
+  },
+  {
+   "id": "app-pill",
+   "steps": "+ → Presentations / PDF / Documents / Template Creator → pill → type prompt",
+   "verified": true
+  },
+  {
+   "id": "attach-file",
+   "steps": "+ → Add photos & files → tile → type prompt",
+   "verified": "tile look verified 2026-10-09; the file picker itself is native"
+  },
+  {
+   "id": "slash-command",
+   "steps": "type '/' → command menu (Feedback / Model / Study / Work in a project)",
+   "verified": true
+  },
+  {
+   "id": "model-switch",
+   "steps": "click 'Instant' → model picker (GPT-6 / GPT-5.6 Sol / GPT-5.5)",
+   "verified": "DOM only"
+  }
+ ]
+}

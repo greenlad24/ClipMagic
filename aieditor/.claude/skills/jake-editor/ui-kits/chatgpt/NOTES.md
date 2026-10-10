@@ -8,7 +8,7 @@ device scale 2560/1536 = 1.667, Google Chrome 155 with the Mac identity from `sc
 
 | part | what it is | live source |
 |---|---|---|
-| `composer` | the "Ask ChatGPT" box. 768 wide; single-line 52 tall, radius 26; multi-line 102 tall, radius 28; with attachments 246 tall. Parts: + button, text, model label "Instant" + chevron, mic, and voice (blue) / send (blue arrow) | `/` new chat, DOM + computed styles |
+| `composer` | the "Ask ChatGPT" box. 768 wide; single-line 52 tall, radius 26; multi-line 101 tall (live 102), radius 28; with attachments 245 tall. Parts: + button, text, model label "Instant" + chevron, mic, and voice (blue) / send (blue arrow) | `/` new chat, DOM + computed styles |
 | `menu` | the "+" menu: 13 real rows (label + grey description + real icon). Surface #303030, 1 px rgba(255,255,255,.15) border, radius 20, padding 8, rows 36 tall (padding 6/8, radius 12, gap 12), first row highlighted rgba(255,255,255,.1) | opened from the + button |
 | `chip` | `kind` skill/tool = the inline **blue tool pill** ("Create image", 500 weight, rgb(83,130,205), 20 px icon) that picking a menu tool puts at the start of the text line; `kind` image = 122×122 tile; `kind` file = 160×122 tile (doc icon + name, 12 px) | picked "Create image"; attached a canvas test image + a test `brief.txt` |
 | `working` | the app's **shimmer status** text (dim rgba(175,175,175,.55) + a bright rgba(255,255,255,.75) window that sweeps over it) | "Waiting for your answer" rendered live; animation read with `getAnimations()` |
@@ -17,6 +17,14 @@ device scale 2560/1536 = 1.667, Google Chrome 155 with the Mac identity from `sc
 | `result.image` | a generated image: 480 wide (any aspect), radius 16, 80 px bottom fade with the **Edit** pill (14 px, 500, white, blur 12) and the share button, action bar 28 px below | existing chat "Create Apple Image" (read-only) |
 | `tokens` | all colours as `--cg-*` variables (the template puts `kit.tokens` on the kit root) | computed styles |
 | `assets/` | 30 icons: the composer/result SVGs resolved from ChatGPT's own sprite (`/cdn/assets/icons-*.svg`) or inline SVGs, plus the 7 app icons the menu shows as PNG (downscaled to 48 px) | DOM |
+
+## Composer footer (Jake's inspection, 2026-10-10, binding)
+
+Jake inspected the live footer: `container-name: composer-footer`, grid `36px | 1fr | auto` (live 36 / 522.484 / 177.516 at
+768), column gap 8, height 52, padding 8 on all sides, items centred, line-height 24, weight 400, rgb(237,237,237). The kit's
+`.cg-grid` is exactly that. In the multi-line layout the same 52 px footer (8 px padding all round) sits under the text block,
+16 px below the text as live, so the buttons no longer hug the bottom edge ("too much stuck to the bottom"). The multi-line
+height is 101 (live 102). The kit's `--cg-font` is Inter followed by the real stack.
 
 ## Fonts
 
@@ -55,9 +63,9 @@ puts them side by side as **real | replica | diff×3**:
 |---|---|---|
 | composer (empty) | 0.75 | 0.68 % |
 | composer typed "Hi" (settled, multi-line) | 0.38 | 0.28 % |
-| composer multi-line prompt | 3.3 | 1.25 % |
-| composer pill + prompt | 3.17 | 1.39 % |
-| composer with image + file tiles | 1.18 | 0.31 % |
+| composer multi-line prompt | 1.93 | 1.25 % |
+| composer pill + prompt | 1.8 | 1.39 % |
+| composer with image + file tiles | 0.48 | 0.31 % |
 | "+" menu | 4.95 | 3.67 % |
 | result: bubble + generated image + action bar | 2.71 | 1.23 % |
 | result: bubble + text + shimmer status | 4.85 | 3.95 % |
@@ -69,6 +77,20 @@ y). The image-result action bar is within 0.6 px, and menu rows within 0.6 px. T
 
 A prompt_menu render with this kit (template engine, aieditor-motion:1) was also checked: icons, descriptions, the hover
 row, the blue send button and the final "Create image" pill all draw.
+
+## Options map (live 2026-10-10 11:40-11:45 UTC) → `options.json`
+
+- **"+" menu**: 13 rows (above). Picking Create image, Web search, Deep research, Template Creator, Presentations, PDF or Documents
+  puts an inline **blue pill** with that tool's icon at the start of the text line; the composer goes multi-line and shows Send
+  (`options/pill-*.png`; `kit.modes`).
+- **"/" menu** (typing "/"): Feedback, Model ("Change from Instant"), Study ("Learn a new concept"), Work in a project
+  (`kit.slash_menu`, same component as the + menu). **"@"** opens the + list.
+- **Model picker** (the "Instant" button): a 3-step "power" control headed "Instant", plus models GPT-6 (checked), GPT-5.6 Sol,
+  GPT-5.5 ("Leaving on October 14"). This is DOM only: the screenshot caught it mid-fade (`kit.model_picker`).
+- **Work mode**: its own composer ("Work with ChatGPT", model "GPT-6.1 Sol Light"). Its + menu adds "Pets" and the account's
+  personal skills (names not stored: account content).
+- Not captured: Sketch, Spreadsheets, OpenAI Platform and "Work in a project" (the clicks missed: rows below the visible area),
+  Add from library (would show the account's own files), and the native file picker.
 
 ## Not captured / limits
 

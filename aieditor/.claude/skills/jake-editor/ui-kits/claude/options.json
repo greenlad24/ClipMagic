@@ -1,0 +1,158 @@
+{
+ "app": "claude",
+ "status": "UNVERIFIED — no claude.ai login on the server (agentrec.scout_for('https://claude.ai') = None). Built from Anthropic's public help pages (read 2026-10-10) + Jake's motion5 reference clip (composer look only). Every label below must be verified against the live app before a video shows it.",
+ "captured": {
+  "date": "2026-10-10",
+  "source": "public help/docs pages (text only) + reference clip motion5",
+  "live": false
+ },
+ "entry_points": {
+  "plus_button": {
+   "where": "bottom-left of the composer (reference: '+' at the left of the bottom row)",
+   "opens": "plus_menu",
+   "verified": "position from the reference clip; menu content from help pages — verify against live",
+   "source": [
+    "https://support.claude.com/en/articles/11088861-use-research-on-claude",
+    "https://support.claude.com/en/articles/10684626-enable-and-use-web-search",
+    "https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities"
+   ]
+  },
+  "slash": {
+   "typed": "/",
+   "opens": "the same menu as the + button (help: 'Typing \"/\" opens the same menu')",
+   "verified": "verify against live",
+   "source": [
+    "https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities"
+   ]
+  },
+  "model_button": {
+   "where": "next to the send button; shows model + effort (reference: 'Opus 5.5 High')",
+   "opens": "model_picker",
+   "verified": "label position/look from the reference; panel content from help — verify against live",
+   "source": [
+    "https://support.claude.com/en/articles/8664678-change-the-model-effort-and-thinking-settings"
+   ]
+  }
+ },
+ "plus_menu": [
+  {
+   "label": "Add files or photos",
+   "kind": "attach",
+   "effect": "attachment tile above/in the composer",
+   "label_verified": false,
+   "note": "exact label unknown — help pages only say files can be uploaded/attached; verify against live"
+  },
+  {
+   "label": "Research",
+   "kind": "mode",
+   "effect": "'a blue indicator will appear on the bottom of the chat window'; click it again to turn off",
+   "label_verified": "label from help ('select \"Research\"'); look verify against live",
+   "plans": "paid plans (Pro, Max, Team, Enterprise)",
+   "source": "https://support.claude.com/en/articles/11088861-use-research-on-claude"
+  },
+  {
+   "label": "Web search",
+   "kind": "toggle",
+   "effect": "checkmark next to 'Web search' in the menu when on",
+   "label_verified": "label from help; NOTE help: 'If you have the new Claude experience, there's no web search toggle. Claude searches the web when it helps.' — may be absent live",
+   "source": "https://support.claude.com/en/articles/10684626-enable-and-use-web-search"
+  },
+  {
+   "label": "Connectors",
+   "kind": "submenu",
+   "effect": "hover → per-connector toggles + 'Manage connectors' + 'Tool access'",
+   "label_verified": "labels from help; verify against live",
+   "source": "https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities"
+  },
+  {
+   "label": "Skills",
+   "kind": "submenu / '/' entries",
+   "effect": "skills are listed in the '/' menu (help shows '/' + skill name for add-ins); how a chosen skill shows in the composer is undocumented",
+   "label_verified": false,
+   "source": "https://support.claude.com/en/articles/12512180-use-skills-in-claude"
+  },
+  {
+   "label": "Use style",
+   "kind": "deprecated",
+   "effect": "help says styles were folded into Skills — probably NOT in the live menu",
+   "label_verified": false,
+   "source": "https://academy.claude.com/courses/claude-101/your-first-conversation-with-claude"
+  },
+  {
+   "label": "(memory off for this chat)",
+   "kind": "toggle",
+   "effect": "changelog: memory can be turned off for a single chat from the + menu before the first message",
+   "label_verified": false,
+   "source": "https://claude.com/docs/cowork/changelog"
+  }
+ ],
+ "model_picker": {
+  "rows": [
+   "<model list> (names not in the help page; reference label 'Opus 5.5 High')",
+   "More models"
+  ],
+  "effort": [
+   "Low",
+   "Medium",
+   "High (Default)",
+   "Extra high (xhigh)",
+   "Max"
+  ],
+  "thinking": "a 'Thinking' toggle ('Extended' on older models)",
+  "label_verified": "labels from help; layout verify against live",
+  "source": "https://support.claude.com/en/articles/8664678-change-the-model-effort-and-thinking-settings"
+ },
+ "extended_thinking": {
+  "where": "model picker → 'Thinking' toggle (help)",
+  "label_verified": "verify against live"
+ },
+ "variations_for_prompt_menu": [
+  {
+   "id": "type-prompt",
+   "steps": "type a prompt → send",
+   "verified": "composer look from the reference clip"
+  },
+  {
+   "id": "research",
+   "steps": "+ → Research → blue indicator → type prompt",
+   "verified": "verify against live"
+  },
+  {
+   "id": "web-search",
+   "steps": "+ → Web search (checkmark) → type prompt",
+   "verified": "verify against live (may not exist in the new experience)"
+  },
+  {
+   "id": "connector",
+   "steps": "+ → Connectors → toggle one on → type prompt",
+   "verified": "verify against live"
+  },
+  {
+   "id": "skill",
+   "steps": "type '/' → pick a skill → type prompt",
+   "verified": "verify against live"
+  },
+  {
+   "id": "attach-file",
+   "steps": "+ → add a file → tile → type prompt",
+   "verified": "verify against live"
+  },
+  {
+   "id": "model-effort",
+   "steps": "click the model label → pick model / effort / Thinking",
+   "verified": "verify against live"
+  }
+ ],
+ "needs_live_claude_login": [
+  "the '+' menu: exact rows, order, icons, colours, radii, row height, which side it opens on",
+  "the '/' menu: rows (commands, skills, connectors) and how a picked skill shows in the composer (pill? chip?)",
+  "Research on: the 'blue indicator' — its exact look and position in the composer",
+  "Web search: whether the toggle still exists (new Claude experience) and its checkmark row look",
+  "Connectors submenu: rows, toggles, 'Manage connectors' / 'Tool access'",
+  "model picker panel: model names, 'More models', the Effort control (Low…Max), the Thinking toggle, sizes and colours",
+  "attachment tile (image + file) look inside the composer",
+  "the working state (thinking / researching / searching indicators) and the result views (message, artifact panel, research report)",
+  "exact live dark-theme colours (the reference is a YouTube encode: page ≈ #20201D there, live ≈ #262624)",
+  "everything above → add a 'claude' Scout login in the Lab: Settings → Screencast logins (log in once in the live server-browser console), then recapture with the same tools (ui-kits/_tools/cap.mjs) under accountlock"
+ ]
+}
