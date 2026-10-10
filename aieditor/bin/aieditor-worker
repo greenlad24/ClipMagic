@@ -79,7 +79,7 @@ sys.path.insert(0, str(ROOT))
 
 from aieditor import align, camera, cloud, compose, config, descript, edl, events, gates, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
-from aieditor import accountlock, apiledger, chain, llm  # noqa: E402
+from aieditor import accountlock, apiledger, chain, genledger, llm  # noqa: E402
 from aieditor import handoff  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
@@ -109,6 +109,18 @@ class Held(Exception):
 
 class Cancelled(Exception):
     pass
+
+
+class Waiting(Exception):
+    """The job cannot go on before resume_at (an app's daily generation cap, a wall): back to the queue, not held."""
+    def __init__(self, resume_at, msg):
+        super().__init__(msg)
+        self.resume_at, self.msg = float(resume_at), msg
+
+
+def requeue_waiting(d, action, resume_at, msg):
+    """queue.json with not_before: the claim loop leaves it until then (skip)."""
+    jdump(Path(d) / "queue.json", {"action": action, "not_before": round(resume_at, 1), "why": msg})
 
 
 def now():
@@ -441,6 +453,10 @@ def run_preprod(job, req, info, fps):
         out = fn(d, **offer)
     except InterruptedError:
         raise Cancelled()
+    except genledger.QuotaWait as exc:
+        # the app's generations stop for now (the daily cap / a wall / a limit message): the job WAITS in the queue
+        # and continues afterwards (pre-production reuses what it already made) — never held (Jake 2026-10-10)
+        raise Waiting(exc.resume_at, exc.status()) from None
     note, usd = out, 0.0
     if isinstance(out, tuple):
         note, usd = (list(out) + [0.0])[:2]
@@ -1021,6 +1037,14 @@ def execute(job, action):
             f" ({r['detail']})" if r.get("detail") else "")) for r in exc.reasons]
         job.save(state="held", held=True, held_reasons=exc.reasons, held_failures=failures[:200],
                  message=str(exc)[:500], error=None, progress=1, finished_at=now())
+    except Waiting as exc:
+        job.log(exc.msg)
+        for name, s in list(job.st["stages"].items()):
+            if s.get("state") == "running":
+                job.stage(name, "interrupted", "waiting for generations")
+        events.emit("stage", exc.msg, stage="job", level="warn")
+        requeue_waiting(job.d, action, exc.resume_at, exc.msg)
+        job.save(state="waiting", message=exc.msg, not_before=exc.resume_at, progress=None)
     except Cancelled:
         job.log("cancelled")
         for name, s in list(job.st["stages"].items()):
@@ -1074,6 +1098,10 @@ def execute_cloud(job, action):
             j.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
             return
         cloud.run_remote(job.d, action, note, job.cancelled)
+        st = jload(job.d / "status.json", {}) or {}
+        if st.get("state") == "waiting" and st.get("not_before"):
+            requeue_waiting(job.d, action, float(st["not_before"]), st.get("message") or "waiting")
+            note(st.get("message") or "waiting for generations — back in the queue", "warn")
     except Exception as exc:                               # noqa: BLE001
         note(f"factory server failed: {str(exc)[:300]}", "error")
         st = jload(job.d / "status.json", {}) or {}
@@ -1108,6 +1136,10 @@ def main():
         if cloud.running(d.name):
             return True
         req = jload(d / "request.json", {})
+        # a job waiting for an app's generations (genledger: daily cap / a wall) stays queued until its time
+        nb = (jload(d / "queue.json", {}) or {}).get("not_before")
+        if nb and float(nb) > now():
+            return True
         # the rolling 24 h Claude API cap: jobs that call Claude wait in the queue (like the server cap)
         if action in API_ACTIONS and apiledger.over_daily_cap():
             return True
@@ -1116,8 +1148,18 @@ def main():
         # one job per logged-in account: a job whose Scout account is in use stays queued
         if action in ("run", "edit") and (req.get("sites") or workflow_of(req) == "creative") and not handoff.wanted(req):
             try:
-                if any(accountlock.busy(slug) for slug in cloud.scout_slugs(req, d)):
+                slugs = cloud.scout_slugs(req, d)
+                if any(accountlock.busy(slug) for slug in slugs):
                     return True
+                # an app whose generations are stopped (daily cap / a wall): the job waits with that reason
+                for slug in slugs:
+                    ok, why = genledger.ok_to_start(slug)
+                    if not ok:
+                        st = jload(d / "status.json", {}) or {}
+                        if st.get("message") != why.status():
+                            st.update(message=why.status(), updated_at=now())
+                            jdump(d / "status.json", st)
+                        return True
             except Exception:                                 # noqa: BLE001 — run_remote waits on the lock anyway
                 pass
         # factory jobs wait (never drop to the main box) while every server slot is taken
@@ -1170,7 +1212,7 @@ def once(job_id, action):
     job = Job(config.JOBS / job_id)
     job.save(state="running", action=action, host=os.uname().nodename)
     execute(job, action)
-    return 0 if job.st.get("state") in ("done", "held") else 1
+    return 0 if job.st.get("state") in ("done", "held", "waiting") else 1
 
 
 if __name__ == "__main__":
