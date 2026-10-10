@@ -1115,6 +1115,45 @@ def _param_defaults(ctx, tspec, desc, sentence):
     return out
 
 
+_PROMPT_RX = re.compile(r"THE\s+PROMPT\s*:?\s*[\"“]([^\"”]{8,600})[\"”]|[\"“]([^\"”]{24,600})[\"”]", re.I | re.S)
+
+
+def script_prompts(script):
+    """Every prompt the script has him READ ON SCREEN ("THE PROMPT: '…'", or a quoted request of 5+ words), whitespace
+    normalised, in script order. Generic: any app, any video whose script quotes what is typed."""
+    out = []
+    for m in _PROMPT_RX.finditer(str(script or "")):
+        t = " ".join((m.group(1) or m.group(2) or "").split()).strip(" —-")
+        if len(t.split()) >= 5 and t not in out:
+            out.append(t)
+    return out
+
+
+def onscreen_prompt(ctx, desc, sentence=None, window=None):
+    """The script prompt this step types, when there is one: the quoted prompt that shares the most content words with
+    this step's description + sentence + narration window (>= 40 % of the prompt's words). TEST v3 2026-10-10: the
+    sketch → photo request ignored his on-screen prompt and invented 'a glass' — ChatGPT drew a whisky glass."""
+    cands = script_prompts(getattr(ctx, "script", ""))
+    if not cands:
+        return None
+    ctxw = set(_content_words(" ".join(str(x or "") for x in (desc, sentence, window))))
+    best, score = None, 0.0
+    for c in cands:
+        cw = _content_words(c)
+        if not cw:
+            continue
+        sc = len([w for w in cw if w in ctxw]) / len(cw)
+        if sc > score:
+            best, score = c, sc
+    return best if score >= 0.4 else None
+
+
+def _content_words(text):
+    stop = {"the", "a", "an", "and", "or", "of", "to", "in", "on", "with", "this", "that", "it", "is", "for", "at", "as",
+            "by", "from", "my", "your", "into", "so", "just", "then", "now", "here", "there", "be", "are", "was"}
+    return [w for w in re.findall(r"[a-z0-9']+", str(text).lower()) if w not in stop and len(w) > 2]
+
+
 def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=None, new_photo=False, typed_hint=None):
     """(A) The asset's request to the app = what the PERSON would do or type, derived by ONE cheap call from the
     internal description + the narration (sentence, ±3 sentences around it), with its LOOK. Code then checks it:
@@ -1123,6 +1162,9 @@ def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=N
     → {"typed", "on_screen", "narrated", "as_words", "look", "expect", "params"}."""
     tspec = tool_spec or {}
     app_name = str(ctx.pb.get("name") or ctx.app)
+    said = None if (tool and not (tool_spec or {}).get("typed")) else onscreen_prompt(ctx, desc, sentence, window)
+    if said and not typed_hint:
+        typed_hint = said                                # his on-screen prompt: typed word for word, nothing added
     look0 = "faithful" if tool else ("real" if asset_kind(desc) == "photo" else "impressive")
     quoted = re.findall(r"['\"‘“]([^'\"’”]{2,60})['\"’”]", str(desc))
     base = {"typed": typed_hint or (quoted[0] if tool and tspec.get("typed") and quoted else ""), "on_screen": False,
@@ -1173,6 +1215,9 @@ def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=N
         msgs = msgs + [{"role": "assistant", "content": json.dumps(j)},
                        {"role": "user", "content": f"You dropped or changed narrated details: {', '.join(dict.fromkeys(miss))}. "
                                                    "Keep every one of his words exactly; only add. Answer again."}]
+    if said:                                             # code, not the model, decides: his words, verbatim
+        for r_ in (base, out) if out is not None else (base,):
+            r_.update(typed=said, as_words=said, on_screen=True, narrated=said)
     if out is None:
         return base
     if tool and not tspec.get("typed"):

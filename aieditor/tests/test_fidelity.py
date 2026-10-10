@@ -538,3 +538,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_onscreen_prompt_verbatim():
+    """TEST v3 re-run 2026-10-10: the sketch → photo request ignored his on-screen prompt and invented 'a glass'.
+    A prompt the script has him READ is found and typed word for word — code decides, not the model."""
+    from aieditor import onboard as ob
+    script = ('Then click the checkmark to submit the drawing. And type the prompt.\\nTHE PROMPT: "Turn this rough sketch '
+              'into a realistic photo — \\na glass squat \\nhot sauce bottle on a weathered wooden picnic table, \\nwarm '
+              'late-afternoon light, shallow depth of field." Hit send.\\nTHE PROMPT: "Add a small chili pepper '
+              'illustration right here."')
+    ps = ob.script_prompts(script.replace("\\\\n", "\\n"))
+    assert any(p.startswith("Turn this rough sketch into a realistic photo") for p in ps), ps
+
+    class C:
+        pass
+    c = C()
+    c.script = script.replace("\\\\n", "\\n")
+    got = ob.onscreen_prompt(c, "the realistic photo the app made from the sketch",
+                             "And here's the photo", "type the prompt turn this rough sketch into a realistic photo a "
+                             "glass squat hot sauce bottle on a weathered wooden picnic table warm late afternoon light")
+    assert got and "weathered wooden picnic table" in got and "Striking" not in got, got
+    assert ob.onscreen_prompt(c, "a casual phone photo of a bottle on a desk", "Nothing fancy", "a bottle on a desk") is None
+    print("  on-screen prompt found and kept verbatim; unrelated step gets none")
+
+
+if __name__ == "__main__" and "test_onscreen_prompt_verbatim" not in globals().get("_RAN", ()):
+    test_onscreen_prompt_verbatim()

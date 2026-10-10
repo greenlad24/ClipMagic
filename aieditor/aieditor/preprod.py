@@ -1897,6 +1897,7 @@ def make_ctx(job, out, app, readiness, assets, say=log, progress=None, cancelled
                        image_chat=chats[-1] if chats else None, asset_files=files, log=say, allowed_chats=chats,
                        kit_app=pid, kit_capture=lambda a, dst, url: onboard.capture_kit_live(a, dst, url, sc.get("profile")))
     ctx.locate = locate_region                       # a markup box / erase brush region: vision on the picture
+    ctx.script = str((job.request or {}).get("script") or "")   # the prompts he reads on screen, used verbatim
     return ctx
 
 
