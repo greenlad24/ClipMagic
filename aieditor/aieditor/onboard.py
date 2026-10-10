@@ -1515,7 +1515,10 @@ def bind_stroke(ctx, bt, sk, image_asset=None):
     asset, scaled to the canvas), or the target's region in the picture (vision: ctx.locate) as rel_from / rel_to."""
     from . import beatscript
     if sk["how"] == "draw":
-        shape = beatscript.shape_of(" ".join(str(bt.get(k) or "") for k in ("need", "body")))
+        # the shape DRAWN is the first one named ("a picnic table under the bottle" draws the table)
+        t = " " + beatscript.norm(str(bt.get("need") or bt.get("body") or "")) + " "
+        hits = [(m.start(), shp) for w, shp in beatscript.SHAPES for m in [re.search(rf" {re.escape(w)}s? ", t)] if m]
+        shape = min(hits)[1] if hits else None
         if shape:
             bt["subject"] = f"shape:{shape}"
         return bt
