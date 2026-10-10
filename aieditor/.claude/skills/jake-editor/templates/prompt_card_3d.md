@@ -84,6 +84,7 @@ another app's UI.
 | greeting | string | null | ≤ 40 (kit greeting only) |
 | tilt | {rx, ry, rz} deg | measured rest {0, 0.6, 0.55} | ±10 each |
 | backdrop | bool | true | — |
+| entrance | "whip" \| "cut" | "whip"; "cut" when a result is shown | cut = crisp, settled from frame 0 (MO05 hook) |
 | end_on_click | bool | true for the Claude kit, else false | ends the clip on the cursor's click on send (no "working" state); the cursor is prompt_menu's sprite + measured glide |
 
 ## 8. Worked example

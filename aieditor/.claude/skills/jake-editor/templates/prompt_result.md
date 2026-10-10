@@ -95,6 +95,9 @@ Note: the spoken words here are not the typed prompt, so `type` hangs off "type"
 and runs at up to 142 chars/s to finish before "and". If 170 chars cannot fit (it needs ≥ 1.45 s), move `working`
 later or shorten nothing (never paraphrase the real prompt); fall back to a screencast.
 
+## Claude flow (round 3)
+After the click (`end_on_click`, Claude default) the card docks into the conversation view's composer at the bottom, the user message (+ attachment tiles) appears top-right in a bubble, the kit's working state shows, and the REAL text reply streams word by word under it with the spark (kit v2 conversation recipe; clips 5/6 + public Anthropic images; verify against live). Artifacts keep the round-2 artifact panel view. ChatGPT/MO05 starts crisp (`entrance: "cut"`).
+
 ## Claude variations (Jake 2026-10-10: "make different variations of what you can do in Claude")
 Claude's kit has no image result view, but it has the **conversation view** (`kit.message`): after the cursor clicks
 send (end_on_click, Claude default), the card sinks toward the docked composer and the conversation view comes in (0.6 s,

@@ -32,7 +32,7 @@
         kind = /^(doc|docx|txt|md|rtf)$/.test(ext) ? "doc" : ext === "pdf" ? "pdf" : /^(xls|xlsx|csv)$/.test(ext) ? "xlsx" : /^(png|jpe?g|gif|webp|heic)$/.test(ext) ? "image" : "other";
       }
       if (!/^(doc|pdf|xlsx|image|other)$/.test(kind)) kind = "other";
-      return { name, kind };
+      return { name, kind, thumb: c.thumb ? String(c.thumb) : null };
     });
     const r = P.result && typeof P.result === "object" ? P.result : null;
     const result = r && ((r.kind === "image" && r.src) || (r.kind === "text" && r.text) || (r.kind === "artifact" && r.html)) ? r : null;
@@ -48,6 +48,8 @@
         : null,
       greeting: P.greeting != null ? String(P.greeting).slice(0, 40) : null,
       end_on_click: P.end_on_click != null ? !!P.end_on_click : null, // null → the look's default (Claude: on)
+      // "whip" (the reference's entrance) | "cut" (crisp from frame 0; default for the MO05 prompt → result hook)
+      entrance: P.entrance === "cut" || P.entrance === "whip" ? P.entrance : (result ? "cut" : "whip"),
     };
   }
 
@@ -87,7 +89,8 @@
     }
     if (!caretHtml) caretHtml = '<span class="pc-caret"></span>';
     const chipIcon = (kind) => (N.chip.icons[kind] || N.chip.icons.other);
-    const chipKind = (kind) => (kit && kit.chip ? (kind === "image" ? "file" : "file") : kind); // no real thumbnails → file tiles
+    // kits: an image chip shows its REAL thumbnail when params give one (data URI), else the kit's file tile
+    const chipKind = (c) => (kit && kit.chip ? (c.thumb ? "image" : "file") : c.kind);
     const page = kit ? (kit.bg || tokens[Object.keys(tokens).find((k) => /-page$/.test(k))] || null) : null;
     return {
       kit, cls, KC, dark, tokenCss, page,
@@ -97,7 +100,9 @@
       caretHtml,
       chipHtml(c) {
         const ch = (kit && kit.chip) || N.chip;
-        return TR.fill(ch.html, { name: c.name, kind: chipKind(c.kind), icon_html: chipIcon(c.kind), thumb_html: "" });
+        const ext = (String(c.name).match(/\.([a-z0-9]{1,5})$/i) || [, ""])[1];
+        return TR.fill(ch.html, { name: c.name, kind: chipKind(c), icon_html: chipIcon(c.kind), ext, meta: "",
+          thumb_html: c.thumb ? `<img src="${String(c.thumb).replace(/"/g, "&quot;")}" alt="">` : "" });
       },
       workingHtml(text) {
         if (working) return TR.fill(working.html, { text });
@@ -145,7 +150,11 @@
     const S = scene.style, K = scene.kf, C = K.camera;
     const A = adapter(scene);
     // a kit without the app's real result view → no result stage (never another app's or a made-up result UI)
-    const msgMode = !!(p.result && A.kit && A.kit.message && /^(text|artifact)$/.test(p.result.kind));
+    // Claude (kits with a conversation recipe): after the click the composer docks at the bottom, the user bubble
+    // appears top-right and the REAL reply streams in under it (round 3). The artifact view stays as approved.
+    const convMode = !!(A.kit && A.kit.conversation && A.kit.message && A.kit.result && A.kit.result.user &&
+      (!p.result || p.result.kind === "text") && (p.end_on_click != null ? p.end_on_click : A.kit.app === "claude"));
+    const msgMode = !convMode && !!(p.result && A.kit && A.kit.message && /^(text|artifact)$/.test(p.result.kind));
     if (p.result && !msgMode && (A.kit ? !(A.kit.result && A.kit.result[p.result.kind]) : p.result.kind === "artifact")) p.result = null;
     const endOnClick = p.end_on_click != null ? p.end_on_click : !!(A.kit && A.kit.app === "claude");
     const k = S.card.w / A.W; // kit natural px → plane px
@@ -285,6 +294,16 @@
       Hwork = Hempty; // the composer's own height after send
       thread.style.height = th * k + "px";
     } else Hwork = hOf(IW.rootEl);
+    let textDrop = 0, textBox = null;
+    if (!A.kit && p.chips.length) {
+      textBox = IT.inner.querySelector(".nb-text");
+      const foot = IT.inner.querySelector(".nb-foot");
+      const gapWith = foot.getBoundingClientRect().top - textBox.getBoundingClientRect().bottom;
+      IT.comp.classList.remove("has-chips");
+      const gapWithout = foot.getBoundingClientRect().top - textBox.getBoundingClientRect().bottom;
+      IT.comp.classList.add("has-chips");
+      textDrop = gapWithout - gapWith;
+    }
     // bottom-anchored on the plane: the card's bottom edge stays at origin.y + H0/2
     const H0 = Hk[0] * k;
     const cardBottom = C.origin[1] + H0 / 2;
@@ -326,7 +345,7 @@
     const rowOf = []; rows.forEach((r, ri) => r.items.forEach((i) => (rowOf[i] = ri)));
     const after = []; let seen = 0;
     rows.forEach((r) => { seen += r.items.length; r.items.forEach((i) => (after[i] = seen)); });
-    const st = { rowOf, root, chipH: chipEls.map((e, i) => (e && e.offsetHeight) || slots[i].h), chipK: extraGrid ? 1 : k, chipWraps, thread, neutralChips, greetEl, after, p, A, k, plane, exitWrap, bg, IT, IW, promptEl, caretEl, phChars, mic, arrow, chipEls, chipNames, slots, rows, Hk, Hall, Hwork,
+    const st = { textDrop, textBox, rowOf, root, chipH: chipEls.map((e, i) => (e && e.offsetHeight) || slots[i].h), chipK: extraGrid ? 1 : k, chipWraps, thread, neutralChips, greetEl, after, p, A, k, plane, exitWrap, bg, IT, IW, promptEl, caretEl, phChars, mic, arrow, chipEls, chipNames, slots, rows, Hk, Hall, Hwork,
       H0, cardBottom, cardLeft, cardW, bubbleEl, wkEl, spinEl, sweepEl, resWrap, resH, endOnClick, msgMode };
     // the cursor that clicks send (end_on_click) — prompt_menu's sprite + measured glide (kf.cursor)
     if (endOnClick) {
@@ -336,6 +355,8 @@
       st.sendEl = (A.KC.send_sel && IT.inner.querySelector(A.KC.send_sel)) || IT.inner.querySelector(".nb-send");
     }
     if (msgMode) buildMessage(root, scene, st);
+    st.conv = convMode;
+    if (convMode) { if (thread) thread.style.display = "none"; buildConv(root, scene, st); }
     st.tl = timeline(scene, st);
     if (resWrap) resWrap.style.top = st.tl.resTop + "px";
     return st;
@@ -397,10 +418,10 @@
     T.work = T.work0 != null ? T.work0 : Math.max(lastEx - 0.03, T.typeEnd + 0.6);
     if (st.endOnClick) {
       T.click = st.tl0click = T.work0 != null ? T.work0 : Math.max(lastEx + 0.3, T.typeEnd + 0.8);
-      T.work = 1e9; // no 'working' state: no bubble / thread above the card
+      T.work = st.conv ? T.click : 1e9; // no 'working' state above the card (conv: the composer empties on the click)
       if (!has("out")) T.out = 1e9; // hard cut at the clip end (hold_after_click_s after the click)
     }
-    T.result = p.result ? (has("result") ? b("result") : (st.endOnClick ? T.click + K.cursor_click.result_after_click_s : T.work + 1.2)) : null;
+    T.result = p.result ? (has("result") ? b("result") : (st.conv ? T.click + K.conversation.stream_after_click_s : st.endOnClick ? T.click + K.cursor_click.result_after_click_s : T.work + 1.2)) : null;
     // camera
     const Cm = K.camera;
     T.push = nC ? T.chip[0] + Cm.push.at : T.typeEnd - 0.17;
@@ -471,7 +492,7 @@
     st.bg.style.top = st.cardBottom - Hcur + "px";
     st.bg.style.height = Hcur + "px";
     const Hbox = Hcur; // the composer box itself
-    if (st.thread) {
+    if (st.thread && !st.conv) {
       // kits: the thread (bubble + working) sits above the emptied composer; the camera centres the whole group
       st.thread.style.top = (st.cardBottom - Hcur - st.thread._gap - st.thread._h) + "px";
       let to = 1;
@@ -522,6 +543,11 @@
       const from = parseFloat(sh.from), to = parseFloat(sh.to);
       st.sweepEl.style.setProperty(sh.var, `${lerp(from, to, q)}%`);
     }
+    // neutral card with chips: the prompt drops toward the footer while the first chip row opens (measured)
+    if (!st.thread && st.textDrop && st.textBox && T.grow.length) {
+      const q0 = t < T.grow[0].start ? 0 : TR.prog(t, T.grow[0].start, K.chips.grow.dur, K.chips.grow.ease);
+      st.textBox.style.transform = `translateY(${-st.textDrop * (1 - q0)}px)`;
+    }
     // ── chips
     const Fl = K.chips.flight, Ex = K.chips.expand;
     st.chipEls.forEach((e, i) => {
@@ -539,11 +565,12 @@
       // over the text/footer, then rises into its slot as the card grows row by row
       let pend = 0;
       if (!st.thread) for (const g of T.grow) if (g.row >= st.rowOf[i]) pend += (g.to - g.from) * k * (1 - (t < g.start ? 0 : TR.prog(t, g.start, K.chips.grow.dur, K.chips.grow.ease)));
-      const ride = pend / k;
+      // + the working growth: when sent, everything above the state rides up with the card top (neutral card)
+      const ride = pend / k - (st.thread ? 0 : (st.Hwork - st.Hall) * gw);
       const pe0 = st.neutralChips ? TR.prog(t, T.expand[i], Ex.dur, Ex.ease) : 1;
       const land = st.neutralChips ? K.chips.tile_land_scale : 1;
       const sc = lerp(f.s, land, q) * lerp(1, 1 / land, pe0);
-      e.style.transform = `translateY(${ride}px) perspective(${C.perspective_px}px) translate3d(${(f.dx * u) / st.chipK}px,${(f.dy * u) / st.chipK}px,0) rotateX(${f.rx * u}deg) rotateY(${f.ry * u}deg) rotateZ(${f.rz * u}deg) scale(${sc})`;
+      e.style.transform = `translateY(${ride}px) perspective(${Fl.perspective_px || C.perspective_px}px) translate3d(${(f.dx * u) / st.chipK}px,${(f.dy * u) / st.chipK}px,0) rotateX(${f.rx * u}deg) rotateY(${f.ry * u}deg) rotateZ(${f.rz * u}deg) scale(${sc})`;
       e.style.opacity = Fl.fade_in_s > 0 ? String(clamp((t - t0) / Fl.fade_in_s, 0, 1)) : "1";
       if (st.thread && t >= T.work) e.style.opacity = String(textOut); // kits: attachments go with the message
       if (st.neutralChips) {
@@ -563,19 +590,40 @@
 
     // ── camera
     const rest = Object.assign({}, C.rest, p.tilt || {});
-    const en = C.entrance, qe = TR.prog(t, T.in + en.at, en.dur, en.ease), ue = 1 - qe;
-    let s = lerp(en.from.s, rest.s, qe);
-    let tx = lerp(en.from.tx, rest.tx, qe), ty = lerp(en.from.ty, rest.ty, qe);
-    let rx = lerp(en.from.rx, rest.rx, qe), ry = lerp(en.from.ry, rest.ry, qe), rz = lerp(en.from.rz, rest.rz, qe);
+    const en = C.entrance, cut = p.entrance === "cut";
+    const qe = cut ? 1 : TR.prog(t, T.in + en.at, en.dur, en.ease), ue = 1 - qe;
+    // per-parameter entrance tracks (round 3: fitted on the tracked pose; the settle tail is long)
+    const etr = (key) => {
+      const tr = en.tracks && en.tracks[key];
+      if (cut) return rest[key];
+      if (!tr) return lerp(en.from[key], rest[key], qe);
+      return lerp(tr.from, rest[key], TR.prog(t, T.in + tr.at, tr.dur, tr.ease));
+    };
+    let s = etr("s"), tx = etr("tx"), ty = etr("ty"), rx = etr("rx"), ry = etr("ry"), rz = etr("rz");
     const pushQ = TR.prog(t, T.push, C.push.dur, C.push.ease);
     let sPush = lerp(1, C.push.s_to, pushQ);
     const sAtPull = lerp(1, C.push.s_to, TR.prog(T.pull, T.push, C.push.dur, C.push.ease));
     if (t >= T.pull) sPush = lerp(sAtPull, C.pull.s_to, TR.prog(t, T.pull, T.pullDur, C.pull.ease));
     s *= sPush;
+    // the push also drops the card slightly (tracked), returned by the pull
+    {
+      const pushAt = TR.prog(Math.min(t, T.pull), T.push, C.push.dur, C.push.ease);
+      const back = t >= T.pull ? TR.prog(t, T.pull, T.pullDur, C.pull.ease) : 0;
+      ty += (C.push.ty_add || 0) * pushAt * (1 - back);
+    }
     // keep the growing card centred
     ty += s * (Hcur - st.H0) / 2 * C.center_on_card.k;
     // MO05 result: pan up / pull back to the result panel, tilt bump
-    if (T.result != null && st.msgMode) {
+    if (st.conv) {
+      // card → docked composer (screen space), tilt flattens; the conversation view comes in behind it
+      const CV = K.conversation, qm = TR.prog(t, T.click, CV.move_dur_s, CV.move_ease);
+      if (t >= T.click && !st.clickRect && !st._inner) { st._inner = true; seek(st, T.click, scene); st.clickRect = st.bg.getBoundingClientRect(); st._inner = false; }
+      if (t >= T.click && st.clickRect) {
+        rx *= 1 - qm; ry *= 1 - qm; rz *= 1 - qm;
+        st.convMove = qm;
+      } else st.convMove = 0;
+      seekConv(st, t, scene);
+    } else if (T.result != null && st.msgMode) {
       // Claude-style result: the conversation view (kit.message) comes in around the sent card (same ease + tilt
       // language); the card sinks toward the docked composer and fades
       const M = K.message, qr = TR.prog(t, T.result, K.result.dur, K.result.ease);
@@ -604,6 +652,17 @@
     st.exitWrap.style.transform = ds > 0 ? `scale(${1 + ds})` : "";
     const blur = Math.min(X.blur_max_px, ds * X.blur_px_per_ds * Math.max(0, ds - 0.2));
     st.exitWrap.style.filter = blur > 0.3 ? `blur(${blur}px)` : "";
+    if (st.conv && st.convMove > 0 && st.clickRect) {
+      // map the card's LIVE box (after this frame's camera) onto the docked composer, by the move progress
+      st.exitWrap.style.transform = "";
+      const r = st.bg.getBoundingClientRect(), D = st.dockRect, qm = st.convMove;
+      const sc = lerp(1, D.w / r.width, qm);
+      const bx = r.left + r.width / 2, by = r.bottom;           // anchor: bottom centre of the card
+      st.exitWrap.style.transformOrigin = `${bx}px ${by}px`;
+      st.exitWrap.style.transform = `translate(${(D.x + D.w / 2 - bx) * qm}px,${(D.y + D.h - by) * qm}px) scale(${sc})`;
+      st.exitWrap.style.filter = "";
+      st.exitWrap.style.opacity = String(1 - clamp((t - T.click - K.conversation.move_dur_s + K.conversation.card_fade_s) / K.conversation.card_fade_s, 0, 1));
+    }
     if (st.cur) seekCursor(st, t, scene, s);
   }
 
@@ -613,6 +672,7 @@
     const K = scene.kf, CC = K.cursor_click, T = st.tl, tab = CC.entry.table;
     const tr = t - T.click + tab[tab.length - 1][0];
     if (tr < tab[0][0] || !st.sendEl) { st.cur.style.visibility = "hidden"; return; }
+    if (st.conv && t > T.click && st.curAtClick) { const q = st.curAtClick; st.cur.style.transform = q.tf; st.cur.style.opacity = String(q.a * (1 - clamp((t - T.click - 0.6) / 0.3, 0, 1))); st.cur.style.visibility = "visible"; return; }
     const r = st.sendEl.getBoundingClientRect();
     const d = r.width, rx = r.left + d / 2 + CC.end_offset_frac_of_button[0] * d, ry = r.top + r.height / 2 + CC.end_offset_frac_of_button[1] * d;
     let row = tab[tab.length - 1];
@@ -625,6 +685,7 @@
     st.cur.style.visibility = a > 0.001 ? "visible" : "hidden";
     st.cur.style.opacity = String(a);
     st.cur.style.transform = `translate(${rx + row[1] * sc - 8}px,${ry + row[2] * sc - 8}px) scale(${sc})`;
+    if (st.conv && tr >= tab[tab.length - 1][0] && !st.curAtClick) st.curAtClick = { tf: st.cur.style.transform, a };
   }
 
   // ───────────────────────── MO05 in a kit's conversation view (kit.message; Claude) ─────────────────────────
@@ -652,6 +713,7 @@
         while (i < L.length && !/^```/.test(L[i])) body.push(L[i++]);
         i++;
         if (opts && opts.artifact && /^html?$/i.test(fence[1])) out.push(opts.artifact);
+        else if (opts && opts.code && opts.code(fence[1], body.join("\n"))) out.push(opts.code(fence[1], body.join("\n")));
         else out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`);
         continue;
       }
@@ -695,7 +757,12 @@
     TR.addCss(scope(M.css) + "\n" + scope(SM.md_css) + (art ? "\n" + scope(SM.artifact_css) : ""));
     const tok = Object.entries(Object.assign({}, kit.tokens || {}, M.tokens || {})).filter(([k2, v]) => k2.startsWith("--")).map(([k2, v]) => `${k2}:${v}`).join(";");
     const outer = TR.el("div", "position:absolute;left:0;top:0;width:1920px;height:1080px;opacity:0;transform-origin:960px 540px", root);
-    const inner = TR.el("div", `position:absolute;left:0;top:0;width:${M.view_w}px;height:${M.view_h}px;transform:scale(${1920 / M.view_w});transform-origin:0 0;${tok}`, outer);
+    // round 3: text replies are laid out with CSS zoom (crisp glyphs at screen size). A transform scale on top of the
+    // kit's will-change layer rasterised the reply at 1× and upscaled it (Jake: "blurry"). The artifact view keeps the
+    // round-2 path unchanged (Jake likes it as it is).
+    const inner = TR.el("div", art ? `position:absolute;left:0;top:0;width:${M.view_w}px;height:${M.view_h}px;transform:scale(${1920 / M.view_w});transform-origin:0 0;${tok}`
+      : `position:absolute;left:0;top:0;width:${M.view_w}px;height:${M.view_h}px;zoom:${1920 / M.view_w};${tok}`, outer);
+    if (!art) TR.addCss(`.${cls} .clm-col{will-change:auto}`);
     inner.className = cls;
     let title = "";
     if (art) { const m = String(r.html).match(/<title>([^<]*)<\/title>/i); title = r.title || (m ? m[1].trim() : ""); }
@@ -737,6 +804,112 @@
     if (m.panel) {
       const qa = TR.prog(t, T.result + M.artifact_at_s, M.artifact_dur_s, K.result.ease);
       m.panel.style.transform = `translateX(${(1 - qa) * 100}%)`;
+    }
+  }
+
+  // ───────────────────────── Claude conversation after send (round 3; kit.conversation recipe) ─────────────────────────
+  function buildConv(root, scene, st) {
+    const kit = scene.kit, M = kit.message, S = scene.style, cls = st.A.cls, p = st.p;
+    const scope = (css) => String(css || "").replace(/(^|\})\s*([^{}@]+)\{/g, (m, a, sel) =>
+      `${a} ${sel.split(",").map((s) => `.${cls} ${s.trim()}`).join(",")}{`);
+    const R = kit.result;
+    TR.addCss([M.css, R.user && R.user.css, R.text && R.text.css, kit.working && kit.working.css, kit.code && kit.code.css, S.message.md_css, S.conversation.css]
+      .filter(Boolean).map(scope).join("\n"));
+    const tok = Object.entries(Object.assign({}, kit.tokens || {}, kit.tokens_v2 || {}, M.tokens || {})).filter(([k2]) => k2.startsWith("--")).map(([k2, v]) => `${k2}:${v}`).join(";");
+    // behind the card (the card docks INTO this view's composer)
+    const outer = document.createElement("div");
+    outer.style.cssText = "position:absolute;left:0;top:0;width:1920px;height:1080px;opacity:0";
+    root.insertBefore(outer, st.exitWrap);
+    const inner = TR.el("div", `position:absolute;left:0;top:0;width:${M.view_w}px;height:${M.view_h}px;zoom:${1920 / M.view_w};${tok}`, outer);
+    inner.className = cls;
+    inner.innerHTML = TR.fill(M.html, { content_html: "", title: "", placeholder: M.placeholder, model_label: kit.model_label || "", disclaimer: M.disclaimer });
+    const col = inner.querySelector(M.scroll_sel);
+    const msg = col.querySelector(M.text_sel); if (msg) msg.style.display = "none";
+    const sp0 = col.querySelector(".clm-spark"); if (sp0) sp0.style.display = "none";
+    const th = document.createElement("div"); th.className = "pc-conv"; col.prepend(th);
+    // the user's turn: attachments (the kit's tiles) above the bubble, right-aligned
+    const att = p.chips.length ? `<div class="pc-conv-att">${p.chips.map((c) => st.A.chipHtml(c)).join("")}</div>` : "";
+    th.innerHTML = `<div class="pc-conv-user">${att}${TR.fill(R.user.html, { text: p.prompt, user_actions_html: "" })}</div>`;
+    const work = TR.el("div", "", th); work.className = "pc-conv-work";
+    const label = (kit.working && kit.working.texts && kit.working.texts.thinking) || "Thinking";
+    work.innerHTML = kit.working ? TR.fill(kit.working.html, { text: label, sub: "" }) : "";
+    let reply = null, words = [], tops = [];
+    if (p.result && R.text) {
+      reply = TR.el("div", "", th); reply.className = "pc-conv-reply";
+      const code = (lang, body) => kit.code ? TR.fill(kit.code.html, { lang: lang || "", code_html: esc(body) }) : null;
+      reply.innerHTML = TR.fill(R.text.html, { text_html: mdToBlocks(p.result.text, { code }) });
+      const md = reply.querySelector(".clk-reply-md"); if (md) md.classList.add("pc-md");
+      // words → spans (the stream reveals them in order; nothing is rewritten)
+      const walker = document.createTreeWalker(md || reply, NodeFilter.SHOW_TEXT);
+      const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const n of nodes) {
+        if (!n.nodeValue) continue;
+        const parts = n.nodeValue.split(/(\s+)/), frag = document.createDocumentFragment();
+        for (const part of parts) {
+          if (!part) continue;
+          if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); continue; }
+          const sp = document.createElement("span"); sp.textContent = part; frag.appendChild(sp); words.push(sp);
+        }
+        n.parentNode.replaceChild(frag, n);
+      }
+      const cr = col.getBoundingClientRect(), z = 1920 / M.view_w;
+      tops = words.map((w) => { const r = w.getBoundingClientRect(); return (r.bottom - cr.top) / z; });
+    }
+    st.cv = { outer, col, user: th.querySelector(".pc-conv-user"), work, reply, words, tops, spark: reply ? reply.querySelector(".clk-reply-spark") : null,
+      sweep: work.querySelector(".clk-work-title"), wspark: work.querySelector(".clk-work-spark"),
+      visBottom: M.dock_top - M.after_text_gap - (parseFloat(getComputedStyle(col).top) || 96), shown: -1 };
+    const z = 1920 / M.view_w, comp = kit.message.css.match(/\.clm-comp\{[^}]*left:([\d.]+)px;top:([\d.]+)px;[^}]*width:([\d.]+)px;height:([\d.]+)px/);
+    const dockTop = Number((M.css.match(/\.clm-dock\{[^}]*top:([\d.]+)px/) || [, 750])[1]);
+    st.dockRect = comp ? { x: Number(comp[1]) * z, y: (dockTop + Number(comp[2])) * z, w: Number(comp[3]) * z, h: Number(comp[4]) * z } : { x: 536.5, y: 914.6, w: 847, h: 121.5 };
+  }
+
+  function seekConv(st, t, scene) {
+    const K = scene.kf, CV = K.conversation, T = st.tl, c = st.cv, kit = scene.kit;
+    c.outer.style.opacity = String(clamp((t - T.click) / CV.view_in_s, 0, 1));
+    const qu = TR.prog(t, T.click + CV.user_at_s, CV.user_in_s, K.result.ease);
+    c.user.style.opacity = String(qu);
+    c.user.style.transform = `translateY(${CV.user_rise_px * (1 - qu)}px)`;
+    // working (spark + label with the kit's sweep) until the stream starts
+    const w0 = T.click + CV.working_at_s, w1 = T.result != null ? T.result : 1e9;
+    const wo = clamp((t - w0) / 0.2, 0, 1) * (1 - clamp((t - w1) / 0.15, 0, 1));
+    c.work.style.opacity = String(wo);
+    c.work.style.display = t >= w1 + 0.15 ? "none" : "";
+    const sh = kit.working && kit.working.shimmer;
+    if (sh && c.sweep) {
+      const ph = ((t - w0) % sh.period_s + sh.period_s) % sh.period_s;
+      c.sweep.style.setProperty(sh.var, `${lerp(parseFloat(sh.from), parseFloat(sh.to), clamp(ph / sh.sweep_s, 0, 1))}%`);
+    }
+    const rot = `${((t - T.click) / CV.spark_period_s) * 360}deg`;
+    if (c.wspark) c.wspark.style.setProperty("--cl-spark-rot", rot);
+    // the REAL reply streams word by word; the newest ~10 characters sit at the kit's tail opacity (clip 6)
+    if (c.reply) {
+      const n = t < T.result ? 0 : Math.min(c.words.length, Math.floor((t - T.result) * CV.stream_wps));
+      if (n !== c.shown) {
+        let tailChars = 0;
+        const tailN = kit.result.text.stream ? kit.result.text.stream.tail_chars : 10;
+        for (let i = 0; i < c.words.length; i++) {
+          const w = c.words[i];
+          if (i >= n) { w.style.display = "none"; continue; }
+          w.style.display = "";
+          w.classList.remove("clk-tail");
+        }
+        for (let i = n - 1; i >= 0 && tailChars < tailN && n < c.words.length; i--) { c.words[i].classList.add("clk-tail"); tailChars += c.words[i].textContent.length + 1; }
+        // blocks with nothing revealed yet are hidden (no empty code frames / bullets ahead of the stream)
+        c.reply.querySelectorAll(".pc-blk").forEach((b) => { b.style.display = b.querySelector("span:not([style*='none'])") ? "" : "none"; });
+        c.shown = n;
+      }
+      c.reply.style.display = t >= T.result ? "" : "none";
+      if (c.spark) c.spark.style.setProperty("--cl-spark-rot", rot);
+      // keep the stream's end above the dock: target from the precomputed word bottoms, smoothed over a window
+      const target = (tt) => {
+        const k = tt < T.result ? 0 : Math.min(c.words.length, (tt - T.result) * CV.stream_wps);
+        if (k <= 0) return 0;
+        const i = Math.min(c.tops.length - 1, Math.floor(k));
+        return Math.max(0, c.tops[i] + CV.spark_room_css - c.visBottom);
+      };
+      let acc = 0; const N = 8;
+      for (let j = 0; j < N; j++) acc += target(t - (CV.scroll_smooth_s * j) / (N - 1));
+      c.col.style.transform = `translateY(${-acc / N}px)`;
     }
   }
 

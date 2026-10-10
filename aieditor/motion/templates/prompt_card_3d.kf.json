@@ -24,15 +24,15 @@
   "chip_gap_default_s": 0.4
  },
  "camera": {
-  "perspective_px": 1000,
-  "perspective_note": "the per-frame fit error is flat for 450-1700 px (5.9-7.0 px max); 1000 chosen",
+  "perspective_px": 2600,
+  "perspective_note": "round 3: 2600 px (was 1000). The settled-phase fit is flat from 450 to 2600 px; the motion-blurred whip frames f5-f13 fit better at 2600 (send + '+' button targets: 801 vs 962 at 1000 px). Chip flights keep their own 1000 px (chips.flight.perspective_px).",
   "origin": [
    957,
    555
   ],
   "rest": {
    "s": 1.0,
-   "tx": 6.0,
+   "tx": 2.0,
    "ty": 3.0,
    "rx": 0.0,
    "ry": 0.6,
@@ -58,10 +58,79 @@
     "rz": 12
    },
    "note": "whip-in from a close, tilted view: send-button displacement decays 481 px (f3) -> 22 px (f13), ~0.74x per frame; start pose extrapolated (f1-f8 are motion-blurred, f1-f2 hold the previous shot)",
-   "blur_px": 6
+   "blur_px": 6,
+   "tracks": {
+    "s": {
+     "from": 3.253,
+     "at": 0.033,
+     "dur": 1.164,
+     "ease": [
+      0.1,
+      1.2,
+      0.3,
+      0.9
+     ]
+    },
+    "ty": {
+     "from": 152.3,
+     "at": 0.033,
+     "dur": 0.952,
+     "ease": [
+      0.3,
+      1.3,
+      0.1,
+      0.9
+     ]
+    },
+    "rz": {
+     "from": 19.95,
+     "at": 0.05,
+     "dur": 0.539,
+     "ease": [
+      0.2,
+      1.4,
+      0,
+      0.5
+     ]
+    },
+    "ry": {
+     "from": 14.8,
+     "at": 0.05,
+     "dur": 0.8,
+     "ease": [
+      0.5,
+      0.4,
+      0,
+      0.8
+     ]
+    },
+    "rx": {
+     "from": 39.9,
+     "at": 0.033,
+     "dur": 0.5,
+     "ease": [
+      0.2,
+      0.8,
+      0.5,
+      1
+     ]
+    },
+    "tx": {
+     "from": 154.0,
+     "at": 0.033,
+     "dur": 0.376,
+     "ease": [
+      0.2,
+      0.8,
+      0.5,
+      1
+     ]
+    }
+   },
+   "tracks_note": "round 3: per-parameter tracks; settle tails fitted on the tracked pose f9-f60 (s 1.30 f9 -> 1.00 f42); start values + durations solved by coordinate descent against the send button (position + size) and the '+' button tracked in the motion-blurred frames f5-f13 (+f17-f41 half weight), bounded rx 0-40, rz 0-20, ry +-15 deg (the round-1/2 fit was one frame early)"
   },
   "push": {
-   "s_to": 1.327,
+   "s_to": 1.35,
    "dur": 1.6,
    "ease": [
     0.5,
@@ -72,10 +141,12 @@
    "max_err": 0.037,
    "anchor": "chip_0",
    "at": -0.6,
-   "note": "push-in 1.0 -> 1.327 from f64 (t 2.10) to f112, peak f125; with no chips it starts at typing end - 0.17 s"
+   "note": "push-in 1.0 -> 1.327 from f64 (t 2.10) to f112, peak f125; with no chips it starts at typing end - 0.17 s",
+   "ty_add": 9.0,
+   "round3_note": "round 3: s_to 1.327 -> 1.35 and +9 px ty during the push (tracked ty 3 -> 12 over f64-f106; ours was 2 % small and 12 px high there); the pull returns both"
   },
   "pull": {
-   "s_to": 0.989,
+   "s_to": 1.0,
    "dur": 2.4,
    "ease": [
     0.5,
@@ -89,7 +160,7 @@
    "note": "pull back 1.327 -> 0.989 from f126 (t 4.17) to f198"
   },
   "center_on_card": {
-   "k": 0.95,
+   "k": 1.0,
    "note": "the camera keeps the growing card centred: ty += s * dH / 2 with the card-growth easing (measured +30 px at row 1, +56 row 2, +34 row 3 (s falling), +53 working)"
   },
   "exit": {
@@ -205,7 +276,8 @@
     }
    ],
    "note": "each file flies in from beside / below the card as an icon tile, large (x2.2-2.6, near the camera) and tilted, and lands in 8-9 frames (c0 f84->f92, c1 f100->f108, c2 f106->f114, c3 f118->f126, c4 f130->f138); chip beats = first visible frame",
-   "ease_note": "hand-fitted to the tile path (c3 holds big at the top f118-f122 then lands f126; c1 crosses fast): ease-in-out; not a least-squares fit (tiles are motion-blurred and occluded)"
+   "ease_note": "hand-fitted to the tile path (c3 holds big at the top f118-f122 then lands f126; c1 crosses fast): ease-in-out; not a least-squares fit (tiles are motion-blurred and occluded)",
+   "perspective_px": 1000
   },
   "tile_px": 75,
   "grow": {
@@ -420,5 +492,26 @@
   "artifact_at_s": 0.25,
   "artifact_dur_s": 0.5,
   "note": "MO05 in the kit's conversation view (Claude): NOT in the reference — uses the measured result ease [0.2,0.8,0.5,1] / 0.6 s + the tilt bump; reply blocks fade in top-down (stream-like), then the column scrolls; the artifact panel slides in from the right"
+ },
+ "conversation": {
+  "move_dur_s": 0.55,
+  "move_ease": [
+   0.2,
+   0.8,
+   0.5,
+   1.0
+  ],
+  "card_fade_s": 0.15,
+  "view_in_s": 0.3,
+  "user_at_s": 0.2,
+  "user_in_s": 0.35,
+  "user_rise_px": 14,
+  "working_at_s": 0.55,
+  "stream_after_click_s": 1.25,
+  "stream_wps": 60,
+  "spark_period_s": 2.4,
+  "spark_room_css": 40,
+  "scroll_smooth_s": 0.5,
+  "note": "round 3 (Claude look, kit.conversation recipe): on the click the composer docks at the bottom (measured result ease), the user bubble rises in top-right, the kit's working state (spark + 'Thinking' sweep) shows, then the REAL reply streams (60 words/s — not measurable: clip 6 holds a paused frame; verify) with the clip-6 tail; the column scrolls to keep the stream above the dock (smoothed). Timings are design choices, not measurements."
  }
 }

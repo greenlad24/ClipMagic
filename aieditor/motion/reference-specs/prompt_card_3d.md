@@ -127,3 +127,31 @@ Inter (already in motion/fonts). No font was added.
     right with the generated HTML rendered in a sandboxed iframe. The markdown and artifact styling are built from
     Claude's tokens, so verify them against the live app.
 - **Font added:** Noto Color Emoji (OFL, google/fonts), so emoji in real replies render (e.g. 🌶️ in the writing reply).
+
+## Round 3 (2026-10-10, Jake: "not replicated")
+Per-element error vs clip 4. Medians per phase, measured in card space from both homographies (ours re-tracked).
+
+| phase | card corner px | scale % | card height px | glass fill Δ (0-255) | shadow Δ |
+|---|---|---|---|---|---|
+| entrance f10-20 | 48.5 → 18.9 | 6.8 → 0.9 | 20 → 9 | 8.6 → 11.6 | 13.9 → 3.8 |
+| typing f21-83 | 9.9 → 5.5 | 1.1 → 0.7 | 17 → 4 | 13.7 → 2.9 | 15.0 → 4.7 |
+| chips f84-178 | 14.2 → 4.3 | 1.5 → 0.3 | 50.5 → 17.5 | 3.4 → 11.9 | 14.1 → 4.3 |
+| working f179-215 | 20.1 → 2.1 | 1.3 → 0.1 | 7.5 → 21 | 3.1 → 11.4 | 13.3 → 4.4 |
+| exit f216-226 | 21.2 → 3.5 | 1.2 → 0.1 | 9 → 22 | 5.8 → 13.9 | 13.7 → 4.5 |
+
+Send-button error during the whip went from 86-136 px to 11-25 px at f4-f8 (f10 2.8 px).
+
+Changes:
+- Per-parameter entrance tracks (kf camera.entrance.tracks). Perspective is 2600 px.
+- Layout:
+  - The text drops toward the footer as chips arrive.
+  - Chip state: padding-top 36, row gap 20.
+  - Working-state footer margin.
+- The push goes to s 1.35 with +9 px ty.
+- Glass fill: darker on the left, brighter on the right.
+- The shadow is cast left, not below.
+
+Fill regressed in the chip and working phases. The chip/working fill is ~12 levels brighter than the reference near the left of the card. The working-phase card height is +21 px.
+New params:
+- `entrance`: `"whip"` | `"cut"`. The default is `"cut"` when `result` is set.
+- Claude conversation recipe (kit v2): `kf.conversation`, `style.conversation`.
