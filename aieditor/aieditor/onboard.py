@@ -976,7 +976,13 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                      "route": route_, "status": status, **kw})
 
     # ── B (P3) first: the pictures the other routes act on ──
-    n_need = len(usable) + len(report["B"])
+    def _aid_of(r):
+        pr_ = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
+        m_ = re.search(r"asset '([\w-]+)'", str(r.get("why")))
+        return pr_.get("asset_id") or (m_.group(1) if m_ else None) or str(r.get("need") or r.get("sentence") or "")[:60]
+    # the plan names an asset once per beat that shows it: count and make each asset ONCE (TEST v3: 45 rows, ~15 assets)
+    n_need = len(usable | {_aid_of(r) for r in report["B"]})
+    failed = {}
     for r in report["B"]:
         ctx.check_cancel()
         ctx.tally = (len([a for a in usable if (by_asset.get(a) or {}).get("status") == "ready"]), max(1, n_need))
@@ -991,6 +997,9 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         if aid in usable:
             note(r, "P3", "already produced", asset=aid)
             continue
+        if aid in failed:                                  # already tried with every route: not again per beat
+            note(r, "P3", "failed", asset=aid, why2=failed[aid])
+            continue
         made_from = [m for m in pr.get("made_from") or [] if m in usable]
         if not made_from and asset_kind(desc) == "app_generation":
             prior = _prior_asset(answer, pr.get("word_id") or (r.get("word_ids") or [None])[0], pos, usable)
@@ -1002,6 +1011,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             usable.add(aid)
             note(r, "P3", "produced", asset=aid, producer=row["kind"])
         else:
+            failed[aid] = row.get("why")
             held.append({"reason": "asset_failed", "detail": f"{aid}: {row.get('why')}"[:300]})
             note(r, "P3", "failed", asset=aid, why2=row.get("why"))
 
