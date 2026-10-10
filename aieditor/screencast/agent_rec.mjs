@@ -1160,8 +1160,10 @@ async function act(a) {
       let p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from, p1 = Array.isArray(a.drag_to) ? a.drag_to : a.to;
       if ((!Array.isArray(p0) || !Array.isArray(p1)) && a.selector && Array.isArray(a.rel_from) && Array.isArray(a.rel_to)) {
         // element-relative drag (Jake R14 P2 per-video playbook): fractions of the first VISIBLE match's box
+        // the LARGEST visible match: the image in the open viewer, not the same picture's thumbnail in the chat behind it
         const r = await page.evaluate((sel) => { const els = [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect())
-          .filter((q) => q.width > 20 && q.height > 20 && q.bottom > 0 && q.top < innerHeight); return els[0] ? [els[0].x, els[0].y, els[0].width, els[0].height] : null; }, a.selector).catch(() => null);
+          .filter((q) => q.width > 20 && q.height > 20 && q.bottom > 0 && q.top < innerHeight).sort((p, q) => q.width * q.height - p.width * p.height);
+          return els[0] ? [els[0].x, els[0].y, els[0].width, els[0].height] : null; }, a.selector).catch(() => null);
         if (!r) return { ok: false, error: `no element ${a.selector} to drag on` };
         p0 = [(r[0] + a.rel_from[0] * r[2]) / SHOT_F, (r[1] + a.rel_from[1] * r[3]) / SHOT_F];
         p1 = [(r[0] + a.rel_to[0] * r[2]) / SHOT_F, (r[1] + a.rel_to[1] * r[3]) / SHOT_F];

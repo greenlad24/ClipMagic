@@ -325,14 +325,18 @@ playbook action that code will replay 3 times from fresh sessions. Rules (code e
 - an action on a spot of an image/canvas is element-relative: click {"selector", "rel": [fx, fy]}, drag
   {"selector", "rel_from": [fx, fy], "rel_to": [fx, fy]} (fractions 0-1 of the element's box)
 - `requires` = existing playbook action ids that must run first (e.g. open_image_viewer, viewer_markup)
+- selectors are plain CSS for document.querySelectorAll (no Playwright '>>', 'nth=', ':has-text'); test one with
+  `count` before you rely on it; a drag/draw on an element uses its LARGEST visible match (the viewer image, not the
+  chat thumbnail behind it); `observe` refs (r12) work while exploring but never in a proposal
+- the post assert must prove the step LANDED: something that appears only after it (look before and after)
 - if the control does not exist anywhere (after looking in the '/' and '+' menus, the toolbar, the page), answer
   "absent" with what you searched
 Answer ONE JSON object per turn, nothing else: {"do": "observe|find|act|propose|absent|give_up", "note": "<short>",
-"texts": [...] (find), "action": {...} (act), "proposal": {...} (propose)}."""
+"texts": [...] (find: labels; count: CSS selectors), "action": {...} (act), "proposal": {...} (propose)}."""
 EXPLORE_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["do", "note"],
     "properties": {
-        "do": {"type": "string", "enum": ["observe", "find", "act", "propose", "absent", "give_up"]},
+        "do": {"type": "string", "enum": ["observe", "find", "count", "act", "propose", "absent", "give_up"]},
         "note": {"type": "string"},
         "texts": {"type": "array", "items": {"type": "string"}},
         "action": {"type": "object"},
@@ -440,7 +444,7 @@ class Explorer:
                   f"Generating allowed: {'yes (spaced, counted)' if allow_generate else 'no'}.\n"
                   f"START: {start_url} (set-dressed: Chat mode, sidebar hidden, menus closed).\n"
                   f"THIS VIDEO'S PLAYBOOK (actions you may name in requires):\n{_pb_summary(pb)}\n"
-                  "TOOLS (one per turn): observe | find {texts} | act {action: {type: click|drag|key|type|hover|scroll|"
+                  "TOOLS (one per turn): observe | find {texts: labels} | count {texts: CSS selectors → how many match} | act {action: {type: click|drag|key|type|hover|scroll|"
                   "goto|hold, ...}} | propose {proposal: {id, kind, label, selectors, params, requires, pre, post, intents,"
                   " start: home|chat_with_image, typical_latency_s}} | absent | give_up.\n"
                   "Asserts: {kind: selector|absent|text, selector|value}. A good post assert proves the step LANDED.")
@@ -452,7 +456,7 @@ class Explorer:
             log.append(f"previous proposal failed its replays: {feedback}")
         for turn in range(1, self.max_turns + 1):
             dyn = [{"type": "text", "text": "LOG:\n" + "\n".join(log[-12:]) + f"\nTURN {turn}/{self.max_turns}. "
-                    f"CURRENT: {json.dumps({k: obs.get(k) for k in ('url', 'ok', 'error', 'refused', 'found')}, default=str)[:3000]}"}]
+                    f"CURRENT: {json.dumps({k: obs.get(k) for k in ('url', 'ok', 'error', 'refused', 'found', 'counts')}, default=str)[:3000]}"}]
             if obs.get("items"):
                 dyn.append({"type": "text", "text": "ELEMENTS: " + json.dumps([{k: i.get(k) for k in ("ref", "tag", "text", "box")}
                                                                              for i in obs["items"][:120]])[:9000]})
@@ -467,6 +471,10 @@ class Explorer:
             log.append(f"{turn}: {do} — {str(ans.get('note'))[:160]}")
             if do == "observe":
                 obs = transport.send({"cmd": "observe"})
+            elif do == "count":
+                sels = list(ans.get("texts") or ([ans.get("selector")] if ans.get("selector") else []))[:6]
+                obs = {"counts": {x: transport.send({"cmd": "count", "selector": x}).get("n") for x in sels}}
+                log[-1] += f" → {obs['counts']}"
             elif do == "find":
                 obs = {"found": transport.send({"cmd": "find", "texts": list(ans.get("texts") or [])[:6]}).get("found", {})}
             elif do == "act":
