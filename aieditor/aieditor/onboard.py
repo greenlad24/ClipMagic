@@ -845,7 +845,10 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
         return _row(aid, desc, "not_a_picture", why, made_from=list(made_from))
     # an input AND its result in one description ("b/w photo + colorized result"): TWO pictures — the input (a real
     # photo he brings) first, then the result made FROM it (TEST v3: a before/after collage with a caption baked in)
-    pair = split_pair(desc) if not made_from and not getattr(ctx, "_composing", False) else None
+    # a merge of SEVERAL sources is not an input+result pair: its sources are made one by one below (re-run 5: "three
+    # source photos and the merged result" became ONE input picture of three photos — a collage)
+    pair = split_pair(desc) if not made_from and not getattr(ctx, "_composing", False) \
+        and not _multi_source(" ".join(str(x or "") for x in (desc, sentence, window))) else None
     if pair:
         iid = f"{aid}_input"[:40]
         ctx.log(f"{aid}: names an input and its result — making the input '{iid}' first, then the result from it")
