@@ -119,6 +119,21 @@ def daily_total(now=None, p=None):
     return usd
 
 
+def frees_at(need_usd=1.0, workflow=None, now=None, p=None):
+    """When the rolling 24 h total drops far enough below the daily cap for need_usd more (the oldest spending rolls
+    off first). On a factory server the main box's lines are not here: the worker on the box re-checks at claim."""
+    now = now or time.time()
+    _, day_cap = caps(workflow or "creative")
+    live = sorted((float(r.get("ts") or 0), float(r.get("usd") or 0)) for r in rows(p) if (r.get("ts") or 0) > now - DAY)
+    total = sum(u for _, u in live)
+    for ts, u in live:
+        if total + need_usd <= day_cap:
+            break
+        total -= u
+        now = max(now, ts + DAY)
+    return now + 60
+
+
 def job_total(job, p=None):
     usd = sum(float(r.get("usd") or 0) for r in rows(p) if r.get("job") == job)
     return usd + (_env_float(ENV_PRIOR_JOB) or 0.0)

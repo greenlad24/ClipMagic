@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import agentrec, config, director, llm, planfit, skill, takes
+from . import apiledger, agentrec, config, director, llm, planfit, skill, takes
 
 ALL_STEPS = ["readiness", "assets", "plan", "route", "set_dressing", "dryrun", "gate"]
 DARK_LUM = 60                                  # mean screen luminance (0-255) below this = dark theme
@@ -2037,8 +2037,10 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
                 g["held"] = list(pdoc.get("held") or [])
             if g["held"]:
                 note += f"; HELD ({', '.join(sorted({h['reason'] for h in g['held']}))})"
-        except (InterruptedError, genledger.QuotaWait):
-            raise                                        # cancelled / the app's generations wait (never a hold)
+        except (InterruptedError, genledger.QuotaWait, apiledger.BudgetExceeded):
+            # cancelled / the app's generations wait / the Claude API cap: never carry on into recording with an
+            # unfinished pre-production (TEST v3 22:42: the daily cap hit mid-assets and the job went on recording)
+            raise
         except Exception as e:  # noqa: BLE001 — factory rule: route, don't fail
             g["flow"] = {"app": row["url"], "status": "failed", "error": f"{type(e).__name__}: {e}"[:400]}
             note += "; pre-production flow failed (see log)"

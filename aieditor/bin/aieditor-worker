@@ -457,6 +457,13 @@ def run_preprod(job, req, info, fps):
         # the app's generations stop for now (the daily cap / a wall / a limit message): the job WAITS in the queue
         # and continues afterwards (pre-production reuses what it already made) — never held (Jake 2026-10-10)
         raise Waiting(exc.resume_at, exc.status()) from None
+    except apiledger.BudgetExceeded as exc:
+        if exc.which == "daily":
+            # the rolling 24 h Claude API cap: wait until enough of the window frees, then go on (reuses everything)
+            at = apiledger.frees_at(1.0)
+            raise Waiting(at, f"Waiting: the Claude API daily cap is reached — continues about "
+                              f"{time.strftime('%H:%M', time.gmtime(at + 7 * 3600))} Bangkok time") from None
+        raise Held(longedit.add_held(d, apiledger.BudgetExceeded.reason, str(exc))) from None
     note, usd = out, 0.0
     if isinstance(out, tuple):
         note, usd = (list(out) + [0.0])[:2]
