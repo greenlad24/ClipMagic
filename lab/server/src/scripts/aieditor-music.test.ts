@@ -71,20 +71,23 @@ async function main() {
   fs.writeFileSync(path.join(lib, "FLUEJOMVaK6Z3SrFJmclQ.wav.lufs"), "-21.5");
   fs.writeFileSync(path.join(labUploads, "FLUEJOMVaK6Z3SrFJmclQ.wav"), "AUDIO sherlock");
   fs.writeFileSync(path.join(labUploads, "X5RLEsdHYxFeH7rMrCrFh.wav"), "AUDIO pizzicato");
+  fs.writeFileSync(path.join(labUploads, "96mKiTUqNJuUXDuAhb7RZ.wav"), "AUDIO curiouser");
   const lab = async () => [
     { labId: "L1", title: "Cello Sherlok", file: path.join(labUploads, "FLUEJOMVaK6Z3SrFJmclQ.wav") },
     { labId: "L2", title: "Cello Pizzicato", file: path.join(labUploads, "X5RLEsdHYxFeH7rMrCrFh.wav") },
     { labId: "L3", title: "Gone", file: path.join(labUploads, "missing.wav") },
+    { labId: "L4", title: "Curiouser Celloloop", file: path.join(labUploads, "96mKiTUqNJuUXDuAhb7RZ.wav") },
   ];
 
   await check("the Lab's tracks are imported once, with their titles; facts measured once and cached", async () => {
     const a = await mu.listMusic({ lab });
-    assert.deepEqual(a.tracks.map((t) => [t.id, t.title]), [
+    assert.deepEqual(a.tracks.map((t) => [t.id, t.title]), [["96mKiTUqNJuUXDuAhb7RZ.wav", "Curiouser Celloloop"],
       ["FLUEJOMVaK6Z3SrFJmclQ.wav", "Cello Sherlok"], ["X5RLEsdHYxFeH7rMrCrFh.wav", "Cello Pizzicato"]]);
-    assert.equal(a.tracks[0].lufs, -21.5);                     // the worker's cached value is kept
-    assert.equal(a.tracks[1].lufs, -18.25);
-    assert.equal(a.tracks[1].duration, 42.5);
-    assert.equal(a.default, "FLUEJOMVaK6Z3SrFJmclQ.wav");     // no default set: the first (the old behaviour)
+    assert.equal(a.tracks[1].lufs, -21.5);                     // the worker's cached value is kept
+    assert.equal(a.tracks[2].lufs, -18.25);
+    assert.equal(a.tracks[2].duration, 42.5);
+    // Auto still means the track every edit used so far, though an import sorts before it
+    assert.equal(a.default, "FLUEJOMVaK6Z3SrFJmclQ.wav");
     assert.equal(fs.readFileSync(path.join(lib, "X5RLEsdHYxFeH7rMrCrFh.wav.lufs"), "utf8"), "-18.25");
     const n = measures;
     await mu.listMusic({ lab });
@@ -134,7 +137,7 @@ async function main() {
     assert.ok(!fs.existsSync(path.join(lib, "X5RLEsdHYxFeH7rMrCrFh.wav.lufs")));
     const a = await mu.listMusic({ lab });
     assert.ok(!a.tracks.some((t) => t.id === "X5RLEsdHYxFeH7rMrCrFh.wav"), "a deleted Lab track stays deleted");
-    assert.equal(a.default, "FLUEJOMVaK6Z3SrFJmclQ.wav", "the default falls back to the first track");
+    assert.equal(a.default, "96mKiTUqNJuUXDuAhb7RZ.wav", "a deleted default falls back to the first track");
   });
 
   await check("createJob stores the music (long-form only) and refuses a bad level", async () => {

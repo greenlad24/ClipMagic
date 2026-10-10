@@ -245,6 +245,9 @@ export async function syncLabTracks(lab: LabTrack[]): Promise<string[]> {
   if (!lab.length) return [];
   const doc = await readLibrary();
   const ids = await trackIds();
+  // Auto keeps meaning the track it meant before the import (with no default set, Auto = the first by name,
+  // and an imported id like "96mK…" sorts before the "FLUE…" every edit used so far)
+  const pinned = defaultOf(doc, ids);
   const removed = new Set(doc.removed_lab ?? []);
   const tracks = { ...(doc.tracks ?? {}) };
   const known = new Set(Object.values(tracks).map((t) => t.lab_id).filter(Boolean));
@@ -269,7 +272,7 @@ export async function syncLabTracks(lab: LabTrack[]): Promise<string[]> {
     known.add(t.labId);
     changed = true;
   }
-  if (changed) await writeLibrary({ ...doc, tracks });
+  if (changed) await writeLibrary({ ...doc, tracks, default: doc.default ?? pinned });
   return added;
 }
 
@@ -391,8 +394,10 @@ export async function uploadTrack(name: unknown, body: NodeJS.ReadableStream, co
     if (m.lufs !== null) await fsp.writeFile(`${f}.lufs`, String(m.lufs));
     await writeJson(`${f}.meta.json`, { duration: m.duration });
     const doc = await readLibrary();
+    const pinned = defaultOf(doc, (await trackIds()).filter((x) => x !== id));     // Auto does not move to the upload
     const title = n.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim().slice(0, 120) || id;
-    await writeLibrary({ ...doc, tracks: { ...(doc.tracks ?? {}), [id]: { title, added_at: Date.now() / 1000, origin: "upload" } } });
+    await writeLibrary({ ...doc, default: doc.default ?? pinned,
+      tracks: { ...(doc.tracks ?? {}), [id]: { title, added_at: Date.now() / 1000, origin: "upload" } } });
     return { id, title, duration: m.duration, lufs: m.lufs };
   } catch (e) {
     await fsp.rm(part, { force: true });
