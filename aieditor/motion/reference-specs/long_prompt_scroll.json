@@ -1,0 +1,328 @@
+{
+ "id": "long_prompt_scroll",
+ "technique": "MO07",
+ "reference": "/opt/aieditor-work/reference/motion-2026-10-09/motion6.mov",
+ "source": {
+  "capture": "1920x1200, 60 fps, 331 frames (5.517 s); app content y 60-1139 = 1920x1080 at 1:1 (no scaling); ~every 5th frame repeated (≈48 fps source) — fits use unique frames",
+  "frame_to_time": "t = (f-1)/60"
+ },
+ "layers": [
+  "backdrop #20201d",
+  "app view (Claude conversation view: header with chat title, one long assistant message in the serif, Claude spark, docked composer + disclaimer)",
+  "marker highlight boxes (inside the text, above it; dark redraw of the text in each box)",
+  "camera (zoom about a fixed pivot, then vertical scroll)"
+ ],
+ "timeline_ref_s": {
+  "static_app_view": [
+   0,
+   1.09
+  ],
+  "zoom": [
+   1.09,
+   1.737
+  ],
+  "hl_0": {
+   "piece_1": [
+    1.504,
+    1.862
+   ],
+   "piece_2": [
+    1.746,
+    2.104
+   ]
+  },
+  "hold": [
+   2.104,
+   3.192
+  ],
+  "scroll": [
+   3.192,
+   4.598
+  ],
+  "hl_1": [
+   3.246,
+   3.604
+  ],
+  "hl_2": [
+   4.204,
+   4.562
+  ],
+  "hl_3": [
+   4.454,
+   4.812
+  ],
+  "end_hold": [
+   4.812,
+   5.517
+  ],
+  "exit": "hard cut"
+ },
+ "camera": {
+  "zoom": {
+   "scale_from": 1.0,
+   "scale_to": 1.8959,
+   "pivot_px": [
+    949.9,
+    452.5
+   ],
+   "pivot_std_px": [
+    0.64,
+    1.17
+   ],
+   "start_s": 1.0904,
+   "dur_s": 0.6467,
+   "ease": [
+    0.714,
+    0.083,
+    0.327,
+    0.704
+   ],
+   "ease_max_err": 0.034,
+   "ease_rms_err": 0.017,
+   "note": "pure scale about a fixed point (similarity fit per frame, ORB+RANSAC, 6000 inliers); long ease tail settles by frame ~110"
+  },
+  "scroll": {
+   "start_s": 3.1969,
+   "dur_s": 1.406,
+   "screen_px": 966.5,
+   "start_view_px": 509.8,
+   "lines": 17.58,
+   "mean_lines_per_s": 12.56,
+   "peak_lines_per_s": 27.1,
+   "peak_screen_px_per_s": 1493,
+   "ease": [
+    0.39,
+    0.0,
+    0.59,
+    1.0
+   ],
+   "ease_max_err": 0.01,
+   "pauses": "none inside the move; 1.09 s dwell before it (after hl_0), 0.92 s hold after it",
+   "lead_before_sweep_s": 0.054
+  }
+ },
+ "sweep": {
+  "dur_s": 0.358,
+  "dur_range_s": [
+   0.333,
+   0.375
+  ],
+  "ease": [
+   0.4,
+   0.025,
+   0.5,
+   0.975
+  ],
+  "ease_max_err": 0.027,
+  "width_independent": true,
+  "progress_samples": [
+   0.044,
+   0.156,
+   0.317,
+   0.5,
+   0.683,
+   0.844,
+   0.956
+  ],
+  "line_piece_offset_s": 0.242,
+  "phrase_chain_offset_s": 0.25,
+  "accumulate": true,
+  "color": "#dafd29 measured (template #d9fd28 = prompt_highlight's marker)",
+  "alpha": 1.0,
+  "blend": "normal, opaque; text under it dark (#041000)",
+  "radius_px_end_view": 4,
+  "box_heights_px_end_view": {
+   "caps_heading": 36,
+   "body_with_descenders": 44
+  },
+  "pads_em": {
+   "left": "0.30-0.44 (hand-placed) → 0.36",
+   "right": 0.27,
+   "top": "ink top − 0.13 em (ref) → 0.17 with Gelasio",
+   "bottom": "ink bottom + 0.08..0.17 em"
+  },
+  "position_at_sweep_start_px": {
+   "hl_0": "box top 592.9 (during the zoom, 66 % through)",
+   "hl_1": "box bottom 1070-1077 (entering at the bottom edge as the scroll starts)",
+   "hl_2": "≈ 688-705",
+   "hl_3": "≈ 633-660"
+  }
+ },
+ "typography": {
+  "message": {
+   "font_ref": "Claude's reply serif (Georgia metrics: 21 reference lines wrap identically)",
+   "font_free": "Gelasio (OFL, Georgia-metric-compatible; added to motion/fonts)",
+   "size_start_view_px": 18.89,
+   "size_fh": 0.01749,
+   "size_end_view_px": 35.8,
+   "size_css": 16.21,
+   "line_pitch_start_view_px": 29.0,
+   "line_pitch_fh": 0.02685,
+   "line_height_ratio": 1.535,
+   "column_start_view_px": [
+    560,
+    1355.6
+   ],
+   "column_css": 682.9,
+   "color": "#ffffff (as the video shows it)",
+   "weight": 400,
+   "tracking": 0
+  },
+  "headings": "plain text lines — ALL CAPS, same font/size/weight as the body, ending in ':' with an em-dash subtitle ('THE TERRACE — PLASTIC TABLE FOR THREE:'), preceded by one blank line (29 px), body starts on the next line",
+  "ui": {
+   "font": "Inter (system sans substitute)",
+   "title": "13 css px #c8c8c5",
+   "placeholder": "16 css px #8b8b88",
+   "model_label": "11.7 css px #bebebb",
+   "disclaimer": "10 css px #7d7d7a"
+  }
+ },
+ "layout_start_view_px": {
+  "header_clip_bottom": 101,
+  "composer": [
+   536.5,
+   914.5,
+   847,
+   121.5
+  ],
+  "composer_radius_css": 20,
+  "spark": [
+   559,
+   826,
+   28,
+   29
+  ],
+  "disclaimer_center_y": 1060.5,
+  "title_left": 68,
+  "sidebar_icon": [
+   31,
+   30,
+   20,
+   17
+  ]
+ },
+ "colors": {
+  "bg": "#20201d",
+  "composer_surface": "#292926",
+  "composer_border": "#32322f",
+  "spark": "#d38162",
+  "marker": "#dafd29",
+  "marker_text": "#041000"
+ },
+ "verification": {
+  "compare_sheet": "/opt/aieditor-work/reference/specs/long_prompt_scroll-compare.png",
+  "general": "/opt/aieditor-work/reference/specs/long_prompt_scroll-general.png",
+  "camera_error_px_by_phase": {
+   "static": {
+    "max_dx": 2.4,
+    "max_dy": 2.3
+   },
+   "zoom": {
+    "max_dx": 5.1,
+    "max_dy": 5.2,
+    "max_scale_err": 0.058,
+    "timing_max_frames": 1.1,
+    "timing_mean_frames": 0.47
+   },
+   "hold": {
+    "max_dx": 5.1,
+    "max_dy": 2.1
+   },
+   "scroll": {
+    "timing_mean_frames": 0.5,
+    "timing_max_frames": 2.26,
+    "note": "raw per-frame dy up to 32 px is the reference's repeated frames (≈48 fps source in a 60 fps capture), not template error"
+   },
+   "end": {
+    "max_dx": 5.2,
+    "max_dy": 4.6
+   }
+  },
+  "scale_note": "ours is 0.8-1 % narrower than the reference text (Gelasio vs the reference serif) → up to ±5 px at the column edges after the zoom; identical line breaks",
+  "highlight_boxes_px": {
+   "t2.15 hl_0": {
+    "ref": [
+     [
+      1557,
+      593,
+      171,
+      35
+     ],
+     [
+      195,
+      647,
+      1115,
+      43
+     ]
+    ],
+    "ours": [
+     [
+      1539,
+      593,
+      177,
+      35
+     ],
+     [
+      198,
+      644,
+      1102,
+      46
+     ]
+    ]
+   },
+   "t5.50 end": {
+    "ref": [
+     [
+      697,
+      64,
+      690,
+      44
+     ],
+     [
+      200,
+      562,
+      425,
+      36
+     ],
+     [
+      200,
+      616,
+      615,
+      44
+     ]
+    ],
+    "ours": [
+     [
+      691,
+      68,
+      691,
+      43
+     ],
+     [
+      198,
+      565,
+      424,
+      37
+     ],
+     [
+      198,
+      618,
+      616,
+      43
+     ]
+    ]
+   }
+  },
+  "sweep_timing": "sweep starts on the reference's fitted starts (beats) 1.504/3.246/4.204/4.454 s exactly; per-sweep duration 0.358 vs 0.333-0.375 → ≤1 frame at the ends"
+ },
+ "generalisation": {
+  "reading_speed_limit": "a move lasts max(0.5 s, lines/12.56) — never faster on average than the reference; a sweep that cannot start within 0.1 s of its beat starts late and is reported",
+  "start_scroll": "phrase 0 lands at the measured 592.9 px after the zoom; if the app cannot scroll that far the zoom pivot moves instead",
+  "group_rule": "one move brings as many next phrases as fit between y 60 and y 661 (ref: phrases 1-3 in one move)",
+  "beyond_app_scroll": "camera pans (the composer may enter at the bottom at the very end)"
+ },
+ "deviations": [
+  "the reference message was still STREAMING (last words fading in, spark below); the template shows the finished message (spark kept, no fade-in)",
+  "the reference chat title and mouse cursor are not reproduced (title = parameter; cursor = capture chrome)"
+ ]
+}

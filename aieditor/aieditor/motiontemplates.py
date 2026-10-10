@@ -136,6 +136,10 @@ def validate_params(tid, fields):
                 errs.append(f"{tid}: '{name}' = {v} is out of range")
         elif t == "bool":
             v = bool(v)
+        elif t == "object":
+            if not isinstance(v, dict):
+                errs.append(f"{tid}: '{name}' must be an object")
+                continue
         elif t == "number":
             try:
                 v = float(v)

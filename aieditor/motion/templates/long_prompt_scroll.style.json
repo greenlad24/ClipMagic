@@ -1,0 +1,51 @@
+{
+  "_doc": "long_prompt_scroll look. layout values are SCREEN px at 1920x1080 (start view = scale 1 unless noted). The app view itself comes from the kit's message view (kit.message: geometry in css px, scaled by kit.message.screen_px_per_css so the reference composer is 847 px wide). Sizes as px@1080 and fraction of frame height (fh).",
+  "fonts": {
+    "Gelasio": "Gelasio.ttf",
+    "Inter": "Inter.ttf"
+  },
+  "layout": {
+    "first_phrase_top_y": 592.9,
+    "first_phrase_top_fh": 0.549,
+    "_first": "after the zoom, the first phrase's box top sits here (ref 'A DENSE' box top 527.0 start-view px → 592.9 screen px)",
+    "rest_bottom_y": 661.2,
+    "rest_bottom_fh": 0.6122,
+    "top_y": 60,
+    "top_fh": 0.0556,
+    "_rest": "a scroll move ends with the last phrase of its group at rest_bottom_y (box bottom) while the group's first phrase stays below top_y (ref end view: phrase 1 box top at 65 px, phrase 3 box bottom at 661 px)",
+    "band_top": 8,
+    "band_bot": 1073.5,
+    "_band": "a phrase may be swept only when its whole box is inside [band_top, band_bot] (ref phrase 1 started 0.054 s into the move, its box bottom at 1070-1073 px)",
+    "fit_margin": 40,
+    "_end_view": "after the zoom ×1.8959 about (949.9, 452.5): message font 35.8 px em (0.0332 fh), line pitch 55.0 px (0.0509 fh), text column x 210.6-1727.3 (1517 px); start view: font 18.89 px (0.01749 fh), pitch 29.0 px (0.02685 fh), column x 560-1360 (800 px), composer 847x121.5 at (536.5, 914.5)",
+    "place_bot": 972,
+    "place_bot_fh": 0.9,
+    "_place": "a phrase whose box bottom is below place_bot (the bottom 10 % of the frame) is not 'placed' for reading: the camera scrolls it up (ref phrase 1 sat at 1077 px when its sweep came → a move)"
+  },
+  "highlight": {
+    "color": "#d9fd28",
+    "alpha": 1.0,
+    "blend": "normal (opaque box; the text under it is redrawn dark) — measured #dafd29 in the reference = prompt_highlight's marker",
+    "text_color": "#041000",
+    "pad_left_em": 0.36,
+    "pad_right_em": 0.27,
+    "pad_top_em": 0.17,
+    "pad_bottom_em": 0.13,
+    "radius_em": 0.12,
+    "_measured_end_view_px": "the reference box hugs the INK of its line piece: a caps-only heading box is 36 px tall, a body line with descenders 44 px at the 35.8 px end-view em (line pitch 55). Gelasio's ink is ~2 px shorter than the reference serif's, so the pads are set to reproduce the reference BOX heights: top = ink top − 0.17 em; bottom = max(ink bottom + 0.13 em, baseline + 0.165 em). Left pad 10.6-15.6 px (0.30-0.44 em, hand-placed in the reference) → 0.36 em; right pad ≈ 9-10.5 px → 0.27 em; corner radius ≈ 4 px (0.12 em)",
+    "min_below_baseline_em": 0.165
+  },
+  "neutral": {
+    "_doc": "kit null → a neutral, unbranded dark document view: same column geometry as the reference, serif text, no header, no title, no composer, no logo — never another app's UI. Also the page geometry used for a kit without a message view (its result.text block on its own page colour).",
+    "bg": "#20201d",
+    "text": "#f2f2ef",
+    "view_w": 1648,
+    "view_h": 927,
+    "col_left": 480.6,
+    "col_top": 96,
+    "col_width": 682.9,
+    "font": "Gelasio",
+    "font_size": 16.21,
+    "line_height": 24.89
+  }
+}

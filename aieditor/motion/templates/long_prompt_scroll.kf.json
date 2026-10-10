@@ -1,0 +1,75 @@
+{
+  "_doc": "long_prompt_scroll (MO07) — MEASURED motion from motion6.mov (Claude.ai dark chat view, 1920x1200 capture, app content = y 60-1139 = 1920x1080 1:1, 60 fps, 331 frames = 5.517 s). Frame f (1-based) = t (f-1)/60 s. Camera tracked with ORB + RANSAC similarity per frame (pure zoom about a fixed pivot, then pure vertical translation). The capture repeats ~every 5th frame (≈48 fps source) — fits use unique frames only. Design-free: zoom as a scale about a frame-fraction pivot, scroll in message LINES, sweeps in seconds.",
+  "zoom": {
+    "_doc": "one zoom-in from the whole app view (scale 1) to `scale` about a fixed pivot (frame fractions; ref pivot 949.9, 452.5 px ±1 px). Ref: start frame 66.43 (t 1.090 s), 38.8 frames (0.647 s; the long ease tail settles by frame ~110), fitted on the unique (non-repeated) capture frames. The first highlight starts sweep_after_zoom_start_s after the zoom starts (ref 1.504 s, i.e. while the zoom is 66 % through). If hl_0 is earlier than zoom + sweep_after_zoom_start_s the zoom moves earlier (never before in + min_start_after_in_s).",
+    "scale": 1.8959,
+    "pivot": [
+      0.49474,
+      0.41898
+    ],
+    "start_after_in_s": 1.0904,
+    "dur_s": 0.6467,
+    "ease": [
+      0.714,
+      0.083,
+      0.327,
+      0.704
+    ],
+    "ease_max_err": 0.034,
+    "min_start_after_in_s": 0.1,
+    "sweep_after_zoom_start_s": 0.4136,
+    "ease_rms_err": 0.017
+  },
+  "scroll": {
+    "_doc": "the scroll down the message (ref: ONE move, start frame 192.5 = t 3.192 s, 84 frames = 1.40 s, 966.5 screen px at zoom 1.8959 = 509.8 start-view px = 17.58 message lines (line pitch 29.0 start-view px); mean 12.56 lines/s, peak 27.1 lines/s (1493 screen px/s)). READING-SPEED LIMIT: a move lasts max(min_dur_s, lines / max_lines_per_s) — never faster on average than the reference. A move starts so that the phrase it brings in is fully inside the visible band exactly on its beat (ref: the sweep started 0.054 s after the move started, the phrase entering at the bottom edge), but never before the previous move has ended nor less than min_dwell_after_sweep_s after the previous sweep ended (ref dwell 1.11 s). One move takes as many following phrases as fit between style.layout.top_y and rest_bottom_y (ref: phrases 1-3 in one move). lead_s: a move starts at least this long before the sweep of the phrase it brings in (ref 0.054 s).",
+    "max_lines_per_s": 12.56,
+    "ref_peak_lines_per_s": 27.1,
+    "ref_lines": 17.58,
+    "ref_dur_s": 1.4,
+    "ease": [
+      0.39,
+      0.0,
+      0.59,
+      1.0
+    ],
+    "ease_max_err": 0.01,
+    "min_dur_s": 0.5,
+    "min_dwell_after_sweep_s": 0.25,
+    "ease_rms_err": 0.0056,
+    "lead_s": 0.054
+  },
+  "sweep": {
+    "_doc": "marker highlight: a rounded yellow box grows left→right over each LINE PIECE of the phrase; the text under it is redrawn dark. The reference's sweep is a FIXED-DURATION keyframe (same progress values 0.044/0.156/0.317/0.50/0.683/0.844/0.956 on every sweep, independent of width 90-588 px): dur_s 0.358 (fits 0.333-0.375 s). A wrapped phrase's next line piece starts piece_offset_s after the previous piece STARTS (ref 0.242 s; pieces overlap). A phrase's sweep starts at max(its beat hl_i, previous phrase's last piece start + piece_offset_s, the moment it is fully visible). Ref sweep starts (= the replica's beats): 1.504 / 3.246 / 4.204 / 4.454 s. Highlights accumulate and stay to the end. late_tol_s: a sweep may start up to this much after its beat without a warning.",
+    "dur_s": 0.358,
+    "ease": [
+      0.4,
+      0.025,
+      0.5,
+      0.975
+    ],
+    "ease_max_err": 0.027,
+    "piece_offset_s": 0.242,
+    "late_tol_s": 0.1,
+    "fallback_spacing_s": 1.0
+  },
+  "hold": {
+    "_doc": "static hold after the last sweep ends (ref: last sweep end 4.787 s → clip end 5.517 s)",
+    "after_last_s": 0.73,
+    "min_after_last_s": 0.5
+  },
+  "exit": {
+    "_doc": "the reference has no exit animation (hard cut); 'out' beat = cut",
+    "type": "cut"
+  },
+  "ref_frames": {
+    "static_app_view": "1-66",
+    "zoom": "66.5-107.5",
+    "sweep_0": "91.3-113 (line 1 'A DENSE') + 105.8-128 (line 2)",
+    "hold": "128-192",
+    "scroll": "192.5-276.5",
+    "sweep_1": "195.8-218",
+    "sweep_2": "253.3-273",
+    "sweep_3": "268.3-288",
+    "end": 331
+  }
+}
