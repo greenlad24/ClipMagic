@@ -1199,7 +1199,9 @@ def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=N
     → {"typed", "on_screen", "narrated", "as_words", "look", "expect", "params"}."""
     tspec = tool_spec or {}
     app_name = str(ctx.pb.get("name") or ctx.app)
-    said = None if (tool and not (tool_spec or {}).get("typed")) else \
+    # his on-screen prompt makes the RESULT; a picture he BRINGS (a new input photo) is never made with it (re-run 6:
+    # the b/w input was asked as "Restore this old photo…" and ChatGPT replied "please upload the old photo")
+    said = None if ((tool and not (tool_spec or {}).get("typed")) or new_photo) else \
         onscreen_prompt(ctx, " ".join(x for x in (str(desc or ""), str(typed_hint or "")) if x), sentence, window)
     if said:
         # his on-screen prompt beats ANY internal prompt (the manifest's object-list prompt invented "a glass" — TEST v3)

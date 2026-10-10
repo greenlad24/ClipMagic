@@ -616,3 +616,25 @@ def test_prior_picture_is_only_a_hint():
 
 if __name__ == "__main__":
     test_prior_picture_is_only_a_hint()
+
+
+def test_input_photo_never_gets_his_prompt():
+    """Re-run 6: the great-grandma INPUT photo was requested with his result prompt ('Restore this old photo…')."""
+    from aieditor import onboard as ob
+
+    class C:
+        pass
+    c = C()
+    c.script = 'THE PROMPT: "Restore this old photo, but preserve the people" Colorising a black-and-white shot works too.'
+    c.llm = None
+    c.pb = {"name": "ChatGPT"}
+    c.app = "chatgpt"
+    r_in = ob.person_request(c, "an old black and white photo of great-grandma", "restore this old photo", None, new_photo=True)
+    assert "Restore this old photo" not in (r_in.get("typed") or ""), r_in
+    r_res = ob.person_request(c, "the restored old photo, people preserved", "restore this old photo", None, new_photo=False)
+    assert r_res.get("typed", "").startswith("Restore this old photo"), r_res
+    print("  an input photo never gets his result prompt; the result does")
+
+
+if __name__ == "__main__":
+    test_input_photo_never_gets_his_prompt()
