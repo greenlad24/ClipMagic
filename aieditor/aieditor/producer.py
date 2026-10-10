@@ -419,6 +419,8 @@ the prior result (start "result_chat"), splitting a composite into steps, asking
 route that already failed the same way. Never: delete, buy, upgrade, billing, publish, share, invite, log out, or open an
 existing chat. Exactly ONE step must start the generation (the playbook's generating action, or Enter in the composer),
 and it is the last step. Use "{prompt}" as the text of the prompt step. Answer with the JSON only."""
+    KV = {"type": "object", "additionalProperties": False, "required": ["key", "value"],
+          "properties": {"key": {"type": "string"}, "value": {"type": "string"}}}
     PLAN_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["failure", "diagnosis", "give_up", "route"],
                    "properties": {
                        "failure": {"type": "string", "enum": list(CLASSES)},
@@ -431,9 +433,11 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
                                      "start": {"type": "string"},
                                      "steps": {"type": "array", "items": {"type": "object", "additionalProperties": False,
                                                "required": ["action", "params", "act"],
-                                               "properties": {"action": {"type": "string"},
-                                                              "params": {"type": "object", "additionalProperties": {"type": "string"}},
-                                                              "act": {"type": "object", "additionalProperties": {"type": "string"}}}}},
+                                               # key/value lists, not open objects: structured outputs refuses
+                                              # "additionalProperties: <schema>" (HTTP 400 live, TEST v3 2026-10-10)
+                                              "properties": {"action": {"type": "string"},
+                                                              "params": {"type": "array", "items": KV},
+                                                              "act": {"type": "array", "items": KV}}}},
                                      "prompt": {"type": "string"},
                                      "use_result": {"type": "boolean"},
                                      "learn_as": {"type": "string"}}}}}
@@ -473,6 +477,10 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
                              stage=f"preprod.produce.{self.ctx.app}", purpose="P3 producer: diagnose + next route")
             self.ctx.budget.add(r.get("usd"))
             ans = json.loads(r.get("text") or "{}")
+            for st_ in ((ans.get("route") or {}).get("steps") or []):
+                for f_ in ("params", "act"):
+                    if isinstance(st_.get(f_), list):         # [{key, value}] → {key: value}
+                        st_[f_] = {kv.get("key"): kv.get("value") for kv in st_[f_] if isinstance(kv, dict) and kv.get("key")}
         except Exception as e:  # noqa: BLE001 — the fallback planner takes over
             self._log(f"producer: the route planner failed ({str(e)[:160]}) — generic fallback route")
             return None

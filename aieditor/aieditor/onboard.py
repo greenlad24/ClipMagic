@@ -334,15 +334,18 @@ playbook action that code will replay 3 times from fresh sessions. Rules (code e
 - if the control does not exist anywhere (after looking in the '/' and '+' menus, the toolbar, the page), answer
   "absent" with what you searched
 Answer ONE JSON object per turn, nothing else: {"do": "observe|find|act|propose|absent|give_up", "note": "<short>",
-"texts": [...] (find: labels; count: CSS selectors), "action": {...} (act), "proposal": {...} (propose)}."""
+"texts": [...] (find: labels; count: CSS selectors), "action": "<a JSON object, as text>" (act),
+"proposal": "<a JSON object, as text>" (propose)}."""
 EXPLORE_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["do", "note"],
     "properties": {
         "do": {"type": "string", "enum": ["observe", "find", "count", "act", "propose", "absent", "give_up"]},
         "note": {"type": "string"},
         "texts": {"type": "array", "items": {"type": "string"}},
-        "action": {"type": "object"},
-        "proposal": {"type": "object"},
+        # free-form objects travel as JSON TEXT: structured outputs refuses an object without fixed properties
+        # (HTTP 400 on every explorer call, found live 2026-10-10 by tests/test_schemas_api_valid.py)
+        "action": {"type": "string"},
+        "proposal": {"type": "string"},
     }}
 KINDS_OK = ("click", "drag", "key", "paste", "type", "scroll", "draw")
 
@@ -435,6 +438,13 @@ class Explorer:
         m = re.search(r"\{.*\}", txt, re.S)
         try:
             ans = json.loads(m.group(0) if m else txt)
+            if isinstance(ans, dict):
+                for f_ in ("action", "proposal"):            # JSON text → object (see EXPLORE_SCHEMA)
+                    if isinstance(ans.get(f_), str) and ans[f_].strip():
+                        try:
+                            ans[f_] = json.loads(ans[f_])
+                        except ValueError:
+                            ans[f_] = {}
             return ans if isinstance(ans, dict) else {"do": "observe", "note": "the reply was not an object"}
         except ValueError:
             return {"do": "observe", "note": "the reply was not JSON"}
