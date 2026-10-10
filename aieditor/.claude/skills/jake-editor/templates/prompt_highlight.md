@@ -1,6 +1,6 @@
 # prompt_highlight — usage (DRAFT)
 
-The app's prompt box is typing a long prompt. Over about 0.75 s the camera pushes in on it (×1.55). Then a **yellow marker** sweeps over each key phrase, left → right and line by line, on the word where the narration says that phrase. The phrase's text turns dark under the marker. The highlights stay on, and they never join up: the word between two highlights stays unmarked.
+The app's prompt box is typing a long prompt. Over about 0.75 s the camera pushes in on it (×1.55). Then a **yellow marker** (#FFD21E, Jake 2026-10-10; dark text #1A1400 on it, contrast 12.7:1) sweeps over each key phrase, left → right and line by line, on the word where the narration says that phrase. The phrase's text turns dark under the marker. The highlights stay on, and they never join up: the word between two highlights stays unmarked.
 - Motion: `motion/templates/prompt_highlight.kf.json`.
 - Look: `prompt_highlight.style.json` plus the app's UI kit (`ui-kits/<app>/kit.json`).
 - Spec: `motion/reference-specs/prompt_highlight.md`.
@@ -43,7 +43,7 @@ Use it when Jake **reads out a prompt, or walks through its parts, and the parts
 ## 4. Content limits
 | field | limit |
 |---|---|
-| prompt | 8–440 chars. The reference is 426 chars = 5 lines at the end view. Up to about 7 lines fit: the push-in shrinks automatically so the composer, greeting and chips stay 40 px inside the frame. Longer than ~280 chars needs `pretyped` (auto does it), or the typing alone outlasts the clip |
+| prompt | 8–440 chars. The reference is 426 chars = 5 lines at the end view. Up to about 7 lines fit: the push-in shrinks automatically so the composer and greeting (and the chips, if on) stay 40 px inside the frame. Longer than ~280 chars needs `pretyped` (auto does it), or the typing alone outlasts the clip |
 | phrases | 1–3, each an exact substring of the prompt, in prompt order, ≤ 70 chars (one or two lines) |
 | greeting | ≤ 32 chars, kits with a greeting only (Claude). Default "Evening, Jake". Never another person's name |
 
@@ -68,6 +68,7 @@ The current rules.json says prompt max 320. The reference's own prompt is 426, s
 | greeting | string | null = kit default ("Evening, Jake") | ≤ 32 chars |
 | backdrop | bool | true | false = composer only, on transparency |
 | pretyped | int | null = auto | 0 … len(prompt) |
+| suggestions | bool | false | true = show the kit's chips under the composer (Claude: Create / Write / …). Off by default (Jake 2026-10-10: "no need for the elements beneath the chatbox") |
 
 Beats: `in`, `type`, `hl_0`, `hl_1`, `hl_2`, `out` (optional).
 
@@ -114,7 +115,8 @@ Job 131 words.json, the sketch-to-photo prompt (a body moment at 213 s; the shap
    "push_in": {"type": "number", "default": null, "min": 1.0, "max": 2.0, "measured": 1.5486},
    "greeting": {"type": "string", "default": null, "min": 0, "max": 32, "unit": "chars"},
    "backdrop": {"type": "bool", "default": true, "min": null, "max": null},
-   "pretyped": {"type": "int", "default": null, "min": 0, "max": 440}
+   "pretyped": {"type": "int", "default": null, "min": 0, "max": 440},
+   "suggestions": {"type": "bool", "default": false, "min": null, "max": null}
  },
  "beats": ["in", "type", "hl_0", "hl_1", "hl_2", "out"],
  "required_beats": ["hl_0"],

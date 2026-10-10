@@ -15,7 +15,7 @@ When a Scout login for claude.ai exists, recapture live: AccountLock([slug], "ui
   - `{{chips_html}}` and `{{state_html}}` slots for other templates.
 - **greeting**: the spark logo (`assets/spark.svg`, 12 rounded rays, #D77F60) plus the serif greeting. **Default "Evening, Jake"**; never another person's name.
   - Source Serif 4 at 30.6 px. Its baseline sits 39.3 px above the composer top.
-- **suggestions**: the chip row under the composer (Create / Write / Career chat / Claude's choice). Measured widths; 14.4 px below the composer.
+- **suggestions**: the chip row under the composer (Create / Write / Career chat / Claude’s choice). Measured widths; 14.4 px below the composer. OPTIONAL — prompt_highlight hides it by default (Jake 2026-10-10: "no need for the elements beneath the chatbox").
 - **working / result: not captured.** The reference never shows them. They are null, so MO05 prompt → result can't use Claude until a live capture adds them.
 - **message.json** (written by the long_prompt_scroll agent, merged by the lead): the chat message view. It is not part of this file.
 

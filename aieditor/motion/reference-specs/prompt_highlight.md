@@ -8,12 +8,17 @@ Reference: `/opt/aieditor-work/reference/motion-2026-10-09/motion5.mov`. It is 1
 
 Files: `motion/templates/prompt_highlight.{js,kf.json,style.json}`, kit `.claude/skills/jake-editor/ui-kits/claude/`, and the machine-readable summary `prompt_highlight.json`.
 
+## Revisions (Jake, 2026-10-10, after the preview review)
+- **Marker colour:** now **#FFD21E** (rgb 255, 210, 30) instead of the reference's lime #D9FD28. The text on it is #1A1400 (contrast 12.7:1). The measured motion is unchanged.
+- **Suggestion chips:** the chips under the composer (Create / Write / …) are **off by default** (`params.suggestions`, default false). The kit keeps them as optional. The previews and the side-by-side therefore show no chips, while the reference does.
+- **ChatGPT preview:** re-rendered after the ChatGPT kit footer fix.
+
 ## Elements and layers (back → front)
 1. **Backdrop**: flat #20201D, full frame (`params.backdrop`; false = transparent).
 2. **Camera** (one transform for everything): a pure scale about a fixed pivot. There is no rotation, no blur and no opacity change.
 3. **Greeting**: the spark logo plus "Evening, <name>" in serif, centred above the composer. Its baseline sits 39.3 css px above the composer top. It is top-anchored and does not move when the composer grows.
 4. **Composer**: a rounded box holding the prompt text, then a row with "+" on the left, the model label "Opus 5.5 High" with a chevron, and the orange send button on the right.
-5. **Suggestion chips** below: Create / Write / Career chat / Claude's choice. They move down as the composer grows.
+5. **Suggestion chips** below: Create / Write / Career chat / Claude's choice. They move down as the composer grows. Since 2026-10-10 they are off by default (`suggestions: false`).
 6. **Caret**: a grey bar, visible only while typing.
 7. **Marker highlights**: yellow rounded boxes over the key phrases. The text under a box is redrawn dark.
 
@@ -51,14 +56,14 @@ Files: `motion/templates/prompt_highlight.{js,kf.json,style.json}`, kit `.claude
 - **Plus:** 17.7 px icon, centre 34.9 from the composer's left edge. The model label's right edge is 151.2 from the outer right; the chevron is 9 × 4.6, centred 106.4 from the outer right.
 - **Chips:** 26 tall, radius 6.5, fill #292926, label padding-left 12. Widths are 81.4 / 79.8 / 115.2 / 140.2, with a 6.4 gap and a 14.4 gap below the composer. The row is centred 3.6 px left of the composer centre.
 - **Spark logo:** 31 × 32, #D77F60, 12 rounded rays. It sits 13.3 px left of the text, 4.1 px above the text's centre line.
-- **Highlight box:** colour **#D9FD28**, opaque (normal blend, alpha 1; the text under it is recoloured, not multiplied).
+- **Highlight box:** colour **#D9FD28** in the reference (**#FFD21E** since 2026-10-10), opaque (normal blend, alpha 1; the text under it is recoloured, not multiplied).
   - Vertical: top = line-box top + 0.2 em; height **1.4 em**. End view: 509–550 on line 4, 553–591 on line 5, about 40.5 px per 43.5 px line.
   - Horizontal pad: 0.27 em before the first glyph and 0.35 em after the last (6–8 px / ≈ 10 px at the end view).
   - Radius 0.175 em (≈ 5 px end view).
   - Growth: a rounded box whose right edge grows left → right; the text under it turns dark exactly at the edge.
 
 ## Colours
-Backdrop #20201D, composer #292926, border #32322F, text #F2F2EF, muted #BBBBB7, chip text #C1C0BB, icons #BFBEBA, send #D26C4D, spark #D77F60, caret #898986, marker #D9FD28, marker text #041000.
+Backdrop #20201D, composer #292926, border #32322F, text #F2F2EF, muted #BBBBB7, chip text #C1C0BB, icons #BFBEBA, send #D26C4D, spark #D77F60, caret #898986, marker #D9FD28 (reference) → #FFD21E (Jake), marker text #041000 → #1A1400.
 
 These are as the YouTube encode shows them; the live claude.ai dark theme is a little lighter (bg ≈ #262624).
 

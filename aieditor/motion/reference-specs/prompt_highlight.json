@@ -156,8 +156,9 @@
   "send": "#d26c4d",
   "spark": "#d77f60",
   "caret": "#898986",
-  "marker": "#d9fd28",
-  "marker_text": "#041000"
+  "marker": "#ffd21e",
+  "marker_text": "#1a1400",
+  "marker_reference": "#d9fd28"
  },
  "highlight_box": {
   "top_em": 0.2,
@@ -316,16 +317,17 @@
   },
   "backdrop": "#20201d",
   "highlight": {
-   "color": "#d9fd28",
+   "color": "#ffd21e",
    "alpha": 1.0,
    "blend": "normal (opaque box; the text under it is redrawn dark)",
-   "text_color": "#041000",
+   "text_color": "#1a1400",
    "pad_left_em": 0.27,
    "pad_right_em": 0.35,
    "top_em": 0.2,
    "height_em": 1.4,
    "radius_em": 0.175,
-   "_measured_end_view_px": "line box 43.5 px; highlight 509-550 (line 4) / 553-591 (line 5): top ≈ line top + 5.7 px, height ≈ 40.5 px; left pad 6-8 px before the first glyph, right pad ≈ 4.5 px; corner radius ≈ 5 px"
+   "_measured_end_view_px": "line box 43.5 px; highlight 509-550 (line 4) / 553-591 (line 5): top ≈ line top + 5.7 px, height ≈ 40.5 px; left pad 6-8 px before the first glyph, right pad ≈ 4.5 px; corner radius ≈ 5 px",
+   "_color_note": "Jake 2026-10-10: marker rgb(255,210,30) #FFD21E (the reference's own #D9FD28 lime is replaced). Text on it #1A1400 (near-black, warm): contrast 12.7:1 (WCAG AAA); white text on it would be 1.45:1"
   },
   "caret": {
    "color": "#898986",
@@ -349,5 +351,10 @@
    "line_height": 24,
    "placeholder": "Describe what you want…"
   }
- }
+ },
+ "revisions_2026_10_10": [
+  "marker #FFD21E (Jake), text #1A1400 contrast 12.7:1",
+  "suggestion chips off by default (params.suggestions=false)",
+  "ChatGPT preview re-rendered after the kit footer fix"
+ ]
 }

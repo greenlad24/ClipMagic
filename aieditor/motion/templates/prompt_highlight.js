@@ -8,7 +8,8 @@
  * scene.kit (the app's UI kit; null = a neutral dark box, never another app's UI).
  *
  * params: prompt (string), phrases [string] (exact substrings, in prompt order), app, push_in (scale, null = measured),
- *         greeting (null = kit default), backdrop (true), pretyped (chars already in the box at "type"; null = auto)
+ *         greeting (null = kit default), backdrop (true), pretyped (chars already in the box at "type"; null = auto),
+ *         suggestions (false: the kit's chips under the composer — off by default, Jake 2026-10-10)
  * beats:  in, type, hl_0..hl_{n-1} (when the phrase's first word is spoken), out (optional: hard cut)
  */
 (function () {
@@ -17,7 +18,7 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function normParams(scene) {
-    const p = Object.assign({ prompt: "", phrases: [], push_in: null, greeting: null, backdrop: true, pretyped: null }, scene.params || {});
+    const p = Object.assign({ prompt: "", phrases: [], push_in: null, greeting: null, backdrop: true, pretyped: null, suggestions: false }, scene.params || {});
     p.prompt = String(p.prompt || "");
     let ph = p.phrases;
     if (typeof ph === "string") ph = [ph];
@@ -142,7 +143,7 @@
       promptEl.style.whiteSpace = "pre-wrap";
       promptEl.style.overflowWrap = "break-word";
       promptEl.style.textOverflow = "clip";
-      if (kit.suggestions) {
+      if (kit.suggestions && p.suggestions === true) {   // Jake 2026-10-10: no chips under the box by default
         const items = (kit.suggestions.items || []).map((it) => TR.fill(kit.suggestions.item_html, { label: it.label, w: it.w || "" })).join("");
         sugEl = TR.el("div", `margin-top:${kit.suggestions.gap_below_composer || 14}px`, col, TR.fill(kit.suggestions.html, { items_html: items }));
       }
