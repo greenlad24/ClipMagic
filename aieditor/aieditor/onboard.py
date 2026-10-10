@@ -869,12 +869,14 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
     # of the video's hero product) is made for real: its source pictures first (reusing one the video already has),
     # then the app's own edit / tool on them — never a single invented "merge" (TEST v3)
     multi = _multi_source(" ".join(str(x or "") for x in (desc, sentence, window)))
-    if (not made_from or (multi and len(made_from) < 2)) and not getattr(ctx, "_composing", False) and (not tool or on_source):
+    if (not made_from or multi) and not getattr(ctx, "_composing", False) and (not tool or on_source):
         # a linked single prior picture is not enough when the narration merges several (TEST v3 re-run 4: the 3-photo
         # merge was made as one edit of the bottle photo — the person and the stall were never made)
         plan_in = source_inputs(ctx, " ".join(x for x in (str(desc), str(window or "")) if x)
                                 + (f"\n(The picture shown just before is '{source_hint}' — use it ONLY if this picture is "
-                                   f"really made from it.)" if source_hint else ""),
+                                   f"really made from it.)" if source_hint else "")
+                                + (f"\n(The plan linked: {', '.join(made_from)} — keep the ones that really are sources, and "
+                                   f"add every source the narration names that is not available yet.)" if made_from else ""),
                                 {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
         if not (plan_in.get("needs_inputs") and plan_in.get("inputs")) and not plan_in.get("same_as") \
                 and source_hint and not plan_in.get("decided"):
