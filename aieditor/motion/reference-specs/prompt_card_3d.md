@@ -100,3 +100,30 @@ Opacity: chips are opaque from their first frame, as in the reference. The place
 
 ## Fonts
 Inter (already in motion/fonts). No font was added.
+
+## Revisions 2026-10-10 (Jake's preview review)
+- **File upload, re-measured.** Measured on rectified motion4 frames f84–f166.
+  - A tile flies in, then lands where its slot WILL be, but lower by the rooms that have not opened yet (its own row
+    and every row below). So it first lies over the text or footer, at ~0.8 of the pill height (a ~60 px glass square).
+  - It rises into its slot as its row opens (+70 / +95 / +97 px, 0.35 s).
+  - Then the pill (fill, border and name together) wipes open to the right behind a ~40 px soft edge, in 0.47 s,
+    12 frames apart.
+  - Kits with their own attachment UI (ChatGPT) reflow live instead: each attachment's room eases open on the same
+    curve.
+- **`end_on_click`** (default on for the Claude kit; available for every look):
+  - There is no "working" state and no messages above the card.
+  - prompt_menu's cursor sprite and its measured entry glide land on the send button on the `click` beat. The glide
+    is 0.63 s with an alpha fade-in; the landing point is the send centre + (0.116, 0.128) × the button diameter; there
+    is no press feedback, as measured in prompt_menu.
+  - The clip holds 0.5 s after the click and cuts.
+- **ChatGPT.** Re-rendered on the kit's fixed footer (8 px padded grid). The card height is the kit's rendered content
+  box (a `display:flow-root` root, so the margins no longer collapse). The file tile is restored above the text.
+- **MO05 in Claude's conversation view** (`kit.message`).
+  - The card sinks (×0.82, +140 px) and fades in 0.3 s.
+  - The view comes in over 0.6 s (ease [0.2,0.8,0.5,1], tilt 9°→0, scale 0.94→1).
+  - The REAL reply's markdown blocks fade in top-down (0.06 s stagger), then the column scrolls at 70 css px/s
+    after 1.8 s.
+  - Artifacts: an artifact card in the chat column, plus the artifact panel (Preview/Code tabs) sliding in from the
+    right with the generated HTML rendered in a sandboxed iframe. The markdown and artifact styling are built from
+    Claude's tokens, so verify them against the live app.
+- **Font added:** Noto Color Emoji (OFL, google/fonts), so emoji in real replies render (e.g. 🌶️ in the writing reply).

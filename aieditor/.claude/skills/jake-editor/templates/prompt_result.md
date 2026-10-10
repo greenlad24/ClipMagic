@@ -32,9 +32,8 @@ Examples (job 131):
 ## 2. When NOT to use (refuse → screencast)
 - **There is no real result asset.** Never invent, mock or "illustrate" a result. The template only shows
   `params.result`, and Python refuses the template without a produced asset.
-- **The kit has no result view.** Claude's kit has none today, so MO05 is not possible for Claude: the template drops
-  the result stage, and Python refuses `prompt_result` for that app. Use prompt_card_3d (no result) + a screencast of
-  the result.
+- **The kit has no result view for that kind.** Claude: image results are not possible (no image result view); TEXT and
+  ARTIFACT results are shown in Claude's conversation view (see "Claude variations" below).
 - The result needs a walkthrough (multi-step edits, settings). Use a screencast.
 - After 40 s (body). Screencasts stay the default there.
 - The prompt shown would differ from the prompt that produced the asset.
@@ -96,6 +95,24 @@ Note: the spoken words here are not the typed prompt, so `type` hangs off "type"
 and runs at up to 142 chars/s to finish before "and". If 170 chars cannot fit (it needs ≥ 1.45 s), move `working`
 later or shorten nothing (never paraphrase the real prompt); fall back to a screencast.
 
+## Claude variations (Jake 2026-10-10: "make different variations of what you can do in Claude")
+Claude's kit has no image result view, but it has the **conversation view** (`kit.message`): after the cursor clicks
+send (end_on_click, Claude default), the card sinks toward the docked composer and the conversation view comes in (0.6 s,
+measured result ease + tilt). The REAL reply then fades in block by block (0.06 s stagger) in Claude's serif, with
+markdown rendered (headings, lists, bold, tables, code blocks), and scrolls at 70 css px/s after 1.8 s.
+`params.result`:
+- `{kind: "text", text: <the reply markdown, verbatim>}` → writing, code, file analysis, image understanding, report;
+- `{kind: "artifact", html: <the generated single-file HTML>, text: <the reply markdown>, title?}` → the reply with an
+  artifact card in the chat column + Claude's artifact panel (Preview) rendering the REAL html (sandboxed iframe).
+The markdown styling and the artifact panel are built from Claude's kit tokens — **verify against live**.
+Inputs: attached files are chips (e.g. `orders.csv` for file analysis when the CSV is in the prompt; the photo for image
+understanding); the typed text is the prompt's sentence(s) only — never type a pasted data block.
+Source rule: the reply must be REAL Claude output (Anthropic API or the app), stored with its prompt (meta.json); never
+written by hand, never paraphrased. Show only what fits, then scroll. Previews:
+`motion-preview/prompt_card_3d/prompt_card_3d-claude-result-{artifact_app,writing,code,file_analysis,image_understanding,report}.mp4`.
+Timing: `click` on "and" / "hit enter"; `result` = click + 0.35 s (or its own word); hold ≥ 3 s for text, ≥ 4 s for
+artifacts/reports (the scroll needs time); duration 6–12 s.
+
 ## 9. QA checks
 - `params.result.src` is the produced asset's file (byte-identical), and the prompt equals the asset's recorded prompt.
 - The kit is the app that made the asset and has a `result` view.
@@ -113,8 +130,8 @@ later or shorten nothing (never paraphrase the real prompt); fall back to a scre
             "chips": {"type": "list", "default": [], "min": 0, "max": 6},
             "state_label": {"type": "string", "default": null, "max": 16},
             "backdrop": {"type": "bool", "default": true}},
- "beats": ["in", "type", "chip_*?", "working", "result", "out?"],
+ "beats": ["in", "type", "chip_*?", "working|click", "result", "out?"],
  "duration_s": [4.5, 12.0],
- "kit": "required (with result view)",
+ "kit": "required (with result view: ChatGPT image/text; Claude text/artifact via kit.message)",
  "zone": "hook"}
 ```

@@ -42,11 +42,13 @@ another app's UI.
 | `chip_i` (optional) | the file's spoken name ("sketch", "first photo") | that file's tile appears (first frame) and lands 0.3 s later | typing end + 0.45 s, then +0.53/+0.2/+0.4/+0.4 s |
 | `working` (alias `send`) | "and it…" / "hit enter" | the prompt becomes the sent bubble; "Working" | after the last pill opens |
 | `out` (optional) | — | push-through exit (0.53 s) | duration − 0.53 s |
+| `click` (end_on_click; alias `send`) | "hit enter" / "generate" | the cursor (in over the 0.63 s before) lands on send and clicks; the clip holds 0.5 s and cuts | after the last pill opens + 0.3 s |
 
 - Typing runs at the measured **71 chars/s** and must finish ≥ 0.25 s before `working`. If the spoken time is
   shorter, the rate is compressed up to **142 chars/s**. Never place `working` earlier than `type` + chars/142 + 0.25 s.
 - Card growth is automatic: a row grows when its last chip lands, rows ≥ 0.72 s apart. Pills open ≥ 0.4 s apart.
-- **Duration:** 3.5–10 s (reference 7.7 s). Hold ≥ 0.8 s after `working` before `out`.
+- **Duration:** 3.5–10 s (reference 7.7 s). Hold ≥ 0.8 s after `working` before `out`. With end_on_click: duration = click + 0.5 s.
+- **File upload** (re-measured 2026-10-10): each tile lands over the text at ~0.8 of the pill height and rises into its slot as its row opens; the pill then wipes open (0.47 s, soft 40 px edge).
 
 ## 4. Content limits
 | field | limit |
@@ -82,6 +84,7 @@ another app's UI.
 | greeting | string | null | ≤ 40 (kit greeting only) |
 | tilt | {rx, ry, rz} deg | measured rest {0, 0.6, 0.55} | ±10 each |
 | backdrop | bool | true | — |
+| end_on_click | bool | true for the Claude kit, else false | ends the clip on the cursor's click on send (no "working" state); the cursor is prompt_menu's sprite + measured glide |
 
 ## 8. Worked example
 Narration (job 131, word ids from the transcript):
@@ -114,8 +117,9 @@ w822 "rough" w823 "sketch" … w845 "field" w846 "and" w847 "hit" w848 "enter"`
             "placeholder": {"type": "string", "default": null, "max": 40},
             "greeting": {"type": "string", "default": null, "max": 40},
             "tilt": {"type": "object", "default": null},
-            "backdrop": {"type": "bool", "default": true}},
- "beats": ["in", "type", "chip_*?", "working", "out?"],
+            "backdrop": {"type": "bool", "default": true},
+            "end_on_click": {"type": "bool", "default": null}},
+ "beats": ["in", "type", "chip_*?", "working|click", "out?"],
  "duration_s": [3.5, 10.0],
  "typing_cps": {"measured": 71, "min": 50, "max": 142},
  "zone": "hook"}

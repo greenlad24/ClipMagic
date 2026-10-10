@@ -838,11 +838,174 @@
   "prompt": "text <= 220 chars (wraps at 860 px, 1-3 lines)",
   "chips": "0-6 [{name, kind: doc|pdf|xlsx|image|other}] ('\\n' in a name = explicit line break)",
   "state_label": "default Working (kit: its own working text)",
-  "result": "optional {kind:image,src,alt[,w,h]} | {kind:text,text}",
+  "result": "optional {kind:image,src,alt[,w,h]} | {kind:text,text} | {kind:artifact,html,text[,title]} (artifact/text via kit.message for Claude)",
   "backdrop": "default true",
   "tilt": "default = measured rest {rx 0, ry 0.6, rz 0.55}",
   "placeholder": "default neutral 'Ask anything…' / the kit's",
-  "greeting": "optional, kits with a greeting (Claude)"
+  "greeting": "optional, kits with a greeting (Claude)",
+  "end_on_click": "bool, default on for the Claude kit"
  },
- "fonts_added": "none (Inter already in motion/fonts)"
+ "fonts_added": "Noto Color Emoji (2026-10-10)",
+ "revisions_2026_10_10": {
+  "chip_upload": "re-measured 2026-10-10 (rectified f84-f166): a tile lands where its slot will be but LOWER by the rooms not yet opened (its row + rows below), i.e. over the text, at ~0.8 of the pill height (glass square ~60 px), then rises into the slot as each row opens; the pill (fill + border + name) then wipes open to the right behind a ~40 px soft edge (~14 frames)",
+  "tile_land_scale": 0.8,
+  "expand_soft_edge_px": 40,
+  "end_on_click": {
+   "_src": "COPIED from prompt_menu.kf.json cursor.entry / cursor.send.end_offset_frac_of_button / out.hold_after_click_s (measured on motion3) so the two templates share one cursor language. Table rows: [t s relative to the click, dx px, dy px from the rest point (send centre + offset x button d), alpha]; the last row is the arrival = the click.",
+   "entry": {
+    "table": [
+     [
+      -0.4503,
+      328,
+      38,
+      0
+     ],
+     [
+      -0.417,
+      314,
+      38,
+      0.087
+     ],
+     [
+      -0.3837,
+      300,
+      39,
+      0.215
+     ],
+     [
+      -0.3503,
+      286,
+      39,
+      0.335
+     ],
+     [
+      -0.317,
+      272,
+      41,
+      0.47
+     ],
+     [
+      -0.2837,
+      257,
+      43,
+      0.636
+     ],
+     [
+      -0.2503,
+      241,
+      44,
+      0.756
+     ],
+     [
+      -0.217,
+      225,
+      46,
+      0.9
+     ],
+     [
+      -0.1837,
+      208,
+      46,
+      1
+     ],
+     [
+      -0.1503,
+      190,
+      46,
+      1
+     ],
+     [
+      -0.117,
+      172,
+      46,
+      1
+     ],
+     [
+      -0.0837,
+      153,
+      45,
+      1
+     ],
+     [
+      -0.0503,
+      134,
+      42,
+      1
+     ],
+     [
+      -0.017,
+      114,
+      39,
+      1
+     ],
+     [
+      0.0163,
+      95,
+      36,
+      1
+     ],
+     [
+      0.0497,
+      74,
+      30,
+      1
+     ],
+     [
+      0.083,
+      54,
+      24,
+      1
+     ],
+     [
+      0.1163,
+      33,
+      15,
+      1
+     ],
+     [
+      0.1497,
+      12,
+      6,
+      1
+     ],
+     [
+      0.183,
+      0,
+      0,
+      1
+     ]
+    ]
+   },
+   "end_offset_frac_of_button": [
+    0.116,
+    0.128
+   ],
+   "press_scale": 1.0,
+   "hold_after_click_s": 0.5,
+   "result_after_click_s": 0.35,
+   "fade_on_result_s": 0.2,
+   "default_on": [
+    "claude"
+   ],
+   "note": "end_on_click (Jake 2026-10-10, Claude look): no 'working' state / no messages above the card; the clip ends hold_after_click_s after the click (hard cut), or goes on to the result stage"
+  },
+  "message_result": {
+   "card_to_scale": 0.82,
+   "card_drop_px": 140,
+   "card_out_s": 0.3,
+   "view_from_scale": 0.94,
+   "reveal_at_s": 0.3,
+   "block_stagger_s": 0.06,
+   "block_fade_s": 0.2,
+   "scroll_after_s": 1.8,
+   "scroll_css_px_per_s": 70,
+   "artifact_at_s": 0.25,
+   "artifact_dur_s": 0.5,
+   "note": "MO05 in the kit's conversation view (Claude): NOT in the reference — uses the measured result ease [0.2,0.8,0.5,1] / 0.6 s + the tilt bump; reply blocks fade in top-down (stream-like), then the column scrolls; the artifact panel slides in from the right"
+  },
+  "fonts_added": [
+   "Noto Color Emoji (OFL-NotoColorEmoji.txt)"
+  ],
+  "chatgpt": "kit footer fix re-render; card height = kit rendered content box (flow-root); tile above text"
+ }
 }

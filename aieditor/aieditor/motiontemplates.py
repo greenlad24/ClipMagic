@@ -444,6 +444,8 @@ def result_view(asset):
     src = asset.get("source") or {}
     if f and Path(f).exists():
         return {"kind": "image", "src": _data_uri(f), "alt": asset.get("desc", "")[:120]}
+    if src.get("result_html"):           # a REAL artifact (e.g. Claude's single-file app) + the reply around it
+        return {"kind": "artifact", "html": str(src["result_html"]), "text": str(src.get("result_text") or "")[:6000]}
     if src.get("result_text"):
-        return {"kind": "text", "text": str(src["result_text"])[:1200]}
+        return {"kind": "text", "text": str(src["result_text"])[:6000]}
     return None

@@ -102,5 +102,27 @@
   "gap_px": 40,
   "max_h_frac": 0.84,
   "neutral_bg": "card"
+ },
+ "cursor": {
+  "w": 64,
+  "h": 104,
+  "fill": "#000000",
+  "outline": "#FFFFFF",
+  "outline_px": 11,
+  "shadow": "drop-shadow(0 2px 3px rgba(0,0,0,0.28))",
+  "_note": "macOS arrow; tip = hotspot; black core 64×104 px at 1080p, white outline ≈5 px",
+  "points": "0,0 0,88 21,69 40,103 53,97 36,62 64,61",
+  "_src": "copied from prompt_menu (style cursor + CURSOR_PTS)"
+ },
+ "message": {
+  "_note": "Claude conversation view extras — VERIFY AGAINST LIVE (built from the kit's tokens; no live capture): markdown blocks in the reply serif, code blocks, tables, and the artifact panel.",
+  "md_css": ".clm-msg.pc-md{white-space:normal;font-family:'Gelasio','Noto Color Emoji',Georgia,serif}\n.pc-md p{margin:0 0 14px}\n.pc-md h1{font-size:22px;line-height:30px;font-weight:700;margin:4px 0 12px}\n.pc-md h2{font-size:18.5px;line-height:26px;font-weight:700;margin:18px 0 8px}\n.pc-md h3{font-size:16.8px;line-height:24px;font-weight:700;margin:14px 0 6px}\n.pc-md ul,.pc-md ol{margin:0 0 14px;padding-left:26px}\n.pc-md li{margin:5px 0}\n.pc-md li.pc-ind1{margin-left:22px}\n.pc-md li.pc-ind2{margin-left:44px}\n.pc-md strong{font-weight:700}\n.pc-md code{font-family:'DejaVu Sans Mono',monospace;font-size:13.4px;background:rgba(255,255,255,0.07);border:1px solid var(--cl-border);border-radius:5px;padding:0 4px}\n.pc-md pre{margin:0 0 14px;padding:14px 16px;border-radius:10px;background:#1a1a18;border:1px solid var(--cl-border);overflow:hidden;white-space:pre;font-family:'DejaVu Sans Mono',monospace;font-size:13px;line-height:20px;color:#e6e4dd}\n.pc-md pre code{background:none;border:0;padding:0;font-size:inherit}\n.pc-md hr{border:0;border-top:1px solid var(--cl-border);margin:16px 0}\n.pc-md table{border-collapse:collapse;margin:0 0 14px;font-size:15px;line-height:21px}\n.pc-md th,.pc-md td{border-bottom:1px solid var(--cl-border);padding:6px 14px 6px 0;text-align:left}\n.pc-md th{font-weight:700}\n.pc-md .pc-link{text-decoration:underline;text-underline-offset:3px}\n.pc-artcard{display:flex;align-items:center;gap:14px;margin:4px 0 16px;padding:12px 16px;border:1px solid var(--cl-border);border-radius:12px;background:var(--cl-surface);font-family:Inter,sans-serif;width:360px}\n.pc-artcard-ic{width:40px;height:40px;border-radius:8px;background:#1a1a18;border:1px solid var(--cl-border);display:flex;align-items:center;justify-content:center;color:var(--cl-muted);font-size:13px}\n.pc-artcard-t{display:block;font-size:14px;line-height:20px;color:var(--cl-text);font-weight:500}\n.pc-artcard-s{display:block;font-size:12px;line-height:16px;color:var(--cl-muted)}",
+  "artifact_css": ".pc-art .clm-col{left:56px;width:560px}\n.pc-art .clm-comp{left:30px;width:612px}\n.pc-art .clm-ph{left:19px}\n.pc-art .clm-model{left:383px}\n.pc-art .clm-chev{left:498px}\n.pc-art .clm-mic{left:522px}\n.pc-art .clm-wave{left:567px}\n.pc-art .clm-disc{width:672px}\n.pc-art .clm-head{width:672px}\n.pc-artpanel{position:absolute;left:672px;top:0;width:976px;height:927px;z-index:5;box-sizing:border-box;background:var(--cl-bg);border-left:1px solid var(--cl-border);font-family:Inter,sans-serif}\n.pc-arthead{position:absolute;left:0;top:0;right:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 22px;border-bottom:1px solid var(--cl-border);color:var(--cl-text);font-size:14px}\n.pc-arttitle{font-weight:500}\n.pc-arttabs{display:flex;gap:2px;padding:3px;border-radius:8px;background:var(--cl-surface);font-size:12.5px;color:var(--cl-muted)}\n.pc-arttabs span{padding:4px 10px;border-radius:6px}\n.pc-arttabs .on{background:#3a3a36;color:var(--cl-text)}\n.pc-artframe{position:absolute;left:0;top:53px;width:976px;height:874px;border:0;background:#fff}",
+  "artifact_icon": "&lt;/&gt;",
+  "artifact_kind_label": "Code · HTML",
+  "artifact_tabs": [
+   "Preview",
+   "Code"
+  ]
  }
 }
