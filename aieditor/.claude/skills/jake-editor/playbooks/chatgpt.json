@@ -2080,5 +2080,98 @@
   "input[type=\"password\"]",
   "[autocomplete=\"cc-number\"]",
   "[data-testid*=\"email\" i]"
- ]
+ ],
+ "name": "ChatGPT",
+ "produce": {
+  "src": "R14 P3 producer (2026-10-10): what the generic producer agent (aieditor/producer.py) needs to know about this app. Data only — the agent loop has no app names in it. A HINT: a route that works for a video is learned into THAT video's playbook (recipes), never here.",
+  "result_selector": "[data-testid=\"generated-image-preview\"]",
+  "progress_patterns": [
+   "Creating image",
+   "Sketching",
+   "Setting the scene",
+   "Adding details",
+   "Finishing up",
+   "\\b\\d{1,3}\\s?%"
+  ],
+  "limit_patterns": [
+   "You've hit (?:the|your) .{0,40}limit",
+   "reached (?:the|your) .{0,40}limit",
+   "limit (?:for|on) image",
+   "try again (?:in|after|later)",
+   "Unusual activity",
+   "Too many requests"
+  ],
+  "refusal_patterns": [
+   "I can(?:'|’)t (?:help|create|make|generate)",
+   "I(?:'|’)m (?:not able|unable) to",
+   "violates? (?:our|the) (?:content|usage) polic",
+   "content polic",
+   "can(?:'|’)t assist"
+  ],
+  "wall_cooldown_s": 21600,
+  "limit_cooldown_s": 86400,
+  "roles": {
+   "prompt": "paste_prompt",
+   "generate": "send",
+   "image_mode": [
+    "open_plus_menu",
+    "plus_create_image"
+   ],
+   "images_page": "open_images_page",
+   "upload": "upload_photo",
+   "open_result": "open_image_viewer",
+   "tools": {
+    "remove_bg": "viewer_remove_bg",
+    "resize": "resize_option"
+   }
+  },
+  "prompt_template": "Create an image: {style}{subject}",
+  "edit_template": "{subject}",
+  "recipes": {
+   "produce_photo": {
+    "name": "Create image mode",
+    "start": "home",
+    "steps": [
+     {
+      "action": "open_plus_menu"
+     },
+     {
+      "action": "plus_create_image"
+     },
+     {
+      "action": "paste_prompt",
+      "params": {
+       "text": "{prompt}"
+      }
+     },
+     {
+      "action": "send"
+     }
+    ],
+    "source": "the hand route (preprod.ChatGPT.make_in_app + the TEST v3 patch: '+' -> Create image, a clean 'Create an image:' prompt)"
+   },
+   "produce_edit": {
+    "name": "upload + edit request",
+    "start": "home",
+    "steps": [
+     {
+      "action": "upload_photo",
+      "params": {
+       "files": "{files}"
+      }
+     },
+     {
+      "action": "paste_prompt",
+      "params": {
+       "text": "{prompt}"
+      }
+     },
+     {
+      "action": "send"
+     }
+    ],
+    "source": "the hand route (preprod.ChatGPT.make_in_app with input files)"
+   }
+  }
+ }
 }
