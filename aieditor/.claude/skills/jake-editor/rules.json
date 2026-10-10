@@ -664,8 +664,10 @@
   },
   "approved": [
    "verb_swap",
-   "tagline_build"
+   "tagline_build",
+   "prompt_highlight",
+   "long_prompt_scroll"
   ],
-  "approved_src": "Jake 2026-10-10 (round-2 preview): 'Verb swap — Approve as is. Your suggested weight will be the final' (Roboto 500); 'Tagline build — Approve as is'; 'UI kits — Approve as is'. prompt_menu, prompt_card_3d (+ prompt_result), prompt_highlight, long_prompt_scroll: not approved yet."
+  "approved_src": "Jake 2026-10-10 (round-2 preview): 'Verb swap — Approve as is. Your suggested weight will be the final' (Roboto 500); 'Tagline build — Approve as is'; 'UI kits — Approve as is'. prompt_menu, prompt_card_3d (+ prompt_result), prompt_highlight, long_prompt_scroll: not approved yet. Round 3 (2026-10-10): 'Prompt highlight — Approve as is', 'Long prompt scroll — Approve as is'."
  }
 }

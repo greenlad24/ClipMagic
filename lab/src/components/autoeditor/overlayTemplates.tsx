@@ -45,7 +45,7 @@ export const PROMPT_KIT_NOTE =
 
 /** Mirrors aieditor rules.json motion_templates.approved: each motion template shows once Jake has approved it
  *  (2026-10-10: verb_swap + tagline_build). */
-export const MOTION_TEMPLATES_APPROVED: string[] = ['verb_swap', 'tagline_build'];
+export const MOTION_TEMPLATES_APPROVED: string[] = ['verb_swap', 'tagline_build', 'prompt_highlight', 'long_prompt_scroll'];
 export const MOTION_TEMPLATES_ENABLED = MOTION_TEMPLATES_APPROVED.length > 0;
 
 export const OVERLAY_TEMPLATES: OverlayTemplateInfo[] = [

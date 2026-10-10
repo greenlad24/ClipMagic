@@ -27,20 +27,20 @@ def video(text, step=0.4, dur=None):
 
 
 # ── THE SWITCH, per template (Jake 2026-10-10 approved verb_swap + tagline_build; the rest stay off) ──
-check(MT.approved() == {"verb_swap", "tagline_build"}, f"approved = verb_swap + tagline_build: {MT.approved()}")
-check(MT.is_on("verb_swap") and MT.is_on("tagline_build") and not MT.is_on("prompt_menu")
-      and not MT.is_on("prompt_card_3d") and not MT.is_on("prompt_highlight") and not MT.is_on("long_prompt_scroll")
-      and not MT.is_on("prompt_result"), "the unapproved templates are off")
+check(MT.approved() == {"verb_swap", "tagline_build", "prompt_highlight", "long_prompt_scroll"}, f"approved (Jake rounds 2-3): {MT.approved()}")
+check(MT.is_on("verb_swap") and MT.is_on("tagline_build") and MT.is_on("prompt_highlight") and MT.is_on("long_prompt_scroll")
+      and not MT.is_on("prompt_menu") and not MT.is_on("prompt_card_3d") and not MT.is_on("prompt_result"),
+      "the unapproved templates are off")
 _off_v = video("Grok Bot can now search read and analyze X " + "filler " * 40, step=0.4)
 _o, _d = director.validate_overlays([{"template": "prompt_menu", "start": 0, "end": 8, "fields": {}}], _off_v, [])
 check(not _o and "not approved" in _d[0]["dropped"], "an unapproved motion overlay is rejected by the director")
-_k, _dd = MT.check([{"template": "prompt_highlight", "t0": 1.0, "t1": 3.0, "fields": {}}], _off_v)
+_k, _dd = MT.check([{"template": "prompt_card_3d", "t0": 1.0, "t1": 3.0, "fields": {}}], _off_v)
 check(not _k and "not approved" in _dd[0]["dropped"], "the motion check rejects an unapproved template")
 _enum = director.overlay_schema()["properties"]["overlays"]["items"]["properties"]["template"]["enum"]
 check("verb_swap" in _enum and "tagline_build" in _enum and "prompt_menu" not in _enum and "prompt_card_3d" not in _enum,
       f"the overlay call is offered only the approved motion templates: {_enum}")
 _pr = director.overlay_prompt(_off_v, [], apps=["chatgpt"])
-check("verb_swap" in _pr and "prompt_highlight (templates/" not in _pr, "the prompt carries only the approved templates' instructions")
+check("verb_swap" in _pr and "prompt_menu (templates/" not in _pr, "the prompt carries only the approved templates' instructions")
 _U = planfit.units(_off_v)
 for _u in _U:
     _u["label"] = "A"
