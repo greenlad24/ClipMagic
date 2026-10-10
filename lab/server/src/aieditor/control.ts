@@ -18,6 +18,7 @@ import { jobSourceOf } from "./library.js";
 import { assertJobDeletable, freedByJobs, readDeleted, walkAll } from "./storage.js";
 import { handoffPackages, parseHandoff, withHandoff } from "./handoff.js";
 import * as eta from "./eta.js";
+import { parseMusic } from "./music.js";
 
 const ROOT = process.env.AIEDITOR_WORK || "/aieditor-work";
 const JOBS = path.join(ROOT, "jobs");
@@ -414,6 +415,8 @@ export interface CreateInput {
   chain?: string;
   /** "Graphics only — editor adds screencasts" (./handoff.ts): long-form creative only */
   handoff?: boolean;
+  /** long-form background music: {track: id | null (Auto) | "none", gain_lu: −6 … +6} (./music.ts) */
+  music?: unknown;
 }
 
 export type RunOn = "auto" | "factory" | "box";
@@ -636,6 +639,7 @@ export async function createJob(input: CreateInput) {
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
   const runOn = parseRunOn(input.runOn);
   const handoff = parseHandoff(input);
+  const music = input.format === "long" ? parseMusic(input.music) : null;
   const script = String(input.script ?? "");
   if (script.length > MAX_SCRIPT) throw new Error("The script is too long.");
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "");
@@ -664,6 +668,7 @@ export async function createJob(input: CreateInput) {
     // cut itself — the worker's chain (aieditor/chain.py) carries it on into the creative edit
     ...(chain ? { chain: "creative", takes_policy: "factory", no_edit: true } : {}),
     ...(handoff ? { handoff: true } : {}),
+    ...(music ? { music } : {}),
     created_at: Date.now() / 1000,
   });
   await writeJson(path.join(dir, "status.json"), {
@@ -821,6 +826,10 @@ export async function getJob(id: string) {
   }
   const workflow = workflowOf(req);
   const stageList = withHandoff(stagesFor(workflow, req.format, sourceKindOf(req)), req.handoff === true);
+  // "Change music" (./music.ts, worker action "remusic"): its own stage once it has run or is asked for
+  if (status.stages?.music || (queued && (await readJson<any>(path.join(dir, "queue.json")))?.action === "remusic")) {
+    stageList.push({ id: "music", title: "Change the music (sound only)" });
+  }
   // a HELD edit is not a finished edit: its files are kept for inspection, never listed as edits/finals
   const held = await heldOf(dir, status);
   const runner = await readJson<any>(path.join(dir, "runner.json"));

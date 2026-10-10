@@ -143,10 +143,11 @@ export function factoryMachine(slug: string, region?: string | null, cpus?: numb
 
 // ── stage classes ───────────────────────────────────────────────────────────
 
-const RENDER = new Set(["listen", "preview", "compose", "final", "handoff"]);
+// "music" = "Change music" (./music.ts): the cut's sound + remuxes, per output minute
+const RENDER = new Set(["listen", "preview", "compose", "final", "handoff", "music"]);
 const FIXED = new Set(["cut", "timeline", "preprod"]);
 /** stages that use every core: these scale with the machine (alpha) */
-const CPU = new Set(["audio", "align", "listen", "preview", "graphics", "compose", "final", "handoff"]);
+const CPU = new Set(["audio", "align", "listen", "preview", "graphics", "compose", "final", "handoff", "music"]);
 const DEFAULT_ALPHA = 0.8;
 
 export function unitOf(stage: string, ctx: Pick<Ctx, "srcKind" | "rec">): Unit {

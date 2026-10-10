@@ -36,6 +36,7 @@ import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor
 import { aieditorUploadsRouter } from "./aieditor/uploads.js";
 import { sharePublicRouter, shareAdminRouter } from "./aieditor/share.js";
 import { packageZip, sendZip } from "./aieditor/handoffZip.js";
+import { aieditorMusicRouter } from "./aieditor/music.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
@@ -318,6 +319,10 @@ app.use("/api/aieditor/uploads", auth, aieditorUploadsRouter());
 // Auto Editor — the hand-off package's public share links: list / create / revoke (aieditor/share.ts). The
 // operator's side, behind requireSession (global) + `auth`; the public side is /share above the gate.
 app.use("/api/aieditor/share", auth, shareAdminRouter());
+
+// Auto Editor — the music library (list / upload / play / default / delete) and each job's music choice
+// ("Change music" queues the worker's "remusic"). Behind requireSession (global) + `auth`. aieditor/music.ts
+app.use("/api/aieditor/music", auth, aieditorMusicRouter());
 
 // Auto Editor — a short slice (<= 12 s) of a job's original recording as WAV, for the
 // review page's cut editor: Jake nudges a cut and hears it in the browser at once.
