@@ -3870,7 +3870,7 @@ export interface AutoJobDetail {
   /** the cut → creative chain of a Full edit (null = not part of one) */
   chain?: AutoChain | null;
   /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip); null for other jobs */
-  handoff?: { zip: string; bytes: number; modifiedAt: number; slots: { n: number; start_tc: string; end_tc: string; label: string }[] }[] | null;
+  handoff?: AutoHandoffPackage[] | null;
 }
 /** One estimate of the ETA model (seconds): a single value when `confident`, else lo–hi. */
 export interface AutoPred {
@@ -3932,6 +3932,16 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
   workerAlive: boolean; workerSeenAt: number | null; stages: { id: string; title: string }[];
 }>("autoEditorStatus");
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
+/** An editor hand-off package (aieditor/handoff.ts) + its public share links (aieditor/share.ts). */
+export interface AutoHandoffShare {
+  id: string; pkg: string; path: string; createdAt: number; expiresAt: number; revoked: boolean; active: boolean;
+}
+export interface AutoHandoffPackage {
+  pkg?: string; zip: string; bytes: number; modifiedAt: number;
+  slots: { n: number; start_tc: string; end_tc: string; label: string; steps?: number }[];
+  slotCount?: { planned: number; screen_ref_added: number; final: number } | null;
+  shares?: AutoHandoffShare[];
+}
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
 /** typical time for a job that does not exist yet (the New edit review screen) */
 export const autoEditorEstimate = endpoint<{
@@ -3996,7 +4006,11 @@ export const autoEditorCreate = endpoint<{
   chain?: 'creative';
   /** "Graphics only — editor adds screencasts" (long-form creative): the hand-off package, no screencasts */
   handoff?: boolean;
+  /** long-form background music (server aieditor/music.ts): omitted = Auto at the default level */
+  music?: AutoMusicChoice;
 }, { id: string }>("autoEditorCreate");
+/** request.json "music": track null = Auto (the library default), "none" = no music; gain_lu −6 … +6 */
+export interface AutoMusicChoice { track: string | null; gain_lu: number }
 /** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source (never an unreviewed one) */
 export type AutoReviewStatus = 'final' | 'reviewed' | 'verified' | 'unreviewed';
 /** A finished edit of workflow 1 — per video final-NN.mp4, else the newest preview-NN.mp4 (1080p). */

@@ -5,12 +5,14 @@
  *
  * A long-form creative job with request.json "handoff": true. The worker (aieditor/handoff.py) plans the edit
  * (one plan call, no browser), renders the overlays and builds a package for a human editor in Premiere Pro or
- * DaVinci Resolve: handoff-NN/ + handoff-NN.zip (Premiere XML, FCPXML, the A-roll, ProRes 4444 graphics, audio
+ * DaVinci Resolve: handoff-NN/ (+ handoff-NN.zip streamed by handoffZip.ts) (Premiere XML, FCPXML, the A-roll, ProRes 4444 graphics, audio
  * stems, the screencast brief) and preview-NN.mp4 with a labelled card in every screencast slot.
  * control.ts calls the three helpers below and nothing else, so the mode stays one small block there.
  */
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { packageZipSize } from "./handoffZip.js";
+import { listShares, type ShareView } from "./share.js";
 
 export const HANDOFF_TITLE = "Graphics only — editor adds screencasts";
 
@@ -41,14 +43,24 @@ export function withHandoff(list: { id: string; title: string }[], handoff: bool
 }
 
 export interface HandoffPackage {
-  /** handoff-NN.zip, served by /api/aieditor/files */
+  /** handoff-NN */
+  pkg: string;
+  /** handoff-NN.zip — served by /api/aieditor/files (streamed from the folder, or a zip an older build wrote) */
   zip: string;
   bytes: number;
   modifiedAt: number;
-  slots: { n: number; start_tc: string; end_tc: string; label: string }[];
+  slots: { n: number; start_tc: string; end_tc: string; label: string; steps?: number }[];
+  /** the worker's slot count: plan segments + screen references added → slots after merging */
+  slotCount?: { planned: number; screen_ref_added: number; final: number } | null;
+  /** public share links of this package (share.ts) */
+  shares: ShareView[];
 }
 
-/** getJob: the packages on disk (handoff-NN.zip + the worker's handoff-NN.json summary). */
+/**
+ * getJob: the packages on disk. A package is the worker's handoff-NN.json + the handoff-NN/ folder whose every
+ * file has the size the worker recorded (a package still being copied back from a factory server is not listed
+ * yet), or a handoff-NN.zip an older build wrote.
+ */
 export async function handoffPackages(dir: string): Promise<HandoffPackage[]> {
   const out: HandoffPackage[] = [];
   let files: string[] = [];
@@ -57,19 +69,36 @@ export async function handoffPackages(dir: string): Promise<HandoffPackage[]> {
   } catch {
     return out;
   }
+  const job = path.basename(dir);
+  const pkgs = new Set<string>();
   for (const f of files) {
-    const m = /^handoff-(\d{2})\.zip$/.exec(f);
-    if (!m) continue;
-    const s = await fsp.stat(path.join(dir, f)).catch(() => null);
-    if (!s?.isFile()) continue;
-    let slots: HandoffPackage["slots"] = [];
+    const m = /^(handoff-\d{2})(?:\.zip|\.json)$/.exec(f);
+    if (m) pkgs.add(m[1]);
+  }
+  for (const pkg of [...pkgs].sort()) {
+    let doc: any = null;
     try {
-      const doc = JSON.parse(await fsp.readFile(path.join(dir, `handoff-${m[1]}.json`), "utf8"));
-      slots = Array.isArray(doc?.slots) ? doc.slots : [];
+      doc = JSON.parse(await fsp.readFile(path.join(dir, `${pkg}.json`), "utf8"));
     } catch {
-      slots = [];
+      doc = null;
     }
-    out.push({ zip: f, bytes: s.size, modifiedAt: s.mtimeMs / 1000, slots });
+    const legacy = await fsp.stat(path.join(dir, `${pkg}.zip`)).catch(() => null);
+    let bytes: number | null = legacy?.isFile() ? legacy.size : null;
+    let modifiedAt = legacy?.isFile() ? legacy.mtimeMs / 1000 : 0;
+    if (bytes === null) {
+      bytes = await packageZipSize(dir, pkg);
+      if (bytes === null) continue; // not complete yet
+      modifiedAt = Number(doc?.built_at) || 0;
+    }
+    out.push({
+      pkg,
+      zip: `${pkg}.zip`,
+      bytes,
+      modifiedAt,
+      slots: Array.isArray(doc?.slots) ? doc.slots : [],
+      slotCount: doc?.slot_count ?? null,
+      shares: await listShares(job, pkg),
+    });
   }
   return out;
 }

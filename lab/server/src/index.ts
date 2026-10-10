@@ -34,6 +34,8 @@ import { hyperframesApiRouter } from "./hyperframes/api.js";
 import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
 import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor/factory.js";
 import { aieditorUploadsRouter } from "./aieditor/uploads.js";
+import { sharePublicRouter, shareAdminRouter } from "./aieditor/share.js";
+import { packageZip, sendZip } from "./aieditor/handoffZip.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
@@ -138,6 +140,12 @@ app.get("/news-gatherer/present/teleprompter", (req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("html").send(FOLLOWER_PAGE);
 });
+
+// ── Auto Editor hand-off share links (the third route outside the gate) ─────
+// An editor opens /share/<token> with no Google session — the signed, expiring, revocable token is the key
+// to ONE job's hand-off package: its page, the streamed zip, the preview and the brief, GET/HEAD only.
+// Everything else under /share is a 404 from this router (never the SPA). See aieditor/share.ts.
+app.use("/share", sharePublicRouter());
 
 app.use(requireSession);
 
@@ -307,6 +315,10 @@ app.post("/api/aieditor/factory/image", auth, async (_req, res) => {
 // Behind requireSession (global) + `auth` like every /api/aieditor route. aieditor/uploads.ts
 app.use("/api/aieditor/uploads", auth, aieditorUploadsRouter());
 
+// Auto Editor — the hand-off package's public share links: list / create / revoke (aieditor/share.ts). The
+// operator's side, behind requireSession (global) + `auth`; the public side is /share above the gate.
+app.use("/api/aieditor/share", auth, shareAdminRouter());
+
 // Auto Editor — a short slice (<= 12 s) of a job's original recording as WAV, for the
 // review page's cut editor: Jake nudges a cut and hears it in the browser at once.
 app.get("/api/aieditor/audio/:id", auth, async (req, res) => {
@@ -330,6 +342,15 @@ app.use(
     // + the editor hand-off package (handoff-NN.zip, aieditor/handoff.ts)
     if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/((preview|listen|edit|final)-\d{2}\.mp4|handoff-\d{2}\.zip)$/.test(req.path)) {
       res.status(404).end();
+      return;
+    }
+    // the hand-off zip is STREAMED from its folder (aieditor/handoffZip.ts) unless an older build wrote one
+    const hz = /^\/([a-z0-9][a-z0-9-]{2,63})\/(handoff-\d{2})\.zip$/.exec(req.path);
+    const jobs = path.join(process.env.AIEDITOR_WORK || "/aieditor-work", "jobs");
+    if (hz && !fs.existsSync(path.join(jobs, hz[1], `${hz[2]}.zip`))) {
+      packageZip(path.join(jobs, hz[1]), hz[2])
+        .then((layout) => (layout ? sendZip(req, res, layout, `${hz[1]}-${hz[2]}.zip`) : void res.status(404).end()))
+        .catch(next);
       return;
     }
     next();

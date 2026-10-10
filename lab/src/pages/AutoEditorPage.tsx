@@ -47,6 +47,7 @@ import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
 import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
+import { HandoffShare } from '@/components/autoeditor/HandoffShare';
 import { OverlayCatalog, overlayName, overlayTemplate } from '@/components/autoeditor/overlayTemplates';
 
 /**
@@ -441,17 +442,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
           )}
           {/* "Graphics only — editor adds screencasts": the package for the editor (aieditor/handoff.py) */}
           {(job.handoff ?? []).map((p) => (
-            <div key={p.zip} className="flex flex-wrap items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
-              <span className="min-w-0 flex-1">
-                Hand-off package ready · {p.slots.length} screencast slot{p.slots.length === 1 ? '' : 's'} for the editor ·{' '}
-                {(p.bytes / 1e9).toFixed(2)} GB · the video below shows a card in every slot
-              </span>
-              <Button asChild size="sm" className="h-7 gap-1.5 text-xs">
-                <a href={`/api/aieditor/files/${job.id}/${p.zip}`} download>
-                  <Download className="h-3.5 w-3.5" /> Download hand-off package
-                </a>
-              </Button>
-            </div>
+            <HandoffShare key={`${p.zip}-${p.modifiedAt}`} jobId={job.id} pkg={p} />
           ))}
           {rendering && (
             <p className="rounded bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
