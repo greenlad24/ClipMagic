@@ -13,15 +13,22 @@ and here nothing is recorded at all: no browser starts, no Scout profile is need
   graphics  overlays(): every planned overlay rendered (graphics_long, the measured reference-2 recipes)
   handoff   build(): the hand-off package below; every screencast slot of the plan stays a marked gap
 
-THE PACKAGE (job dir: handoff-NN/ + handoff-NN.zip; every path relative, nothing to relink):
+THE PACKAGE (job dir: handoff-NN/ + preview-NN.mp4; the Lab streams handoff-NN.zip from them at download time —
+no zip is written here, so a factory server sends one copy of the bytes; every path relative, nothing to relink):
   timeline.xml          Premiere XML (xmeml v4; Resolve imports it too)        ┐ V1 A-roll (camera baked in)
   timeline.fcpxml       FCPXML 1.10 (Resolve's most reliable path)            │ V2 screencasts — EMPTY, one marker
   a-roll.mov            the cut at source resolution, A-roll camera baked in  │    per slot (FCPXML: disabled cards)
-  graphics/NN-*.mov     ProRes 4444 + alpha, full frame: overlays, text       │ V3+ graphics at their times
-                        gradient, facecam bubble per slot, end fade           │ A1 voice, A2 music, A3 SFX
-  audio/{voice,music,sfx}.wav   48 kHz stems from 0, all the sequence's length┘
+  graphics/NN-*.mov     ProRes 4444 + alpha: overlays cropped to their content │ V3+ graphics at their times
+                        box, ONE facecam-bubble clip (cropped to the bubble;  │ A1 voice, A2 music, A3 SFX
+                        one piece per slot on the timeline), full-frame text  │
+                        gradient + end fade; a cropped clip sits at its       │
+                        position (Premiere: Motion; FCPXML: transform)        │
+  audio/{voice,music,sfx}.wav   48 kHz 16-bit stems from 0, the sequence's length┘
   screencasts/BRIEF.html (+ BRIEF.pdf when Chromium prints it), slots.csv, placeholders/slot-NN.mp4
-  preview.mp4           the whole edit with a labelled card in every slot (the Lab plays it: preview-NN.mp4)
+  preview.mp4           the whole edit with a labelled card in every slot (on disk: the job's preview-NN.mp4)
+SLOTS: the plan's screencast segments + every sentence that refers to the screen and was left on the presenter
+(screenref.py, RULEBOOK R13), then back-to-back segments of one app (a gap under 2 s) merged into ONE slot whose
+brief lists them as numbered steps (merge_segments).
   README.txt            how to open it
 
 No narration cut is added (the A-roll is the edited timeline, frame for frame) and no pause is trimmed.
@@ -35,7 +42,6 @@ import re
 import shutil
 import textwrap
 import time
-import zipfile
 from pathlib import Path
 
 from . import compose_long, config, director, events as ev_log, graphics_long, longedit, media, planfit, render, sfx, skill
@@ -43,7 +49,12 @@ from . import compose_long, config, director, events as ev_log, graphics_long, l
 PKG = "handoff-{k:02d}"
 STAGES = ["download", "audio", "transcribe", "align", "timeline", "preprod", "graphics", "handoff"]
 AROLL_CODECS = ("h264", "prores")          # request.json "handoff_aroll": h264 (default, source quality) | prores (422 HQ)
-PRORES_4444 = "-c:v prores_ks -profile:v 4 -vendor apl0 -pix_fmt yuva444p10le"
+# every graphic's alpha comes from an 8-bit source (PNG frames, the mask), so 8 alpha bits lose nothing
+PRORES_4444 = "-c:v prores_ks -profile:v 4 -alpha_bits 8 -vendor apl0 -pix_fmt yuva444p10le"
+# the facecam bubble is camera footage: a fixed quantiser instead of the profile's bit budget — measured on Jake's
+# 4K job: 233 MB → 57 MB per 10 s at 53 dB PSNR against the default (visually lossless), the biggest single saving
+BUBBLE_PRORES = "-c:v prores_ks -profile:v 4 -qscale:v 11 -alpha_bits 8 -vendor apl0 -pix_fmt yuva444p10le"
+CROP_MAX_AREA = 0.6         # an overlay whose content box covers more than this of the frame stays full frame
 FONT = ("F=$(ls /usr/share/fonts/opentype/inter/Inter-SemiBold.otf /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf "
         "2>/dev/null | head -1)")
 CARD_BG = "0x161b22"
@@ -130,7 +141,9 @@ def plan(d, req, edl, log=print, progress=None):
                               "sites": [{"url": s["url"], "note": s.get("note", ""), "scout": None, "ready": True,
                                          "why": "the editor records it"} for s in sites],
                               "fallbacks": [], "held": [], "costs": {"claude_usd": round(usd, 4)}})
-    note = (f"{len(p['segments'])} screencast slot(s) for the editor, {len(p['overlays'])} overlay(s)"
+    merged, n_planned, n_added = editor_segments(p["segments"], video["words"], video["duration"])
+    note = (f"{len(merged)} screencast slot(s) for the editor ({n_planned} planned"
+            + (f" + {n_added} screen reference(s)" if n_added else "") + f", merged), {len(p['overlays'])} overlay(s)"
             + (f", {len(notes)} note(s) for the brief" if notes else ""))
     log(f"hand-off plan: {note}")
     return {"note": note, "usd": round(usd, 4)}
@@ -179,6 +192,70 @@ def overlays(d, k, v, fps, size, cancelled=lambda: False, progress=lambda m, f=N
 
 def _norm(s):
     return re.sub(r"[^a-z0-9%']", "", str(s or "").lower())
+
+
+MERGE_GAP_S = 2.0           # back-to-back slots of one app closer than this become ONE slot (fewer, cleaner slots)
+
+
+def _host(url):
+    m = re.match(r"https?://([^/]+)", str(url or ""))
+    return m.group(1).lower().removeprefix("www.") if m else ""
+
+
+def _app_of(seg):
+    return str(seg.get("app") or "").strip().lower() or _host(seg.get("url"))
+
+
+def screen_ref_segments(segments, words, vdur=None):
+    """R13 / C8: every sentence that shows or refers to the screen (screenref.py) that the plan left on the
+    presenter → its own segment (whole sentence, never overlapping a planned one; planned ones are never shrunk).
+    It takes the app/page of the nearest planned segment and says so in the brief."""
+    from . import screenref
+    segs = sorted(segments or [], key=lambda x: float(x["t0"]))
+    out = []
+    for f in screenref.uncovered(screenref.flag(words), [(x["t0"], x["t1"]) for x in segs]):
+        free, t = [], f["t0"]                          # the sentence minus the planned segments: its longest free part
+        for x in segs:
+            if float(x["t1"]) <= t or float(x["t0"]) >= f["t1"]:
+                continue
+            if float(x["t0"]) > t:
+                free.append((t, float(x["t0"])))
+            t = max(t, float(x["t1"]))
+        if t < f["t1"]:
+            free.append((t, f["t1"]))
+        if not free:
+            continue
+        t0, t1 = max(free, key=lambda iv: iv[1] - iv[0])
+        if vdur is not None:
+            t1 = min(t1, float(vdur))
+        if t1 - t0 < 0.5:
+            continue
+        near = min(segs, key=lambda x: min(abs(float(x["t0"]) - t1), abs(float(x["t1"]) - t0)), default={})
+        out.append({"t0": round(t0, 3), "t1": round(t1, 3), "app": near.get("app") or "", "url": near.get("url") or "",
+                    "intent": "", "screen_ref": f["text"], "cues": f["cues"]})
+    return out
+
+
+def merge_segments(segments, gap_max=MERGE_GAP_S):
+    """Back-to-back segments of the SAME app with no presenter between them (or a gap under gap_max s) → one
+    segment {t0 of the first, t1 of the last, "parts": [the originals]}. Every part starts and ends on its own
+    sentence boundary, so the merged slot does too; nothing is trimmed or cut."""
+    out = []
+    for x in sorted(segments or [], key=lambda x: float(x["t0"])):
+        prev = out[-1] if out else None
+        if prev is not None and _app_of(prev) == _app_of(x) and float(x["t0"]) - float(prev["t1"]) < gap_max:
+            prev["parts"].append(x)
+            prev["t1"] = max(float(prev["t1"]), float(x["t1"]))
+            continue
+        out.append({**x, "t0": float(x["t0"]), "t1": float(x["t1"]), "parts": [x]})
+    return out
+
+
+def editor_segments(segments, words, vdur=None):
+    """The plan's screencast segments + the screen-reference sentences it missed, merged → the editor's slots'
+    segments. → (merged, n_planned, n_added)"""
+    added = screen_ref_segments(segments, words, vdur)
+    return merge_segments(list(segments or []) + added), len(segments or []), len(added)
 
 
 def slots_of(segments, vdur, fps=30000 / 1001):
@@ -273,48 +350,78 @@ def _first_sentence(s, limit=70):
     return cut + "…"
 
 
+SCREEN_REF_NOTE = "Narrator refers to the screen here"
+
+
+def _part_session(seg):
+    sess = seg.get("session")
+    return (sess or {}).get("kind") in ("public", "outside") if isinstance(sess, dict) else sess == "outside"
+
+
 def brief_rows(slots, words, fps_num=30000, fps_den=1001, notes=()):
     """One row per slot for slots.csv / BRIEF.html: the time range, the exact words, what must be on screen,
-    each beat on its word, the zoom targets, the app/URL and the rules that apply to THIS slot."""
+    each beat on its word, the zoom targets, the app/URL and the rules that apply to THIS slot. A merged slot
+    (several plan segments of one app back to back) lists them as numbered steps, each with its words and time."""
     from .nlexml import tc_string
     fps = fps_num / fps_den
+    tc = lambda t: tc_string(round(t * fps), fps_num, fps_den)
     rows = []
     for s in slots:
         seg = s["seg"]
+        parts = seg.get("parts") or [seg]
         ws = [x for x in words if s["t0"] - 0.05 <= x["start"] < s["t1"]]
-        pre, beats = beats_of(seg, words)
-        clipped = float(seg.get("t1", s["t1"])) > s["t1"] + 0.05
-        # a slot cut short by the video's end (an excerpt) keeps only the beats that still happen in it
-        beats = [b for b in beats if (b["t"] is None and not clipped) or (b["t"] is not None and b["t"] <= s["b"])]
-        url = seg.get("url") or ""
-        outside = (seg.get("session") or {}).get("kind") in ("public", "outside") if isinstance(seg.get("session"), dict) \
-            else seg.get("session") == "outside"
-        text_all = " ".join([pre] + [b["what"] for b in beats]).lower()
-        flags = []
-        if outside or "pricing" in url or re.search(r"\bpric(e|es|ing)\b|\bplan card\b|\bfree plan\b", text_all):
+        steps, all_beats, pres, flags = [], [], [], []
+        for k, part in enumerate(parts, 1):
+            p0, p1 = max(float(part["t0"]), s["t0"]), min(float(part["t1"]), s["t1"])
+            if p1 <= p0 and len(parts) > 1:
+                continue                                   # a part past the video's end (an excerpt)
+            pw = [x for x in words if p0 - 0.05 <= x["start"] < p1]
+            pre, beats = beats_of(part, words)
+            clipped = float(part.get("t1", s["t1"])) > s["t1"] + 0.05
+            # a slot cut short by the video's end (an excerpt) keeps only the beats that still happen in it
+            beats = [b for b in beats if (b["t"] is None and not clipped) or (b["t"] is not None and b["t"] <= s["b"])]
+            beats = [{**b, "tc": tc(b["t"]) if b.get("t") is not None else "",
+                      "word": next((x["word"] for x in pw if b.get("t") is not None and abs(x["start"] - b["t"]) < 0.02), "")}
+                     for b in beats]
+            if part.get("screen_ref"):
+                pre = (f"{SCREEN_REF_NOTE}: show what he points at or names — " + ", ".join(
+                    c.replace("_", " ") for c in part.get("cues") or [])).rstrip(" —")
+            steps.append({"step": len(steps) + 1, "start_tc": tc(p0), "end_tc": tc(p1), "start_s": round(p0, 3),
+                          "end_s": round(p1, 3), "words": " ".join(x["word"] for x in pw), "on_screen": pre,
+                          "beats": beats, "url": part.get("url") or "", "logged_out_us": bool(_part_session(part)),
+                          "screen_ref": bool(part.get("screen_ref"))})
+            all_beats += beats
+            pres.append(pre)
+        url = next((st["url"] for st in steps if st["url"]), seg.get("url") or "")
+        outside = any(st["logged_out_us"] for st in steps)
+        text_all = " ".join(pres + [b["what"] for b in all_beats]).lower()
+        if outside or any("pricing" in st["url"] for st in steps) or \
+                re.search(r"\bpric(e|es|ing)\b|\bplan card\b|\bfree plan\b", text_all):
             flags.append("Pricing")
         if re.search(r"\b(type|typed|paste|pasted|prompt)\b", text_all):
             flags.append("Prompts pasted whole")
         flags.append("Privacy")
-        first = next((b["what"] for b in beats if b["what"]), pre)
+        first = next((b["what"] for b in all_beats if b["what"]), next((p for p in pres if p), ""))
         label = _first_sentence(re.sub(r"^(the|a)\s+", "", first, flags=re.I), 60) if first else (url or "screen")
-        my_notes = [n for n in notes if n.get("word_ids") and any(x["i"] in n["word_ids"] for x in ws)]
+        my_notes = [n.get("why") or n.get("sentence") for n in notes
+                    if n.get("word_ids") and any(x["i"] in n["word_ids"] for x in ws if "i" in x)]
+        my_notes += [f"{SCREEN_REF_NOTE} ({st['start_tc']}): “{_first_sentence(st['words'], 90)}”"
+                     for st in steps if st["screen_ref"]]
         rows.append({
             "slot": s["n"], "label": label,
-            "start_tc": tc_string(round(s["a"] * fps), fps_num, fps_den), "end_tc": tc_string(round(s["b"] * fps), fps_num, fps_den),
+            "start_tc": tc(s["a"]), "end_tc": tc(s["b"]),
             "start_s": round(s["a"], 3), "end_s": round(s["b"], 3), "duration_s": round(s["b"] - s["a"], 2),
             "words_from_s": round(s["t0"], 3), "words_to_s": round(s["t1"], 3),
             "app": seg.get("app") or "", "url": url, "logged_out_us": bool(outside),
             "words": " ".join(x["word"] for x in ws),
-            "on_screen": pre,
-            "beats": [{**b, "tc": tc_string(round(b["t"] * fps), fps_num, fps_den) if b.get("t") is not None else "",
-                       "word": next((x["word"] for x in ws if b.get("t") is not None and abs(x["start"] - b["t"]) < 0.02), "")}
-                      for b in beats],
-            "zoom": [b["zoom"] for b in beats if b.get("zoom")],
+            "on_screen": pres[0] if len(steps) == 1 else "",
+            "steps": steps if len(steps) > 1 else [],
+            "beats": all_beats,
+            "zoom": [b["zoom"] for b in all_beats if b.get("zoom")],
             "flags": flags,
             "enter": "dissolve from the presenter" if s.get("aroll_in") else "dissolve from the previous screencast" if s.get("fade_in") else "cut in",
             "exit": "dissolve to the presenter" if s.get("aroll_out") else "the next screencast dissolves over it" if s.get("tail") else "runs to the end",
-            "notes": [n.get("why") or n.get("sentence") for n in my_notes],
+            "notes": my_notes,
         })
     return rows
 
@@ -323,7 +430,8 @@ def slots_csv(rows):
     f = io.StringIO()
     wr = csv.writer(f)
     wr.writerow(["slot", "start_tc", "end_tc", "start_s", "end_s", "duration_s", "app", "url", "logged_out_us_browser",
-                 "words", "on_screen", "beats (time - word: action / what / typed text)", "zoom_targets", "rules", "enter", "exit"])
+                 "words", "on_screen", "beats (time - word: action / what / typed text)", "zoom_targets", "rules", "enter", "exit",
+                 "steps (n start-end: words)", "notes"])
     for r in rows:
         beats = " | ".join(
             f"{b['tc']} '{b['cue']}': " + " / ".join(x for x in (b["action"], b["what"], f"type: {b['text']}" if b.get("text") else "",
@@ -331,7 +439,9 @@ def slots_csv(rows):
             for b in r["beats"])
         wr.writerow([r["slot"], r["start_tc"], r["end_tc"], r["start_s"], r["end_s"], r["duration_s"], r["app"], r["url"],
                      "yes" if r["logged_out_us"] else "no", r["words"], r["on_screen"], beats, "; ".join(r["zoom"]),
-                     "; ".join(r["flags"]), r["enter"], r["exit"]])
+                     "; ".join(r["flags"]), r["enter"], r["exit"],
+                     " | ".join(f"{st['step']} {st['start_tc']}-{st['end_tc']}: {st['words']}" for st in r.get("steps") or []),
+                     " | ".join(r.get("notes") or [])])
     return f.getvalue()
 
 
@@ -340,21 +450,35 @@ def brief_html(rows, meta):
     e = html.escape
     rules = "".join(f"<li><b>{e(a)}.</b> {e(b)}</li>" for a, b in RULES)
     cards = []
-    for r in rows:
-        beats = "".join(
+    def beat_table(bs):
+        rows_ = "".join(
             f"<tr><td class=tc>{e(b['tc'])}</td><td>“{e(b['cue'])}”</td><td>{e(b['what'])}"
             + (f"<div class=sub>Action: {e(b['action'])}</div>" if b.get("action") else "")
             + (f"<div class=sub>Paste exactly: <code>{e(b['text'])}</code></div>" if b.get("text") else "")
             + (f"<div class=sub>Page: <code>{e(b['url'])}</code></div>" if b.get("url") else "")
             + (f"<div class=sub>Zoom on: {e(b['zoom'])}</div>" if b.get("zoom") else "")
-            + "</td></tr>" for b in r["beats"])
+            + "</td></tr>" for b in bs)
+        return f'<table><tr><th>Time</th><th>On the word</th><th>What happens</th></tr>{rows_}</table>' if rows_ else ""
+
+    for r in rows:
+        if r.get("steps"):
+            beats = "<h3>Steps</h3><ol class=steps>" + "".join(
+                f"<li><p class=time><b>Step {st['step']}</b> · {e(st['start_tc'])} – {e(st['end_tc'])} "
+                f"({st['end_s'] - st['start_s']:.1f} s)"
+                + (" · <b>logged-out browser, United States, prices in USD</b>" if st["logged_out_us"] else "")
+                + (f" · <code>{e(st['url'])}</code>" if st["url"] and st["url"] != r["url"] else "") + "</p>"
+                + f"<blockquote>{e(st['words'])}</blockquote>"
+                + (f"<p><b>On screen:</b> {e(st['on_screen'])}</p>" if st["on_screen"] else "")
+                + beat_table(st["beats"]) + "</li>" for st in r["steps"]) + "</ol>"
+        else:
+            beats = beat_table(r["beats"])
         cards.append(f"""<section class=slot>
 <h2>Screencast {r['slot']} <span>{e(r['label'])}</span></h2>
 <p class=time><b>{e(r['start_tc'])} – {e(r['end_tc'])}</b> ({r['duration_s']:.1f} s) · {e(r['enter'])}, {e(r['exit'])}</p>
 <p><b>App / page:</b> {e(r['app'] or '')} <code>{e(r['url'])}</code>{' — <b>logged-out browser, United States, prices in USD</b>' if r['logged_out_us'] else ''}</p>
 <p><b>What he says over it:</b></p><blockquote>{e(r['words'])}</blockquote>
 {f'<p><b>On screen:</b> {e(r["on_screen"])}</p>' if r['on_screen'] else ''}
-{f'<table><tr><th>Time</th><th>On the word</th><th>What happens</th></tr>{beats}</table>' if beats else ''}
+{beats}
 {('<p><b>Zoom targets:</b> ' + e('; '.join(r['zoom'])) + '</p>') if r['zoom'] else ''}
 <p class=flags><b>Rules here:</b> {e(', '.join(r['flags']))}</p>
 {''.join(f'<p class=note>Note: {e(n)}</p>' for n in r['notes'])}
@@ -373,7 +497,7 @@ h1{{font-size:24px;margin:0 0 4px}} h2{{font-size:18px;margin:0 0 6px}} h2 span{
 table{{border-collapse:collapse;width:100%;margin:6px 0}} th,td{{text-align:left;vertical-align:top;border-top:1px solid var(--line);padding:6px 8px}}
 th{{font-size:12px;color:var(--muted);font-weight:600}} td.tc{{white-space:nowrap;font-variant-numeric:tabular-nums}}
 .sub{{font-size:13px;color:var(--muted)}} .flags{{font-size:13px}} .note{{font-size:13px;color:#9a5b00}}
-ol li{{margin:4px 0}}
+ol li{{margin:4px 0}} h3{{font-size:15px;margin:10px 0 4px}} ol.steps{{padding-left:20px}} ol.steps>li{{margin:10px 0}}
 </style></head><body>
 <h1>Screencast brief</h1>
 <p class=lead>{e(meta.get('title', ''))} · {len(rows)} screencast slot(s), {total:.0f} s in total · timeline {e(meta.get('fps_label', ''))}, {meta.get('width')}×{meta.get('height')}</p>
@@ -394,6 +518,10 @@ where a file is, point it to this folder once and let it find the rest.
   V1  a-roll.mov            the presenter, camera moves baked in ({w}x{h}, {fps})
   V2  (empty)               YOUR SCREENCASTS — one marker "Screencast N" per slot
   V3+ graphics/*.mov        overlays, text gradient, facecam bubble, end fade (ProRes 4444, straight alpha)
+                            The bubble and most overlays are SMALLER than the frame and placed at their position
+                            at 100 % (no scaling). If your app scaled them to fit the frame, set the clip's scaling
+                            to none — Resolve: Inspector > Retime and Scaling > Scaling: Crop (or Project Settings >
+                            Image Scaling > Mismatched resolution: Center crop with no resizing); Premiere: Scale 100.
   A1  audio/voice.wav       the narration — final, do not cut it
   A2  audio/music.wav       music bed
   A3  audio/sfx.wav         sound effects
@@ -506,6 +634,80 @@ def timeline_model(name, fps_num, fps_den, W, H, total, aroll_frames, graphics, 
     return tl, fcp
 
 
+def bubble_pieces(slots, F):
+    """The facecam bubble's piece per slot on ONE clip: [{slot, start (sequence frame), frames, in (the clip's
+    frame)}], the pieces back to back in the clip; back-to-back slots abut (no overlap)."""
+    out, off = [], 0
+    for i, s in enumerate(slots):
+        a, b = F(s["a"]), F(s["b"])
+        if i + 1 < len(slots):
+            b = min(b, F(slots[i + 1]["a"]))
+        n = max(1, b - a)
+        out.append({"slot": s, "start": a, "frames": n, "in": off})
+        off += n
+    return out
+
+
+BBOX_PY = r"""
+import cv2, json, sys
+from concurrent.futures import ProcessPoolExecutor
+def one(job):
+    d, first, n = job
+    x0 = y0 = 10 ** 9
+    x1 = y1 = -1
+    for k in range(first, first + n):
+        im = cv2.imread(f"/g/{d}/f{k:05d}.png", cv2.IMREAD_UNCHANGED)
+        if im is None or im.ndim < 3 or im.shape[2] < 4:
+            return d, None
+        a = im[:, :, 3]
+        rows = a.any(axis=1).nonzero()[0]
+        if not len(rows):
+            continue
+        cols = a.any(axis=0).nonzero()[0]
+        y0, y1 = min(y0, int(rows[0])), max(y1, int(rows[-1]))
+        x0, x1 = min(x0, int(cols[0])), max(x1, int(cols[-1]))
+    return d, ([x0, y0, x1 + 1, y1 + 1] if x1 >= 0 else None)
+jobs = json.load(open(sys.argv[1]))
+with ProcessPoolExecutor(int(sys.argv[2])) as ex:
+    print(json.dumps(dict(ex.map(one, [tuple(j) for j in jobs]))))
+"""
+
+
+def crop_box(bbox, W, H, max_area=CROP_MAX_AREA):
+    """An overlay's content box over ALL its frames (x0, y0, x1, y1) → (x, y, w, h) on even pixels (ProRes),
+    or None = keep it full frame (no content, or the box covers most of the frame anyway)."""
+    if not bbox:
+        return None
+    x0, y0, x1, y1 = bbox
+    x0, y0 = max(0, int(x0)) // 2 * 2, max(0, int(y0)) // 2 * 2
+    x1, y1 = min(W, (int(x1) + 1) // 2 * 2), min(H, (int(y1) + 1) // 2 * 2)
+    cw, ch = x1 - x0, y1 - y0
+    if cw <= 0 or ch <= 0 or cw * ch > max_area * W * H:
+        return None
+    return x0, y0, cw, ch
+
+
+def overlay_boxes(gdir, events, W, H, cancelled=lambda: False):
+    """{frames_dir: crop box | None} for every overlay: its alpha's bounding box over every frame it shows."""
+    jobs = [[ev["frames_dir"], ev["start_frame"], ev["n_frames"]] for ev in events
+            if ev.get("n_frames") and not ev.get("full_frame")]
+    if not jobs:
+        return {}
+    gdir = Path(gdir)
+    (gdir / "bbox-jobs.json").write_text(json.dumps(jobs))
+    (gdir / "bbox.py").write_text(BBOX_PY)
+    try:
+        raw = _run(f"python3 /g/bbox.py /g/bbox-jobs.json {max(1, min(4, config.cpu_count()))}",
+                   [(gdir, "/g")], cancelled)
+        got = json.loads((raw or "{}").strip().splitlines()[-1])
+    except (RuntimeError, ValueError, IndexError):
+        got = {}
+    finally:
+        (gdir / "bbox-jobs.json").unlink(missing_ok=True)
+        (gdir / "bbox.py").unlink(missing_ok=True)
+    return {k: crop_box(v, W, H) for k, v in got.items()}
+
+
 def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None: None, log=print, room_tone_start=0.0,
           workers=None, aroll_codec="h264", preview=True, keep_work=False):
     """The hand-off package of video k → {"dir", "zip", "files": {path: bytes}, "slots", "frames", "note"}."""
@@ -548,7 +750,9 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     f_st, fd, out_dur, total = compose_long._end_fade(vdur, end_fade, fps)
 
     # 2 the slots (the plan's screencast segments, with compose's transition flags) and the A-roll blocks
-    slots = slots_of(plan_.get("segments") or [], vdur, fps)
+    esegs, n_planned, n_added = editor_segments(plan_.get("segments") or [], video["words"], vdur)
+    slots = slots_of(esegs, vdur, fps)
+    log(f"hand-off slots: {n_planned} planned segment(s) + {n_added} screen-reference sentence(s) → {len(slots)} slot(s)")
     blocks, t = [], 0.0
     for s in slots:
         if s["t0"] > t:
@@ -588,25 +792,30 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
              f"ffmpeg -v error -y -framerate {rate} -i /w/handoff-work/aroll.h264 -c:v copy -video_track_timescale {fps_num} "
              f"-movflags +faststart /p/a-roll.mov && rm -f /w/handoff-work/aroll.h264", [(w, "/w"), (tmp_pkg, "/p")], cancelled)
 
-    # 4 the graphics, ProRes 4444 with alpha, full frame, each at its own time
+    # 4 the graphics, ProRes 4444 with alpha, each at its own time. ONE facecam-bubble clip for the whole video
+    # (cropped to the bubble, every slot's piece back to back) and every overlay cropped to its content box —
+    # full frame only where the picture is (text gradient, end fade, an overlay with a backdrop)
     progress("Graphics: overlays, text gradient, facecam bubble, end fade (ProRes 4444)…", 0.4)
     fdir, side = compose_long.bubble_assets(w, W, H)
     gname = compose_long.gradient_png(w, W, H) if compose_long.gradient_spans(events, fps) else None
-    gfx = []                                       # {group, name, file, start, frames, alpha}
+    boxes = overlay_boxes(w / gfx_pkg, events, W, H, cancelled)
+    gfx = []                                       # render items {group, kind, label, clips: [timeline placements]}
     for ev in events:
         n = ev.get("n_frames") or 0
         if not n:
             continue
         n = min(n, total - ev["start_frame"])
-        gfx.append({"group": "overlay", "kind": "overlay", "ev": ev, "start": ev["start_frame"], "frames": n,
+        box = None if ev.get("full_frame") else boxes.get(ev["frames_dir"])
+        gfx.append({"group": "overlay", "kind": "overlay", "ev": ev, "start": ev["start_frame"], "frames": n, "box": box,
                     "label": f"{ev.get('template')}-{_slug(' '.join(str(x) for x in (ev.get('fields') or {}).values() if isinstance(x, str)) or ev.get('template'), 22)}"})
     for a, b in compose_long.gradient_spans(events, fps):
         if a < vdur:
             gfx.append({"group": "gradient", "kind": "gradient", "start": F(a), "frames": max(1, min(F(b), total) - F(a)),
                         "span": (a, b), "label": "text-gradient"})
-    for s in slots:
-        gfx.append({"group": "bubble", "kind": "bubble", "slot": s, "start": F(s["a"]), "frames": max(1, F(s["b"]) - F(s["a"])),
-                    "label": f"facecam-bubble-slot{s['n']:02d}"})
+    pieces = bubble_pieces(slots, F)
+    if pieces:
+        gfx.append({"group": "bubble", "kind": "bubble", "start": pieces[0]["start"], "frames": pieces[-1]["in"] + pieces[-1]["frames"],
+                    "pieces": pieces, "label": "facecam-bubble"})
     if total - F(f_st) > 0:
         gfx.append({"group": "fade", "kind": "fade", "start": F(f_st), "frames": total - F(f_st), "label": "end-fade"})
     gfx.sort(key=lambda g: (g["start"], g["group"]))
@@ -628,10 +837,16 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
         out = f"/p/{g['file']}"
         L = g["frames"] / fps
         progress(f"Graphic {i} of {len(gfx)}: {g['label']}…", 0.4 + 0.25 * (i - 1) / max(1, len(gfx)))
+        g["clips"] = [{"start": g["start"], "frames": g["frames"]}]
         if g["kind"] == "overlay":
             ev = g["ev"]
+            crop = ""
+            if g["box"]:
+                x0, y0, cw, ch = g["box"]
+                crop = f",crop={cw}:{ch}:{x0}:{y0}"
+                g["clips"][0].update(x=x0, y=y0, width=cw, height=ch)
             _run(f"ffmpeg -v error -y -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
-                 f"-frames:v {g['frames']} -vf format=rgba {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p")], cancelled)
+                 f"-frames:v {g['frames']} -vf format=rgba{crop} {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p")], cancelled)
         elif g["kind"] == "gradient":
             G = compose_long.TEXT_GRADIENT
             a, b = g["span"]
@@ -641,46 +856,57 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                  f"-vf \"format=rgba,fade=t=in:st=0:d={min(compose_long._f(G['in_f']), dd / 2):.4f}:alpha=1,"
                  f"fade=t=out:st={dd - fo:.4f}:d={fo:.4f}:alpha=1\" {PRORES_4444} {out}", [(w, "/w"), (tmp_pkg, "/p")], cancelled)
         elif g["kind"] == "bubble":
-            s = g["slot"]
-            fades = []
-            if s.get("aroll_in"):
-                fades.append(f"fade=t=in:st={f4:.4f}:d={f4:.4f}:alpha=1")
-            if s.get("aroll_out"):
-                fades.append(f"fade=t=out:st={max(0.0, L - 2 * f4):.4f}:d={f4:.4f}:alpha=1")
-            fz = ("," + ",".join(fades)) if fades else ""
+            # each slot's piece (its own fades, exactly as compose shows it) cropped to the bubble's box, then the
+            # pieces joined into ONE file (stream copy); the timeline places every piece at its slot with its in-point
             off_px = (side - dv) // 2
-            fc = (f"[0:v]setpts=PTS-STARTPTS,crop={sq}:{sq}:{sx}:{sy},scale={dv}:{dv}:flags=lanczos,format=rgba,"
-                  f"pad={side}:{side}:{off_px}:{off_px}:color=black@0[fv];[1:v]format=gray[fm];[fv][fm]alphamerge[fd];"
-                  f"[2:v]format=rgba[ring];[fd][ring]overlay=shortest=1:format=auto,format=rgba{fz}[bub];"
-                  f"color=c=black@0.0:s={W}x{H}:r={fps:.8f}:d={L + 1:.4f},format=rgba[bg];"
-                  f"[bg][bub]overlay={bx}:{by}:format=auto:eof_action=pass[v]")
-            (work / f"bubble-{s['n']:02d}.txt").write_text(fc)
-            _run(f"ffmpeg -v error -y -ss {s['a']:.6f} -t {L + 0.5:.6f} -i /j/{cut}.mp4 -loop 1 -i /fc/mask.png -loop 1 -i /fc/ring.png "
-                 f"-filter_complex_script /w/handoff-work/bubble-{s['n']:02d}.txt -map [v] -frames:v {g['frames']} "
-                 f"{PRORES_4444} {out}", [(d, "/j"), (w, "/w"), (fdir, "/fc"), (tmp_pkg, "/p")], cancelled)
+            listing = []
+            for pc in g["pieces"]:
+                s = pc["slot"]
+                Ls = max(1, F(s["b"]) - F(s["a"])) / fps          # the whole slot's length: its fade-out sits at its end
+                fades = []
+                if s.get("aroll_in"):
+                    fades.append(f"fade=t=in:st={f4:.4f}:d={f4:.4f}:alpha=1")
+                if s.get("aroll_out"):
+                    fades.append(f"fade=t=out:st={max(0.0, Ls - 2 * f4):.4f}:d={f4:.4f}:alpha=1")
+                fz = ("," + ",".join(fades)) if fades else ""
+                fc = (f"[0:v]setpts=PTS-STARTPTS,crop={sq}:{sq}:{sx}:{sy},scale={dv}:{dv}:flags=lanczos,format=rgba,"
+                      f"pad={side}:{side}:{off_px}:{off_px}:color=black@0[fv];[1:v]format=gray[fm];[fv][fm]alphamerge[fd];"
+                      f"[2:v]format=rgba[ring];[fd][ring]overlay=shortest=1:format=auto,format=rgba{fz}[v]")
+                (work / f"bubble-{s['n']:02d}.txt").write_text(fc)
+                part = f"bubble-{s['n']:02d}.mov"
+                _run(f"ffmpeg -v error -y -ss {s['a']:.6f} -t {Ls + 0.5:.6f} -i /j/{cut}.mp4 -loop 1 -i /fc/mask.png -loop 1 -i /fc/ring.png "
+                     f"-filter_complex_script /w/handoff-work/bubble-{s['n']:02d}.txt -map [v] -frames:v {pc['frames']} "
+                     f"{BUBBLE_PRORES} /w/handoff-work/{part}", [(d, "/j"), (w, "/w"), (fdir, "/fc")], cancelled)
+                listing.append(f"file '{part}'")
+            (work / "bubble.txt").write_text("\n".join(listing) + "\n")
+            _run(f"cd /w/handoff-work && ffmpeg -v error -y -f concat -safe 0 -i bubble.txt -c copy {out} && rm -f bubble-*.mov",
+                 [(w, "/w"), (tmp_pkg, "/p")], cancelled)
+            g["clips"] = [{"start": pc["start"], "frames": pc["frames"], "in": pc["in"], "x": bx, "y": by, "width": side,
+                           "height": side, "slot": pc["slot"]["n"]} for pc in g["pieces"]]
         else:
             _run(f"ffmpeg -v error -y -f lavfi -i color=c=black:s={W}x{H}:r={fps:.8f}:d={L + 0.5:.4f} -frames:v {g['frames']} "
                  f"-vf \"format=rgba,fade=t=in:st=0:d={fd:.4f}:alpha=1\" {PRORES_4444} {out}", [(tmp_pkg, "/p")], cancelled)
+    bubble_box = {"x": bx, "y": by, "w": side, "h": side}
 
     # 5 the sound, as stems from 0 (voice / music bed / SFX), the sequence's length each
     progress("Audio stems: voice, music, SFX…", 0.66)
     music = longedit.pick_music(d / f"{cut}.mp4")
     out_dur = total / fps                          # every stem is exactly the sequence's length
-    lines = [f"ffmpeg -v error -y -i /j/{cut}.mp4 -vn -af aresample=48000,apad -t {out_dur:.6f} -ac 2 -c:a pcm_s24le /p/audio/voice.wav"]
+    lines = [f"ffmpeg -v error -y -i /j/{cut}.mp4 -vn -af aresample=48000,apad -t {out_dur:.6f} -ac 2 -c:a pcm_s16le /p/audio/voice.wav"]
     mounts = [(d, "/j"), (tmp_pkg, "/p"), (sfx.LIB, "/sfx")]
     if music:
         fo = music.get("fade_out", 1.0)
         lines.append(f"ffmpeg -v error -y -stream_loop -1 -i '/music/{Path(music['path']).name}' -vn "
                      f"-af \"aresample=48000,atrim=0:{vdur:.3f},asetpts=PTS-STARTPTS,volume={music['gain_db']:.1f}dB,"
                      f"afade=t=in:d={music.get('fade_in', 1.0)},afade=t=out:st={max(0, vdur - fo):.3f}:d={fo},apad\" "
-                     f"-t {out_dur:.6f} -ac 2 -c:a pcm_s24le /p/audio/music.wav")
+                     f"-t {out_dur:.6f} -ac 2 -c:a pcm_s16le /p/audio/music.wav")
         mounts.append((Path(music["path"]).parent, "/music"))
     else:
-        lines.append(f"ffmpeg -v error -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {out_dur:.6f} -c:a pcm_s24le /p/audio/music.wav")
+        lines.append(f"ffmpeg -v error -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {out_dur:.6f} -c:a pcm_s16le /p/audio/music.wav")
     s_ins, s_graph = sfx.filter_for(events, 1)
     (work / "sfx.txt").write_text(s_graph.replace("[aout]", "[amx]") + ";[amx]aformat=channel_layouts=stereo,apad[aout]")
     lines.append(f"ffmpeg -v error -y -f lavfi -i anullsrc=r=48000:cl=stereo {' '.join(s_ins)} "
-                 f"-filter_complex_script /w/handoff-work/sfx.txt -map [aout] -t {out_dur:.6f} -ac 2 -c:a pcm_s24le /p/audio/sfx.wav")
+                 f"-filter_complex_script /w/handoff-work/sfx.txt -map [aout] -t {out_dur:.6f} -ac 2 -c:a pcm_s16le /p/audio/sfx.wav")
     _run(" && ".join(lines), mounts + [(w, "/w")], cancelled)
     audio_frames = total
 
@@ -708,8 +934,9 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
 
     # 7 the timelines
     progress("Timelines (Premiere XML + FCPXML)…", 0.72)
-    clips = [{"group": g["group"], "name": g["name"], "file": g["file"], "start": g["start"], "frames": g["frames"],
-              "media_frames": g["frames"], "alpha": True} for g in gfx]
+    clips = [{"group": g["group"], "name": g["name"] + (f" (slot {c['slot']})" if c.get("slot") else ""), "file": g["file"],
+              "media_frames": g["frames"], "alpha": True, **{kk: vv for kk, vv in c.items() if kk != "slot"}}
+             for g in gfx for c in g["clips"]]
     slots_tl = [{"n": s["n"], "label": s["label"], "start": F(s["a"]), "frames": max(1, F(s["b"]) - F(s["a"])),
                  "note": "; ".join(f"{b['tc']} {b['cue']}: {b['what']}" for b in rows[s['n'] - 1]["beats"])[:900]} for s in slots]
     name = f"{meta['title']} — hand-off"
@@ -754,39 +981,39 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
         compose_long.composite_chunked(w, base, segs, pev, music, "handoff-preview", (pw, ph), fps, face, chunks, cancelled,
                                        20, "veryfast", bub, "gfx", end_fade, workers,
                                        log=lambda m: ev_log.emit("log", m))
-        os.replace(w / "handoff-preview.mp4", tmp_pkg / "preview.mp4")
+        pv = d / f"preview-{k:02d}.mp4"            # the Lab's player opens on it; the zip carries it as preview.mp4
+        os.replace(w / "handoff-preview.mp4", pv)
         shutil.rmtree(w / "chunks-handoff-preview", ignore_errors=True)
         (w / "handoff-preview.chunks.json").unlink(missing_ok=True)
         (w / bub).unlink(missing_ok=True)
 
-    # 9 swap the finished folder in, then the zip (stored: the media is compressed already)
-    progress("Packing the zip…", 0.95)
+    # 9 swap the finished folder in. NO ZIP HERE: a factory server copies back the folder only (one copy of the
+    # bytes crosses the internet), and the Lab streams handoff-NN.zip from the folder + preview-NN.mp4 at download
+    # time (lab/server/src/aieditor/handoff.ts) — stored entries, resumable, never a second copy on disk
+    progress("Finishing the package…", 0.95)
     shutil.rmtree(pkg, ignore_errors=True)
     os.replace(tmp_pkg, pkg)
-    zp = d / f"{PKG.format(k=k)}.zip"
-    zpart = d / f"{PKG.format(k=k)}.zip.part"
-    with zipfile.ZipFile(zpart, "w", allowZip64=True) as z:
-        for f in sorted(pkg.rglob("*")):
-            if f.is_file():
-                comp = zipfile.ZIP_DEFLATED if f.suffix in (".xml", ".fcpxml", ".html", ".csv", ".json", ".txt") else zipfile.ZIP_STORED
-                z.write(f, f"{pkg.name}/{f.relative_to(pkg)}", compress_type=comp)
-    os.replace(zpart, zp)
-    if preview:
-        pv = d / f"preview-{k:02d}.mp4"            # the Lab's player opens on it
-        pv.unlink(missing_ok=True)
-        os.link(pkg / "preview.mp4", pv)
+    for old_zip in (d / f"{PKG.format(k=k)}.zip", d / f"{PKG.format(k=k)}.zip.part"):
+        old_zip.unlink(missing_ok=True)             # an older build's zip would be served instead of this folder
     files = {str(f.relative_to(pkg)): f.stat().st_size for f in sorted(pkg.rglob("*")) if f.is_file()}
-    summary = {"dir": pkg.name, "zip": zp.name, "zip_bytes": zp.stat().st_size, "files": files, "frames": total,
+    pv = d / f"preview-{k:02d}.mp4"
+    if preview and pv.exists():
+        files["preview.mp4"] = pv.stat().st_size
+    nbytes = sum(files.values())
+    summary = {"dir": pkg.name, "zip": f"{PKG.format(k=k)}.zip", "bytes": nbytes, "files": files, "frames": total,
                "fps": [fps_num, fps_den], "size": [W, H], "slots": [{"n": r["slot"], "start_tc": r["start_tc"], "end_tc": r["end_tc"],
-                                                                     "label": r["label"]} for r in rows],
-               "graphics": len(gfx), "built_at": time.time()}
+                                                                     "label": r["label"], "steps": len(r.get("steps") or []) or 1}
+                                                                    for r in rows],
+               "slot_count": {"planned": n_planned, "screen_ref_added": n_added, "final": len(slots)},
+               "bubble": bubble_box, "graphics": len(gfx), "built_at": time.time()}
     jdump(d / f"{PKG.format(k=k)}.json", summary)
     if not keep_work:
         shutil.rmtree(work, ignore_errors=True)
         (d / f"{cut}.mp4").unlink(missing_ok=True)
         for x in w.glob(f"handoff-aroll-*.mp4"):
             x.unlink()
-    note = (f"{len(slots)} slot(s) for the editor, {len(gfx)} graphic(s), zip {zp.stat().st_size / 1e9:.2f} GB")
+    note = (f"{len(slots)} slot(s) for the editor ({n_planned} planned + {n_added} screen reference(s), merged), "
+            f"{len(gfx)} graphic(s), {nbytes / 1e9:.2f} GB")
     log(f"hand-off package {pkg.name}: {note}")
     return {**summary, "note": note}
 

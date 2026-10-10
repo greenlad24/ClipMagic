@@ -15,7 +15,11 @@ THE TIMELINE (frames on the sequence clock; every path RELATIVE to the folder th
   clip = {"name", "file" (relative path), "start" (sequence frame), "frames" (length on the timeline),
           "in" (first media frame, default 0), "media_frames" (the file's own length, default in + frames),
           "alpha" (ProRes 4444 with straight alpha), "enabled" (default True), "channels" (audio, default 2),
-          "role" (FCPXML audioRole: dialogue | music | effects)}
+          "role" (FCPXML audioRole: dialogue | music | effects),
+          "width"/"height" (video media smaller than the frame, e.g. the facecam bubble cropped to its box) +
+          "x"/"y" (its top-left on the sequence frame, px): placed at native size (no scale to frame) —
+          Premiere XML: Basic Motion scale 100 + center; FCPXML: its own format, adjust-conform none +
+          adjust-transform position (see xmeml_center / fcpxml_position)}
 
 An EMPTY track stays in the Premiere XML (V2 = the screencast track the editor fills). FCPXML has no empty
 lanes: a track's clips with "enabled": False (the labelled placeholder cards) keep its lane in Resolve.
@@ -25,7 +29,7 @@ from urllib.parse import quote
 from xml.etree import ElementTree as ET
 
 AUDIO_RATE = 48000
-AUDIO_DEPTH = 24
+AUDIO_DEPTH = 16          # the stems come from AAC / MP3 sources: 16 bits lose nothing (a third smaller than 24)
 
 
 # ── rates and times ──
@@ -71,6 +75,37 @@ def tc_string(frame, fps_num, fps_den):
 def url_of(path):
     """A relative URI reference for a package path ('graphics/01 title.mov' → 'graphics/01%20title.mov')."""
     return quote(str(path).replace("\\", "/"), safe="/-_.~")
+
+
+def placed(c, tl):
+    """A video clip smaller than the frame, at a position → (x, y, w, h) px, else None."""
+    if c.get("x") is None or c.get("y") is None:
+        return None
+    return float(c["x"]), float(c["y"]), float(c.get("width") or tl["width"]), float(c.get("height") or tl["height"])
+
+
+def xmeml_center(x, y, w, h, W, H):
+    """Premiere XML (FCP7) Basic Motion center for a w×h clip whose top-left sits at (x, y) on a W×H sequence:
+    the clip's centre relative to the frame's centre, as a fraction of the frame's width / height (y down)."""
+    return (x + w / 2 - W / 2) / W, (y + h / 2 - H / 2) / H
+
+
+def from_xmeml_center(horiz, vert, w, h, W, H):
+    return horiz * W + W / 2 - w / 2, vert * H + H / 2 - h / 2
+
+
+def fcpxml_position(x, y, w, h, W, H):
+    """FCPXML adjust-transform position for the same clip: the centre's offset from the frame's centre in
+    percent of the frame HEIGHT, y up (FCP's coordinate space)."""
+    return (x + w / 2 - W / 2) / H * 100, (H / 2 - (y + h / 2)) / H * 100
+
+
+def from_fcpxml_position(px, py, w, h, W, H):
+    return px * H / 100 + W / 2 - w / 2, H / 2 - py * H / 100 - h / 2
+
+
+def _num(v):
+    return f"{v:.6f}".rstrip("0").rstrip(".") if v != int(v) else str(int(v))
 
 
 def _clips(tl, kind):
@@ -172,6 +207,27 @@ def xmeml(tl):
         _sub(f, "pathurl", url_of(c["file"]))
         _rate(f, tb, ntsc)
         _sub(f, "duration", mf)
+        pl = placed(c, tl) if kind == "video" else None
+        if pl:                       # native size at its position (the facecam bubble, a cropped overlay)
+            eff = _sub(_sub(ci, "filter"), "effect")
+            _sub(eff, "name", "Basic Motion")
+            _sub(eff, "effectid", "basic")
+            _sub(eff, "effectcategory", "motion")
+            _sub(eff, "effecttype", "motion")
+            _sub(eff, "mediatype", "video")
+            ps = _sub(eff, "parameter", authoringApp="PremierePro")
+            _sub(ps, "parameterid", "scale")
+            _sub(ps, "name", "Scale")
+            _sub(ps, "valuemin", 0)
+            _sub(ps, "valuemax", 1000)
+            _sub(ps, "value", 100)
+            pc = _sub(eff, "parameter", authoringApp="PremierePro")
+            _sub(pc, "parameterid", "center")
+            _sub(pc, "name", "Center")
+            hz, vt = xmeml_center(*pl, tl["width"], tl["height"])
+            val = _sub(pc, "value")
+            _sub(val, "horiz", _num(round(hz, 6)))
+            _sub(val, "vert", _num(round(vt, 6)))
         fm = _sub(f, "media")
         if kind == "video":
             v = _sub(_sub(fm, "video"), "samplecharacteristics")
@@ -252,7 +308,7 @@ def fcpxml(tl):
     if name:
         fa["name"] = name
     _sub(res, "format", **fa)
-    assets = {}
+    assets, formats = {}, {}
 
     def asset_of(c, kind):
         key = c["file"]
@@ -262,7 +318,16 @@ def fcpxml(tl):
         mf = int(c.get("media_frames") or int(c.get("in", 0)) + int(c["frames"]))
         a = {"id": rid, "name": str(c["file"]).rsplit("/", 1)[-1].rsplit(".", 1)[0], "start": "0s", "duration": T(mf)}
         if kind == "video":
-            a.update(hasVideo="1", format="r1", videoSources="1", hasAudio="0")
+            fid = "r1"
+            cw, ch = int(c.get("width") or tl["width"]), int(c.get("height") or tl["height"])
+            if (cw, ch) != (int(tl["width"]), int(tl["height"])):
+                fid = formats.get((cw, ch))
+                if fid is None:
+                    fid = formats[(cw, ch)] = f"f{len(formats) + 1}"
+                    fe = ET.Element("format", {"id": fid, "frameDuration": T(1), "width": str(cw), "height": str(ch),
+                                               "colorSpace": "1-1-1 (Rec. 709)"})
+                    res.insert(len(formats), fe)          # formats first, before any asset
+            a.update(hasVideo="1", format=fid, videoSources="1", hasAudio="0")
         else:
             a.update(hasVideo="0", hasAudio="1", audioSources="1", audioChannels=str(int(c.get("channels", 2))),
                      audioRate=str(AUDIO_RATE))
@@ -320,14 +385,19 @@ def fcpxml(tl):
                 attrs["tcFormat"] = "NDF"
             if not c.get("enabled", True):
                 attrs["enabled"] = "0"
-            it["anchors"].append(attrs)
+            pl = placed(c, tl) if kind == "video" else None
+            it["anchors"].append((attrs, pl))
     for m in tl.get("markers") or []:
         it = host(int(m["frame"]))
         it["markers"].append({"start": T(local(it, int(m["frame"]))), "duration": T(max(1, int(m.get("frames") or 1))),
                               "value": m["name"], **({"note": m["note"]} if m.get("note") else {})})
     for it in items:                      # DTD order: anchored clips before markers
-        for a in it["anchors"]:
-            _sub(it["el"], "asset-clip", **a)
+        for a, pl in it["anchors"]:
+            el = _sub(it["el"], "asset-clip", **a)
+            if pl:                   # native size (no fit to the frame) at its position
+                _sub(el, "adjust-conform", type="none")
+                px, py = fcpxml_position(*pl, tl["width"], tl["height"])
+                _sub(el, "adjust-transform", position=f"{_num(round(px, 6))} {_num(round(py, 6))}", scale="1 1")
         for m in it["markers"]:
             _sub(it["el"], "marker", **m)
     return _pretty(root, "<!DOCTYPE fcpxml>\n")
@@ -345,7 +415,7 @@ FCPXML_CHILDREN = {
     "sequence": ("note", "spine", "metadata"),
     "spine": ("asset-clip", "gap", "clip", "title", "video", "ref-clip", "sync-clip", "transition"),
     "gap": ("note", "asset-clip", "clip", "title", "video", "marker", "chapter-marker", "metadata"),
-    "asset-clip": ("note", "asset-clip", "clip", "title", "video", "marker", "chapter-marker", "keyword", "metadata"),
+    "asset-clip": ("note", "adjust-conform", "adjust-transform", "asset-clip", "clip", "title", "video", "marker", "chapter-marker", "keyword", "metadata"),
 }
 FCPXML_REQUIRED = {
     "format": ("id", "frameDuration", "width", "height"),
