@@ -90,6 +90,18 @@ browser.on("targetcreated", async (tg) => {
 });
 
 let rec = null;            // {ff, frame, events, cursor, dir}
+// LIVE VIEW (Jake 2026-10-10: "have also vision on the browser it uses"): off camera only (never while recording or on
+// virtual time), a small JPEG of the page every 4 s at <workdir>/live.jpg (atomic rename) so an operator can watch
+let liveBusy = false;
+if (process.env.AGENT_LIVE_SHOT !== "0") setInterval(async () => {
+  if (liveBusy || rec || vtOn || crashed) return;
+  liveBusy = true;
+  try {
+    const tmp = path.join(workdir, ".live.tmp.jpg");
+    await page.screenshot({ path: tmp, type: "jpeg", quality: 55, captureBeyondViewport: false });
+    fs.renameSync(tmp, path.join(workdir, "live.jpg"));
+  } catch {} finally { liveBusy = false; }
+}, 4000).unref();
 const NET = [];
 let cx = CSS_W * 0.62, cy = CSS_H * 0.58;
 let obsN = 0;
