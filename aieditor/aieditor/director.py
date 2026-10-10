@@ -162,6 +162,10 @@ def validate(plan, video, sites, facts=None):
             s["actions"] = [b for b in src["actions"] if b.get("t_word") is not None
                             and s["t0"] - 0.05 <= b["t_word"] < s["t1"]]
             s["app"] = src.get("app")
+    # R14 P4: a feature verified ABSENT in the app is shown working by an approved motion template in the app's own UI
+    # (+ its REAL result): the screencast picture gives way for its window; the window counts as screen time
+    segs, p4evs, p4drop = apply_p4(segs, plan.get("p4_motion") or [], video)
+    dropped += p4drop
     ovs, odrop = validate_overlays(plan.get("overlays", []), video, segs)
     dropped += odrop
     # motion templates: the hard limits of rules.json motion_templates (hook only, counts, kit, plate share)
@@ -170,8 +174,11 @@ def validate(plan, video, sites, facts=None):
                                          log=lambda m: events.emit("log", m))
     dropped += mdrop
     ovs = sorted([e for e in ovs if e.get("template") not in MOTION_OVERLAYS] + mkept, key=lambda e: e["t0"])
+    ovs = [e for e in ovs if not any(p["t0"] - 0.2 < e["t1"] and e["t0"] < p["t1"] + 0.2 for p in p4evs)]
     fit_o = planfit.overlays_fit(ovs, video, segs)
     dropped += fit_o["dropped"]
+    if p4evs:
+        fit_o["overlays"] = sorted(fit_o["overlays"] + p4evs, key=lambda e: e["t0"])
     # hook motion templates are hook graphics in the structure gate: their time joins the plates' share
     st = dict(fitted["structure"])
     m_s = round(sum(e["t1"] - e["t0"] for e in fit_o["overlays"] if e.get("template") in MOTION_OVERLAYS), 2)
@@ -179,9 +186,86 @@ def validate(plan, video, sites, facts=None):
         st["motion_s"] = m_s
         st["plate_s"] = round(st.get("plate_s", 0.0) + m_s, 2)
         st["plate_frac"] = round(st["plate_s"] / video["duration"], 4) if video["duration"] else 0.0
+    if p4evs:
+        st["p4_motion_s"] = round(sum(e["t1"] - e["t0"] for e in p4evs), 2)
     return {"segments": segs, "overlays": fit_o["overlays"], "dropped": dropped, "plates": fitted["plates"],
+            "auto_fixes": fitted.get("auto_fixes", []), "p4_motion": p4evs,
             "beats": fitted["beats"], "objects": fitted["objects"], "aroll_actions": fitted["aroll_actions"],
             "structure": st, "overlay_budget": fit_o["budget"], "motion_notes": fitted.get("motion_notes", [])}
+
+
+P4_TEMPLATES = ("prompt_highlight", "long_prompt_scroll")      # approved prompt templates (rules.json approved)
+
+
+def p4_template(text):
+    """The approved template for a P4 command: the short prompt box (MO06) or, for a long prompt, MO07."""
+    return "long_prompt_scroll" if len(str(text or "")) >= 200 else "prompt_highlight"
+
+
+def apply_p4(segs, items, video):
+    """R14 P4 windows → (segments with the window cut out, motion overlay events, dropped). An item:
+    {start, end (word ids), template, fields {prompt, phrases, app}, result_asset, feature, how, verified}.
+    The motion shows the command typed in the app's UI kit (approved MO06/MO07 motion rules); its REAL result (made
+    off camera, preprod assets.json) rides in params.result_asset and is revealed (K2) at the start of the screencast
+    piece that follows the window — a piece shorter than MIN_SPAN left by the cut joins the window instead."""
+    if not items:
+        return segs, [], []
+    ids = {w["i"]: w for w in video["words"]}
+    evs, dropped = [], []
+    for it in sorted(items, key=lambda x: ids.get(x.get("start"), {}).get("start", 1e9)):
+        a, b = ids.get(it.get("start")), ids.get(it.get("end"))
+        tid = it.get("template") or p4_template((it.get("fields") or {}).get("prompt"))
+        if a is None or b is None or b["end"] < a["start"]:
+            dropped.append({**it, "dropped": "P4: word ids not in this cut"})
+            continue
+        if tid not in P4_TEMPLATES or not motiontemplates.is_on(tid):
+            dropped.append({**it, "dropped": f"P4: {tid} is not an approved motion template"})
+            continue
+        params, perrs = motiontemplates.validate_params(tid, it.get("fields") or {})
+        if perrs:
+            dropped.append({**it, "dropped": "P4: " + "; ".join(perrs)})
+            continue
+        lo, hi = motiontemplates.spec(tid)["duration_s"]
+        t0 = max(0.0, a["start"] - LEAD_S)
+        t1 = min(max(b["end"] + 0.3, t0 + lo), t0 + hi)
+        out = []
+        for sg in segs:
+            if not (sg["t0"] < t1 and t0 < sg["t1"]):
+                out.append(sg)
+                continue
+            left = {**sg, "t1": round(t0, 3)}
+            right = {**sg, "t0": round(t1, 3)}
+            for piece, keep in ((left, sg["t0"] < t0), (right, sg["t1"] > t1)):
+                if not keep:
+                    continue
+                if piece["t1"] - piece["t0"] < planfit.MIN_SPAN:
+                    if piece is left:
+                        t0 = sg["t0"]                  # a stub left of the window joins the window
+                    else:
+                        t1 = min(sg["t1"], t0 + hi) if sg["t1"] - t0 <= hi else t1
+                    continue
+                piece["actions"] = [x for x in (piece.get("actions") or []) if x.get("t_word") is not None
+                                    and piece["t0"] - 0.05 <= x["t_word"] < piece["t1"]]
+                piece["beats"] = [x for x in (piece.get("beats") or []) if x.get("t_word") is None
+                                  or piece["t0"] - 0.05 <= x["t_word"] < piece["t1"]]
+                out.append(piece)
+        segs = sorted(out, key=lambda x: x["t0"])
+        res = it.get("result_asset")
+        nxt = next((sg for sg in segs if abs(sg["t0"] - t1) < 0.6), None)
+        if res and nxt is not None:
+            # the REAL result appears as the screen comes back: a K2 reveal on the piece's first frames
+            nxt.setdefault("actions", [])
+            nxt["actions"] = [{"id": f"p4r-{res}", "word_id": None, "t_word": round(nxt["t0"] + 0.05, 3), "action": "reveal_result",
+                               "params": {"asset": res}, "subject": f"asset:{res}", "asset_id": res, "body":
+                               f"the real result of {params.get('prompt', '')[:60]}", "live": False, "p4": True}] + nxt["actions"]
+        params = {**params, **({"result_asset": res} if res else {})}
+        evs.append({"template": tid, "t0": round(t0, 3), "t1": round(t1, 3), "start": it["start"], "end": it["end"],
+                    "fields": it.get("fields") or {}, "params": params, "technique": motiontemplates.TECHNIQUE[tid],
+                    "kit": (it.get("fields") or {}).get("app"), "p4": {k: it.get(k) for k in
+                                                                       ("feature", "verified", "how", "result_asset", "kit_dir")},
+                    "why": f"feature {it.get('feature')} not in the app (verified) — shown working via motion graphics"
+                           + (f"; the result is real, made with {it.get('how')}" if res else "")})
+    return segs, evs, dropped
 
 
 def validate_overlays(overlays, video, segs):
@@ -262,6 +346,7 @@ def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, ru
     raw = {**raw, "overlays": ovs}
     out = validate(raw, video, sites, facts)
     out.update(needs_primitive=res["needs_primitive"], held=res["held"], schema_plan=res["plan"],
+               answer=res["answer"], warnings=res.get("warnings") or [],
                plan_check={"attempts": [{"answer": a["answer"], "errors": [e["msg"] for e in a["errors"]],
                                          **({"sections": a["sections"]} if a.get("sections") else {})}
                                         for a in res["attempts"]], "apps": res["apps"], "action_ids": res["action_ids"],
@@ -286,6 +371,15 @@ BUILTIN = {
                     "through the US route (RULEBOOK L4/R9/R10) — pricing and visitor views",
 }
 SESSIONS = ("logged_in", "outside")
+# Jake R14 (2026-10-10) P1: the plan says EXACTLY what must be shown, beat by beat, with what each beat NEEDS —
+# an action the playbook lacks is not a dead end any more: the beat names the pseudo-action and describes the step,
+# and pre-production records + proves it off camera for this video (P2, aieditor/onboard.py); a feature the app does
+# not have is shown working with an approved motion template in the app's own UI, with a REAL result (P4)
+ONBOARD_ACTION = "onboard.action"
+MOTION_FEATURE = "motion.feature"
+NEED_ACTIONS = (ONBOARD_ACTION, MOTION_FEATURE)
+NEED_KINDS = ("action", "asset", "feature", "other")
+ROUTED_CODES = ("onboard", "feature", "new_asset")    # filled by pre-production (P2/P3/P4), never re-asked
 PLAN_SYSTEM = """You are the edit planner of Jake Dawson's automated YouTube editing factory (AI tools for business
 owners). Code records every screencast: it can only perform the actions in each app's CLOSED action list, so a
 beat may only name one of those action ids. You never invent a control, a chat, a page, a menu item or a
@@ -353,18 +447,22 @@ def apps_for(sites, playbooks=None, proven_only=True):
 
 
 def action_ids(apps):
-    """The closed action list of the plan schema: every app's proven ids + the code primitives."""
+    """The closed action list of the plan schema: every app's proven ids + the code primitives + the two R14
+    pseudo-actions (a NEED pre-production fills before anything is recorded — never recorded as such)."""
     ids = sorted({a for x in apps.values() for a in x["actions"]})
-    return ids + [a for a in (*CAMERA_ACTIONS, *OUTSIDE_ACTIONS) if a not in ids]
+    return ids + [a for a in (*CAMERA_ACTIONS, *OUTSIDE_ACTIONS, *NEED_ACTIONS) if a not in ids]
 
 
 def _nul(t):
     return {"anyOf": [{"type": t}, {"type": "null"}]}
 
 
+OPTIONAL = ("need", "new_asset", "kind")       # R14 fields: optional, so answers cached before them still check
+
+
 def _obj(props, required=None):
     return {"type": "object", "additionalProperties": False, "properties": props,
-            "required": list(required if required is not None else props)}
+            "required": list(required if required is not None else [k for k in props if k not in OPTIONAL])}
 
 
 def plan_schema(apps):
@@ -373,7 +471,7 @@ def plan_schema(apps):
     beat = _obj({"word_id": {"type": "integer"}, "action": {"type": "string", "enum": action_ids(apps)},
                  "body": {"type": "string"}, "subject": {"type": "string"}, "text": _nul("string"),
                  "url": _nul("string"), "asset_id": _nul("string"), "live": {"type": "boolean"},
-                 "wait_end_word": _nul("integer")})
+                 "wait_end_word": _nul("integer"), "need": _nul("string"), "new_asset": _nul("string")})
     seg = _obj({"start_word": {"type": "integer"}, "end_word": {"type": "integer"},
                 "app": {"type": "string", "enum": sorted(apps) or ["none"]},
                 "session": {"type": "string", "enum": list(SESSIONS)}, "beats": {"type": "array", "items": beat}})
@@ -385,7 +483,9 @@ def plan_schema(apps):
                                                    "technique_id": {"type": "string"}})},
         "needs_primitive": {"type": "array", "items": _obj({"sentence": {"type": "string"},
                                                             "word_ids": {"type": "array", "items": {"type": "integer"}},
-                                                            "why": {"type": "string"}, "proposed": _nul("string")})},
+                                                            "why": {"type": "string"}, "proposed": _nul("string"),
+                                                            "kind": {"type": "string", "enum": list(NEED_KINDS)},
+                                                            "need": _nul("string")})},
     })
 
 
@@ -413,7 +513,27 @@ def apps_block(apps):
             out.append("  OUTSIDE ONLY (session 'outside' + outside.goto): " + "; ".join(pb["outside_only"]))
     out.append("CODE PRIMITIVES (every app):")
     out += [f"  - {k}: {v}" for k, v in BUILTIN.items()]
+    out.append(NEEDS_DOC)
     return "\n".join(out)
+
+
+NEEDS_DOC = """WHAT A BEAT NEEDS (Jake R14 — plan first EXACTLY what must be shown; pre-production makes every need real
+off camera before anything is recorded, for THIS video):
+  - onboard.action: a UI step in the app that no listed action does (drawing on the Sketch canvas, dragging a markup
+    box, placing a comment pin and typing its note, the erase brush, choosing a template, regenerate, download…).
+    "need" = the step in plain words with the exact labels on screen (e.g. "in Markup mode drag a box over the
+    bottle's label, then type 'make it gold' in the box that opens"); "text" = any text typed. Pre-production
+    explores the live app, records the step into this video's playbook and proves it 3/3 before recording.
+  - motion.feature: a feature he names that the app does NOT have (marked MISSING above or not in the app: a
+    '/newbg' skill, an 'Updated' badge…). "need" = the feature; "text" = EXACTLY what he says is typed/clicked
+    (e.g. "/newbg rustic kitchen"). After verifying it is absent, pre-production shows it WORKING with an approved
+    motion template in the app's own UI and a REAL result made off camera — never a fake screencast.
+  - new_asset: a picture the beat shows/uploads that is not produced yet (his phone photo of the bottle, a blurry
+    photo, great-grandma's photo, the colorized result…): give asset_id a new short id and describe it in
+    "new_asset"; pre-production produces it before recording (an input photo by the image model, an in-app result
+    by the app itself, each checked against your description).
+  Prefer these to needs_primitive; needs_primitive is only for what none of them can show (kind: action | asset |
+  feature | other, need = what is missing)."""
 
 
 def sentences_block(video):
@@ -750,6 +870,7 @@ def normalize(ans, video):
                           "action": b.get("action"), "params": {k2: b[k2] for k2 in ("text", "url") if b.get(k2)},
                           "subject": b.get("subject") or "screen", "asset_id": b.get("asset_id"),
                           "typed_text": b.get("text"), "body": b.get("body", ""), "live": bool(b.get("live")),
+                          "need": b.get("need"), "new_asset": b.get("new_asset"),
                           "wait_talk": ({"t0": t(b["word_id"]), "t1": t(b["wait_end_word"], True)}
                                         if b.get("wait_end_word") in pos and k is not None else None),
                           "cue": _cue(ws, k) if k is not None else None})
@@ -794,7 +915,7 @@ def _err(code, msg, sent=None, word_ids=None, proposed=None):
             "proposed": proposed}
 
 
-def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
+def check_plan(ans, video, apps, facts=None, sites=(), handoff=False, p4=None):
     """Checkpoint 1. → (errors, info) — errors [{code, msg, sentence, word_ids, proposed}], info {"plan": the
     normalized plan, "raw": to_raw, "checked": validate() output}. Pure code, no call."""
     facts = facts if facts is not None else planfit.Facts()
@@ -824,6 +945,7 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                              word_ids=[s["start_word"], s["end_word"]]))
             continue
         allowed = set(app["actions"]) | set(CAMERA_ACTIONS) | (set(OUTSIDE_ACTIONS) if s["session"] == "outside" else set())
+        allowed |= set(NEED_ACTIONS)
         for bt in s["beats"]:
             k = pos.get(bt["word_id"])
             sent = _sentence_of(sents, bt["word_id"])
@@ -833,6 +955,15 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                                            f"({s['start_word']}-{s['end_word']})", sent))
                 continue
             act = bt["action"]
+            if act in NEED_ACTIONS:
+                # R14: a NEED, routed to pre-production (P2 onboarding / P4 motion) — not an error to re-ask
+                code = "onboard" if act == ONBOARD_ACTION else "feature"
+                errs.append(_err(code, f"{where}: {act} — {bt.get('need') or bt['body'][:140]}"
+                                       + (f" (text: '{bt['typed_text']}')" if bt.get("typed_text") else ""), sent,
+                                 proposed={"beat": bt["id"], "segment": si, "word_id": bt["word_id"],
+                                           "need": bt.get("need") or bt["body"], "text": bt.get("typed_text"),
+                                           "app": s["app"]}))
+                continue
             if act not in allowed:
                 if s["session"] == "outside" and act in app["actions"]:
                     why = (f"'{act}' in the 'outside' session: the never-logged-in browser only opens public pages "
@@ -847,7 +978,12 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
             ids = [x for x in (bt.get("asset_id"), bt["subject"][6:] if str(bt["subject"]).startswith("asset:") else None) if x]
             # hand-off: a human editor records the screencasts — an asset is a note for them, not a file we need
             for x in ([] if handoff else ids):
-                if x not in assets:
+                if x not in assets and bt.get("new_asset"):
+                    # R14 P3: a picture the beat needs, described — pre-production produces it before recording
+                    errs.append(_err("new_asset", f"{where}: new asset '{x}' — {bt['new_asset'][:200]}", sent,
+                                     proposed={"asset_id": x, "desc": bt["new_asset"], "beat": bt["id"], "segment": si,
+                                               "word_id": bt["word_id"], "app": s["app"]}))
+                elif x not in assets:
                     errs.append(_err("asset", f"{where}: asset '{x}' was not produced (produced: {sorted(assets)})", sent))
                 elif x not in usable:
                     errs.append(_err("asset", f"{where}: asset '{x}' is {assets[x].get('status')} — not usable", sent))
@@ -893,10 +1029,17 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                 errs.append(_err("asset", f"plate {x['t0']}-{x['t1']} s: asset '{aid}' was not produced",
                                  word_ids=[i for i in (x.get("start_word"), x.get("end_word")) if i is not None]))
     raw = to_raw(plan, apps, video)
+    if p4:
+        raw["p4_motion"] = list(p4)
     checked = validate(raw, video, list(sites) or [{"url": x["url"]} for x in apps.values()], facts)
+    p4_spans = [(e["t0"], e["t1"]) for e in checked.get("p4_motion") or []]
     # the fit: what the ledger refused (a rewrite to the honest route is fine), the reference bands, the hook
     # plate, the instruction stretches
+    need_words = {bt["word_id"] for s in plan["segments"] for bt in s["beats"]
+                  if bt["action"] in NEED_ACTIONS or bt.get("new_asset")}
     for r in checked["beats"]:
+        if r.get("word_id") in need_words:
+            continue                                  # its need is routed to pre-production (R14), checked again after
         if r["route"] in ("aroll", "drop") and not str(r.get("why") or "").startswith("its sentence became"):
             sent = _sentence_of(sents, r.get("word_id"))
             errs.append(_err("ledger", f"beat at {r.get('t_word') or 0:.1f} s on '{r['cue']}': {r['why']}", sent))
@@ -910,6 +1053,7 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                                          "beat): give it a longer segment (whole sentences, >= 2.5 s)",
                                  _sentence_of(sents, bt["word_id"])))
     st = checked["structure"]
+    warnings = []
     if video["duration"] >= planfit.LONG_STRUCTURE_S:
         bands = [("span_max", st["span_max"] <= planfit.SPAN_MAX, f"<= {planfit.SPAN_MAX} s"),
                  ("span_p50", planfit.SPAN_P50[0] <= st["span_p50"] <= planfit.SPAN_P50[1], f"{planfit.SPAN_P50} s"),
@@ -919,7 +1063,11 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                  ("aroll_p50", st["aroll_blocks"] == 0 or planfit.AROLL_BEAT[0] <= st["aroll_p50"] <= planfit.AROLL_BEAT[1],
                   f"{planfit.AROLL_BEAT} s")]
         for name, ok, band in bands:
-            if not ok:
+            if not ok and name == "share" and planfit.SHARE[0] - planfit.SHARE_NEAR <= st["share"] <= planfit.SHARE[1] + planfit.SHARE_NEAR:
+                # R14 D: a near miss is fixed by code (planfit.near_miss_share), never re-asked or held
+                warnings.append(f"structure share = {st['share']} is a near miss of {band} (within "
+                                f"{planfit.SHARE_NEAR:.0%}) — code moves spans at sentence edges (R14 D)")
+            elif not ok:
                 errs.append(_err("structure", f"structure {name} = {st[name]} is outside the reference band {band} "
                                               "(REFERENCE-BASELINE §1): plan more / fewer / shorter screencast spans"))
     for n in checked.get("motion_notes", []):
@@ -943,10 +1091,12 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
         for bt in s["beats"]:
             beats_at.setdefault(bt["word_id"], []).append((bt["action"], s["session"]))
     whys = [(x["t0"], x["t1"]) for x in plan["aroll"] if x.get("why") and x["t0"] is not None] + \
+        [(bt["t_word"], bt["t_word"] + 0.01) for s in plan["segments"] for bt in s["beats"]
+         if bt["action"] == MOTION_FEATURE and bt["t_word"] is not None] + p4_spans + \
         [(ws[pos[min(n["word_ids"])]]["start"], ws[pos[max(n["word_ids"])]]["end"])
          for n in plan["needs_primitive"] if n.get("word_ids") and all(i in pos for i in n["word_ids"])]
     spans = [(s["t0"], s["t1"]) for s in plan["segments"] if s["t0"] is not None] + \
-        [(s["t0"], s["t1"]) for s in checked["segments"]]
+        [(s["t0"], s["t1"]) for s in checked["segments"]] + p4_spans
     feats = [(fid, f) for x in apps.values() for fid, f in ((x["pb"] or {}).get("features") or {}).items()
              if not f.get("exists")]
     for s in sents:
@@ -985,7 +1135,7 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
         if e["msg"] not in seen:
             seen.add(e["msg"])
             out.append(e)
-    return out, {"plan": plan, "raw": raw, "checked": checked}
+    return out, {"plan": plan, "raw": raw, "checked": checked, "warnings": warnings}
 
 
 def reask_text(errors, attempt, max_attempts, sec=None):
@@ -1284,7 +1434,7 @@ def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, pl
             st["answer"], st["msgs"], st["status"] = v[0], v[1], "ok"
     save()
 
-    attempts, errs, info, ans = [], [], {}, EMPTY_ANSWER
+    attempts, errs, info, ans, routed = [], [], {}, EMPTY_ANSWER, []
     for n in range(max_reasks + 1):
         # each section's own answer checked against the schema first (its errors are its own)
         per = {}
@@ -1298,6 +1448,8 @@ def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, pl
             per.setdefault(k, []).extend(es)
         ans = _strip_internal(merged)
         errs, info = check_plan(ans, video, apps, facts, sites, handoff=handoff)
+        routed = [e for e in errs if e["code"] in ROUTED_CODES]     # R14: pre-production fills these (P2/P3/P4)
+        errs = [e for e in errs if e["code"] not in ROUTED_CODES]
         for e in errs:
             if e["code"] == "structure":
                 tg = structure_targets(e, info.get("checked") or {}, secs)
@@ -1354,19 +1506,36 @@ def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, pl
                      "word_ids": [s["first"], s["last"]], "code": "section_failed", "proposed": None,
                      "why": f"the plan call for section {s['n']} ({s['t0']:.0f}-{s['t1']:.0f} s) failed: {state[k]['why']}"[:600]})
     needs = (list((info.get("plan") or {}).get("needs_primitive") or [])
-             + as_needs_primitive([e for e in errs if not in_failed(e)]) + rows)
+             + as_needs_primitive([e for e in errs if not in_failed(e)]) + rows
+             + as_needs_primitive([e for e in routed if not in_failed(e)]))
     usd = round(sum(st["usd"] for st in state), 4)
     calls = sum(st["calls"] for st in state)
     secs_s = round(time.time() - t_start)
     events.emit("log", f"plan: {len(secs)} section(s), {calls} call(s), ${usd:.2f}, {secs_s} s"
                 + (f" — {len(failed)} section(s) failed" if failed else ""))
     return {"answer": ans, "plan": info.get("plan"), "raw": info.get("raw"), "checked": info.get("checked"),
-            "attempts": attempts, "needs_primitive": needs, "held": bool(needs), "apps": sorted(apps),
+            "warnings": info.get("warnings") or [], "attempts": attempts, "needs_primitive": needs, "held": bool(needs), "apps": sorted(apps),
             "action_ids": action_ids(apps), "calls": calls, "usd": usd, "seconds": secs_s,
             "sections": [{"n": s["n"], "t0": s["t0"], "t1": s["t1"], "first": s["first"], "last": s["last"],
                           "status": st["status"], "calls": st["calls"], "usd": round(st["usd"], 4),
                           "out_tokens": st["out"], **({"why": st["why"]} if st["why"] else {}),
                           **({"cached": True} if st.get("cached") else {})} for s, st in zip(secs, state)]}
+
+
+def recheck(answer, video, sites, facts=None, playbooks=None, overlays=None, p4=None, handoff=False):
+    """R14: the plan AFTER pre-production filled its needs — the (patched) answer checked again with THIS video's
+    playbooks (onboarded actions proven), the produced assets and the P4 motion windows. Pure code: no plan call,
+    the overlay call's answer is reused. → (plan in plan()'s form, raw)."""
+    apps = apps_for(sites, playbooks)
+    errs, info = check_plan(answer, video, apps, facts, sites, handoff=handoff, p4=p4)
+    raw = {**(info.get("raw") or {"segments": [], "aroll_why": [], "plates": []}), "overlays": list(overlays or []),
+           "p4_motion": list(p4 or [])}
+    out = validate(raw, video, sites, facts)
+    needs = list((info.get("plan") or {}).get("needs_primitive") or []) + as_needs_primitive(errs)
+    out.update(needs_primitive=needs, held=bool(needs), schema_plan=info.get("plan"), answer=answer,
+               warnings=info.get("warnings") or [], plan_check={"recheck": True, "errors": [e["msg"] for e in errs],
+                                                                 "apps": sorted(apps), "action_ids": action_ids(apps)})
+    return out, raw
 
 
 # ════════════════════════════ the overlay plan (one Sonnet call) ════════════════════════════

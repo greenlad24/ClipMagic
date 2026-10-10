@@ -13,7 +13,7 @@ edit-01/overlays.json (tests/fixtures/p6/make_fixture.py).
       boundaries/min, A-roll beats 5-7 s, a hook plate in 0-14.7 s, 671.4-688.5 s gets a segment or a why
   (d) overlays_fit on the failed job's 11 overlays: 7-9, <= 0.2/min mid-video, TX03 on the outro question
       (836-843 s), TX05 on 'notification bell' (859.19-859.81 s)
-  (e) content first: a photo that keeps missing 'napkin' is regenerated up to GEN_REGENS (9) times, then needs_asset → held; the
+  (e) content first: a photo that keeps missing 'napkin' is regenerated up to GEN_REGENS (9) times, then needs_asset → re-routed by P3 (R14); the
       generations are spaced (fake clock); the narrated objects map to assets or are reported
   (f) one Opus plan call + one Sonnet overlay call per plan; preprod.shot_prompt is gone; ledger stage names
 
@@ -248,8 +248,9 @@ def test_failed_plan():
     check(len(res3["attempts"]) == 3 and res3["held"] and len(res3["needs_primitive"]) >= len(named),
           f"3 failures → held: {len(res3['attempts'])} rounds, {len(res3['needs_primitive'])} needs_primitive")
     check(all(n.get("why") and "sentence" in n for n in res3["needs_primitive"]), "needs_primitive rows carry the why")
+    # Jake R14: needs_primitive never holds by itself any more — pre-production ROUTES each row (onboard.route)
     held = preprod.held_items({"needs_primitive": res3["needs_primitive"]}, {"assets": []})
-    check(held and all(h["reason"] == "needs_primitive" for h in held), "held reasons for the worker")
+    check(held == [], "R14: needs_primitive rows are routed, never a hold by themselves")
     return good, res
 
 
@@ -267,7 +268,7 @@ def test_enum():
           "prompt caching: breakpoints on the system and the shared rules block")
     sch = body["output_config"]["format"]["schema"]
     enum = sch["properties"]["segments"]["items"]["properties"]["beats"]["items"]["properties"]["action"]["enum"]
-    builtin = set(director.CAMERA_ACTIONS) | set(director.OUTSIDE_ACTIONS)
+    builtin = set(director.CAMERA_ACTIONS) | set(director.OUTSIDE_ACTIONS) | set(director.NEED_ACTIONS)   # + the R14 needs
     check(set(enum) - builtin == proven, f"enum = the proven ids (+ code primitives): {sorted(enum)}")
     unproven = set(pb["actions"]) - proven
     check(not unproven & set(enum), "no unproven id in the enum")
@@ -411,8 +412,8 @@ def test_content_first():
     img = FAKE.bodies[0]["messages"][0]["content"][0]
     check(img["type"] == "image" and "napkin" in FAKE.bodies[0]["messages"][0]["content"][1]["text"], "the check sees the picture")
     check(FAKE.bodies[0]["output_config"]["format"]["schema"] == preprod.GEN_CHECK_SCHEMA, "{matches, missing_objects}")
-    held = preprod.held_items({}, res)
-    check([h["reason"] for h in held] == ["needs_asset"] and "napkin" in held[0]["detail"], f"needs_asset → held: {held}")
+    # Jake R14 P3: a needs_asset is RE-ROUTED (onboard.route: the other producer, up to 10 tries each), not a hold by itself
+    check(preprod.held_items({}, res) == [] and res["assets"][0]["status"] == "needs_asset", "needs_asset → re-routed by P3, not held here")
     check(config.GEN_SPACING_S == 45 and config.GEN_REGENS == 9, "defaults: 45 s spacing, 9 regenerations (up to 10 tries, Jake)")
 
 
