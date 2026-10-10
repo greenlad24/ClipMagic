@@ -37,6 +37,7 @@ import { getFactory, type FactoryState } from './FactoryPanel';
 import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from './useSourceUpload';
 import { NarrationLibrary } from './NarrationLibrary';
 import { etaText } from './etaLive';
+import { MusicPicker, musicLabel, useMusicLibrary, type MusicChoice } from './MusicPicker';
 
 /**
  * New edit — a guided, one-question-per-screen flow (Jake 2026-10-08: "a consumer app like
@@ -298,6 +299,10 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     return v === 'factory' || v === 'box' ? v : 'auto';
   });
   const [more, setMore] = useState(false);
+  // long-form background music (MusicPicker): Auto at the default level unless changed here
+  const [music, setMusic] = useState<MusicChoice>({ track: null, gain_lu: 0 });
+  const musicLib = useMusicLibrary();
+  const musicSet = music.track !== null || music.gain_lu !== 0;
   const [busy, setBusy] = useState(false);
   const [hintOpen, setHintOpen] = useState(false);
   const [factory, setFactory] = useState<FactoryState | null>(null);
@@ -446,6 +451,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
         sites: format === 'long' ? sites : undefined,
         runOn,
         handoff: handoff && creative ? true : undefined,
+        music: format === 'long' && musicSet ? music : undefined,
       });
       lsSet(LS.format, format);
       lsSet(LS.runOn, runOn);
@@ -845,6 +851,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 More options
                 <span className="ml-auto truncate">
                   {title.trim() ? `${title.trim()} · ` : ''}
+                  {format === 'long' && musicSet ? `${musicLabel(music, musicLib.lib)} · ` : ''}
                   {resolvedRunOn}
                 </span>
               </button>
@@ -885,6 +892,13 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                           : 'Never leaves the main box (slower, no server cost).'}
                     </p>
                   </div>
+                  {format === 'long' && (
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-muted-foreground">Music</label>
+                      <MusicPicker value={music} onChange={setMusic} lib={musicLib.lib} reload={musicLib.reload} />
+                      {musicLib.error && <p className="text-[11px] text-red-400">Music library: {musicLib.error}</p>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

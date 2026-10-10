@@ -48,6 +48,7 @@ import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
 import { HandoffShare } from '@/components/autoeditor/HandoffShare';
+import { JobMusic } from '@/components/autoeditor/MusicPicker';
 import { OverlayCatalog, overlayName, overlayTemplate } from '@/components/autoeditor/overlayTemplates';
 
 /**
@@ -843,6 +844,12 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
       {job.chain && <ChainLinks chain={job.chain} />}
       {state === 'held' && job.held && <HeldPanel held={job.held} />}
       <JobProgress job={job} live={live} onContinue={canContinue ? doContinue : undefined} />
+      {/* background music: the job's choice + "Change music" (sound only, worker action "remusic") */}
+      {job.request.format === 'long' && (
+        <JobMusic jobId={job.id} live={live}
+          progress={{ message: job.status.stages?.music?.message ?? job.status.message, frac: job.status.stages?.music?.progress ?? null }}
+          onChanged={() => { void load(); onChanged(); }} />
+      )}
 
       {job.review ? (
         <Review job={job} onSaved={() => void load()} />
