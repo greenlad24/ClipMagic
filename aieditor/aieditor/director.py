@@ -3,6 +3,10 @@ SCREENCASTS (recorded by code, camera-zoomed, presenter in the bubble), what eac
 on which word, and which A-roll moments carry text/CTA graphics.
 
 Architecture recommendation step 3 (code on camera, single model calls for decisions):
+  SECTIONED (2026-10-10): plan_sections cuts the narration into ~120-180 s sections at sentence boundaries; one
+                 plan_call per section (parallel, cached shared prefix), merge_sections joins them, check_plan checks
+                 the whole plan and each error is re-asked ONLY to its section (patch re-ask); a truncated reply is
+                 never parsed (one medium retry, then the section is failed → held for its words)
   plan_call      ONE Opus call (effort high, strict JSON = the plan schema with a CLOSED action list:
                  each app's PROVEN playbook actions + two code primitives, camera.zoom and outside.goto)
                  from the words, the sentences, the playbooks, the produced assets and the reference bands
@@ -246,21 +250,28 @@ def validate_overlays(overlays, video, segs):
 
 
 
-def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, rulebook=None, handoff=False):
-    """The whole decision: the plan call + check (re-asks) and the overlay call. → (plan, raw, meta) where plan
-    is validate()'s recorder form + "needs_primitive" / "held" / "plan_check", raw is what validate re-reads on
-    every run (segments + their schema beats, aroll whys, overlays)."""
-    res = plan_and_check(video, sites, facts, sponsored, knowledge, playbooks, rulebook, handoff=handoff)
+def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, rulebook=None, handoff=False, cache=None):
+    """The whole decision: the sectioned plan calls + check (patch re-asks) and the overlay call. → (plan, raw, meta)
+    where plan is validate()'s recorder form + "needs_primitive" / "held" / "plan_check", raw is what validate
+    re-reads on every run (segments + their schema beats, aroll whys, overlays). cache = where the section answers
+    are kept (plan_and_check): a rerun reuses them instead of planning again."""
+    res = plan_and_check(video, sites, facts, sponsored, knowledge, playbooks, rulebook, handoff=handoff, cache=cache)
     raw = res["raw"] or {"segments": [], "aroll_why": [], "plates": [], "overlays": []}
     segs = (res["checked"] or {}).get("segments", [])
     ovs, r2 = overlay_plan(video, segs, sponsored, apps=[a for a in res.get("apps", []) if not str(a).startswith("web:")])
     raw = {**raw, "overlays": ovs}
     out = validate(raw, video, sites, facts)
     out.update(needs_primitive=res["needs_primitive"], held=res["held"], schema_plan=res["plan"],
-               plan_check={"attempts": [{"answer": a["answer"], "errors": [e["msg"] for e in a["errors"]]}
-                                        for a in res["attempts"]], "apps": res["apps"], "action_ids": res["action_ids"]})
-    meta = {"usd": round(res["usd"] + r2["usd"], 4), "seconds": res["seconds"] + round(r2["seconds"]),
-            "calls": {"plan": res["calls"], "overlay": 1}, "models": {"plan": PLAN_MODEL, "overlay": OVERLAY_MODEL}}
+               plan_check={"attempts": [{"answer": a["answer"], "errors": [e["msg"] for e in a["errors"]],
+                                         **({"sections": a["sections"]} if a.get("sections") else {})}
+                                        for a in res["attempts"]], "apps": res["apps"], "action_ids": res["action_ids"],
+                           "sections": res.get("sections", [])})
+    usd = round(res["usd"] + float(r2.get("usd") or 0), 4)
+    meta = {"usd": usd, "seconds": res["seconds"] + round(r2.get("seconds") or 0),
+            "calls": {"plan": res["calls"], "overlay": r2.get("calls", 1)}, "models": {"plan": PLAN_MODEL, "overlay": OVERLAY_MODEL},
+            "sections": res.get("sections", [])}
+    events.emit("log", f"plan total: ${usd:.2f} ({res['calls']} plan call(s) over {len(res.get('sections', []))} "
+                       f"section(s) ${res['usd']:.2f} + overlay ${float(r2.get('usd') or 0):.2f}), {meta['seconds']} s")
     return out, raw, meta
 
 
@@ -420,10 +431,12 @@ MO05_PLAN = """- PROMPT → RESULT (MO05, Jake 2026-10-09): a HOOK line (first 4
 """
 
 
-def plan_prompt(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None):
+def plan_rules(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None):
+    """Everything a plan call reads that does NOT depend on the section: Jake's rules, the RULEBOOK digest, the
+    reference bands, the apps' closed action lists, the facts and the answer form. Byte-identical for every
+    section of a job, so it is the cached prefix (prompt caching) of every section call."""
     rules = skill.rules()
     st, sy = rules.get("structure", {}), rules.get("sync", {})
-    words = " ".join(f'{w["i"]}:{w["word"]}@{w["start"]:.1f}' for w in video["words"])
     walk = ("APP WALKTHROUGH (UX Scout report — context only; it never adds an action):\n" + knowledge[:8000] + "\n") \
         if knowledge else ""
     return f"""{JAKE_RULES}
@@ -455,49 +468,215 @@ THE PLAN — JSON (word ids from the transcript):
 - plates: the hook plate (first 40 s), asset_ids from the produced assets, technique_id TX07 or TX09.
 {MO05_PLAN if motiontemplates.enabled() else ""}- needs_primitive: each sentence that needs an action no list holds (sentence, word_ids, why, proposed route).
 - no overlays here (a separate call places them).
-{"SPONSORED video: no claims beyond what is said." if sponsored else ""}
-
-SENTENCES (S<k> [first id-last id] seconds: text):
-{sentences_block(video)}
-
-TRANSCRIPT (id:word@seconds) — "{video.get('title', '')}", {video['duration']:.1f} s:
-{words}"""
+{"SPONSORED video: no claims beyond what is said." if sponsored else ""}"""
 
 
-def _json_answer(text):
-    try:
-        return json.loads(text)
-    except ValueError:
-        m = re.search(r"\{.*\}", text or "", re.S)
-        if not m:
-            raise
-        return json.loads(m.group(0))
+# ════════════════════════════ sectioned planning (2026-10-10) ════════════════════════════
+# One call for a whole 15-min narration answered 33k tokens, every re-ask re-emitted the whole video and hit the
+# 64k ceiling, a truncated answer was parsed (JSONDecodeError) and the graphics stage planned again: $9.12, held.
+# Now: sections of ~2-3 min at sentence boundaries, one Opus call each (parallel, cached shared prefix), merged by
+# code; the plan check's errors go back ONLY to the sections they sit in.
+
+SECTION_S = (120.0, 180.0)        # a section's length band (s)
+SECTION_IDEAL_S = 150.0
+SECTION_MAX_TOKENS = 16000        # a ~150 s section answers ~6-8k tokens (thinking + plan) — room, not a target
+SECTION_PARALLEL = 4              # section calls in flight at once
+SECTION_WARM_S = 20.0             # the first call alone for this long, so the others read its cached prefix
+SECTION_CONTEXT_SENTS = 3         # read-only neighbour sentences on each side
+CACHE = {"type": "ephemeral"}
+
+SECTION_RULES = """SECTIONED PLANNING: this video is planned in sections of about 2-3 minutes, each by its own call. You
+plan ONE section (named at the end): use ONLY its word ids. The neighbouring sentences are context, never yours.
+A screencast that goes on past your section's last word ends ON that last word (the next section continues it with
+the same app and session); one running in from the previous section starts ON your first word. The reference bands
+hold inside your section as well (screencast share, span lengths, boundaries per minute). The hook rules (plates,
+the first 40 s) concern only the section that holds the first 40 s. Keep each body short (<= 15 words)."""
+
+COMPACT = """COMPACT ANSWER: the previous attempt at this answer ran out of room. Think briefly, keep every body under
+12 words, give a why in one short sentence, no beat that adds nothing — and return the COMPLETE JSON for your
+section only."""
 
 
-PLAN_MAX_TOKENS = 64000
+class PlanReplyError(RuntimeError):
+    """A plan reply that is not a plan (hit max_tokens, empty or invalid JSON) — after the one medium retry.
+    Carries what the failed calls cost, so the ledger total and the section's line stay honest."""
+
+    def __init__(self, msg, usd=0.0, usage=None, calls=2):
+        super().__init__(msg)
+        self.usd, self.usage, self.calls = usd, usage or {}, calls
 
 
-def plan_call(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None, msgs=None):
-    """THE plan call: one Opus request, effort high, the answer constrained to plan_schema(apps).
-    msgs = the whole conversation for a re-ask (append-only). → (answer dict, reply)."""
+def _screen_runs(words, sents):
+    """Sentence indices that refer to the screen (screenref.flag, R13/C8)."""
+    first = {f["word_ids"][0] for f in screenref.flag(words) if f.get("word_ids")}
+    return [bool(s) and s[0]["i"] in first for s in sents]
+
+
+def plan_sections(video, band=SECTION_S, ideal=SECTION_IDEAL_S):
+    """The narration → sections of ~band seconds that end at a sentence boundary (planfit.sentences), never inside
+    a sentence and never inside a run of screen-referring sentences (R13/C8: one screencast should cover the run).
+    The cut prefers the longest pause near the ideal length. → [{n, of, s0, s1 (sentence idx), first, last (word
+    ids), p0, p1 (word positions), t0, t1}]; a video shorter than the band's top is ONE section."""
+    ws = video["words"]
+    sents = [s for s in planfit.sentences(ws) if s]
+    if not sents:
+        return []
+    lo, hi = band
+    flagged = _screen_runs(ws, sents)
+    allowed = lambda k: not (flagged[k] and flagged[k + 1])
+    end = sents[-1][-1]["end"]
+    cuts, a = [], 0
+    while True:
+        t0 = sents[a][0]["start"]
+        rest = end - t0
+        if rest <= hi:
+            break
+        target = min(hi, max(lo, rest / max(2, round(rest / ideal))))
+        cands = [k for k in range(a, len(sents) - 1) if allowed(k)]
+        length = lambda k: sents[k][-1]["end"] - t0
+        win = [k for k in cands if lo <= length(k) <= hi]
+        if not win:            # a long screen-reference run (or one long sentence) crosses the band: next boundary
+            win = [k for k in cands if length(k) > hi][:1] or [k for k in cands if length(k) >= lo / 2][-1:]
+        if not win:
+            break
+        pause = lambda k: min(1.5, max(0.0, sents[k + 1][0]["start"] - sents[k][-1]["end"]))
+        k = min(win, key=lambda k: abs(length(k) - target) - 10.0 * pause(k))
+        if end - sents[k + 1][0]["start"] < lo / 2:      # never leave a stub: the last section takes it
+            break
+        cuts.append(k)
+        a = k + 1
+    pos = {w["i"]: n for n, w in enumerate(ws)}
+    out, a = [], 0
+    for b in cuts + [len(sents) - 1]:
+        f, l = sents[a][0], sents[b][-1]
+        out.append({"n": len(out) + 1, "s0": a, "s1": b, "first": f["i"], "last": l["i"], "p0": pos[f["i"]],
+                    "p1": pos[l["i"]], "t0": round(f["start"], 2), "t1": round(l["end"], 2)})
+        a = b + 1
+    for s in out:
+        s["of"] = len(out)
+    return out
+
+
+def _sent_line(s, k=None, ids=True):
+    head = (f"S{k} " if k is not None else "") + (f"[{s[0]['i']}-{s[-1]['i']}] " if ids else "")
+    return f"{head}{s[0]['start']:.1f}-{s[-1]['end']:.1f}: " + " ".join(w["word"] for w in s)
+
+
+def plan_shared(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None, n_sections=1):
+    """The cached prefix of every section call: the rules + (several sections) the sectioning rules and the
+    whole narration as read-only context."""
+    base = plan_rules(video, apps, facts, sponsored, knowledge, rulebook)
+    if n_sections <= 1:
+        return base
+    sents = [s for s in planfit.sentences(video["words"]) if s]
+    return (f"{base}\n\n{SECTION_RULES}\n\nTHE WHOLE NARRATION (read-only context — seconds: text), "
+            f"\"{video.get('title', '')}\", {video['duration']:.1f} s:\n"
+            + "\n".join(_sent_line(s, ids=False) for s in sents))
+
+
+def section_tail(video, sec, n_sections=1):
+    """What differs per section: its sentences + word ids, and the neighbours as read-only context."""
+    ws = video["words"]
+    sents = [s for s in planfit.sentences(ws) if s]
+    if sec is None or n_sections <= 1:
+        words = " ".join(f'{w["i"]}:{w["word"]}@{w["start"]:.1f}' for w in ws)
+        return (f"SENTENCES (S<k> [first id-last id] seconds: text):\n{sentences_block(video)}\n\n"
+                f"TRANSCRIPT (id:word@seconds) — \"{video.get('title', '')}\", {video['duration']:.1f} s:\n{words}")
+    mine = ws[sec["p0"]:sec["p1"] + 1]
+    words = " ".join(f'{w["i"]}:{w["word"]}@{w["start"]:.1f}' for w in mine)
+    c = SECTION_CONTEXT_SENTS
+    before = sents[max(0, sec["s0"] - c):sec["s0"]]
+    after = sents[sec["s1"] + 1:sec["s1"] + 1 + c]
+    return f"""YOUR SECTION: {sec['n']} of {sec['of']} — {sec['t0']:.1f}-{sec['t1']:.1f} s, word ids {sec['first']}-{sec['last']}.
+Plan ONLY these words: every start_word, end_word, word_id and wait_end_word is in {sec['first']}-{sec['last']}.
+
+CONTEXT BEFORE (read-only — the previous section plans these):
+{chr(10).join(_sent_line(s) for s in before) or "(the video starts here)"}
+
+SENTENCES (yours; S<k> [first id-last id] seconds: text):
+{chr(10).join(_sent_line(s, k) for k, s in enumerate(sents[sec['s0']:sec['s1'] + 1], sec['s0']))}
+
+TRANSCRIPT (yours; id:word@seconds):
+{words}
+
+CONTEXT AFTER (read-only — the next section plans these):
+{chr(10).join(_sent_line(s) for s in after) or "(the video ends here)"}"""
+
+
+def plan_prompt(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None):
+    """The whole-video prompt as one string (one section)."""
+    return plan_rules(video, apps, facts, sponsored, knowledge, rulebook) + "\n\n" + section_tail(video, None)
+
+
+def plan_system():
+    return [{"type": "text", "text": PLAN_SYSTEM, "cache_control": dict(CACHE)}]
+
+
+def plan_messages(shared, tail):
+    """The first user turn: the shared prefix (cache breakpoint) + the section's own part."""
+    return [{"role": "user", "content": [{"type": "text", "text": shared, "cache_control": dict(CACHE)},
+                                         {"type": "text", "text": tail}]}]
+
+
+def parse_plan_reply(r):
+    """A reply → the plan object, or ValueError. A reply cut at max_tokens is NEVER parsed (2026-10-10: a truncated
+    medium answer died in json.loads at column 43275 and took pre-production with it)."""
+    if r.get("stop_reason") == "max_tokens":
+        raise ValueError(f"the reply hit its max_tokens ceiling ({(r.get('usage') or {}).get('output_tokens', '?')} "
+                         "output tokens) — truncated")
+    text = (r.get("text") or "").strip()
+    if not text:
+        raise ValueError("the reply has no text")
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    obj = json.loads(text)                      # strict: the whole text is the object
+    if not isinstance(obj, dict):
+        raise ValueError("the reply is not a JSON object")
+    return obj
+
+
+def _with_compact(msgs):
+    """The same conversation with the COMPACT instruction added to its last user turn."""
+    last = msgs[-1]
+    blocks = last["content"] if isinstance(last["content"], list) else [{"type": "text", "text": last["content"]}]
+    return msgs[:-1] + [{**last, "content": list(blocks) + [{"type": "text", "text": COMPACT}]}]
+
+
+def _add_usage(a, b):
+    return {k: (a or {}).get(k, 0) + (b or {}).get(k, 0) for k in
+            ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+
+
+PLAN_MAX_TOKENS = SECTION_MAX_TOKENS
+
+
+def plan_call(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None, msgs=None, label="plan call",
+              max_tokens=None):
+    """ONE plan request (a section, or a whole short video): Opus, effort high, the answer constrained to
+    plan_schema(apps). msgs = the conversation (append-only for a re-ask); default = the whole-video prompt.
+    A reply cut at max_tokens or not valid JSON is never parsed: one retry at effort medium with the COMPACT
+    instruction; if that fails too → PlanReplyError. → (answer dict, reply with usd/usage summed over both)."""
     if msgs is None:
-        msgs = [{"role": "user", "content": plan_prompt(video, apps, facts, sponsored, knowledge, rulebook)}]
-    n = sum(1 for m in msgs if m["role"] == "user")
-    tag = f" — re-ask {n - 1}" if n > 1 else ""
-    # 2026-10-09: a 15-min narration spent all 32k output tokens (thinking + plan) and returned no answer,
-    # so the hand-off job failed on an empty reply. Room for a long plan, streamed; if the ceiling is
-    # still hit, one retry at medium effort (less thinking, same schema) instead of failing the job.
-    r = llm.messages(PLAN_MODEL, PLAN_SYSTEM, None, PLAN_MAX_TOKENS, effort="high", msgs=msgs, schema=plan_schema(apps),
-                     stage="preprod.plan", purpose="Claude plan call (high effort)" + tag, stream=True)
-    if r.get("stop_reason") == "max_tokens" or not (r.text or "").strip():
-        events.emit("log", f"plan call hit its {PLAN_MAX_TOKENS}-token ceiling without a full answer — "
-                    "retrying once at medium effort", level="warn")
-        r2 = llm.messages(PLAN_MODEL, PLAN_SYSTEM, None, PLAN_MAX_TOKENS, effort="medium", msgs=msgs,
-                          schema=plan_schema(apps), stage="preprod.plan", stream=True,
-                          purpose="Claude plan call (medium effort, after the token ceiling)" + tag)
-        r2["usd"] = round(float(r2.get("usd") or 0) + float(r.get("usd") or 0), 5)
-        r = r2
-    return _json_answer(r.text), r
+        msgs = plan_messages(plan_shared(video, apps, facts, sponsored, knowledge, rulebook), section_tail(video, None))
+    mt = max_tokens or SECTION_MAX_TOKENS
+    r = llm.messages(PLAN_MODEL, plan_system(), None, mt, effort="high", msgs=msgs, schema=plan_schema(apps),
+                     stage="preprod.plan", purpose=f"Claude {label} (high effort)", stream=True)
+    try:
+        return parse_plan_reply(r), r
+    except ValueError as e:
+        why = str(e)
+    events.emit("log", f"{label}: {why} — not parsed as a plan; retrying once at medium effort, compact", level="warn")
+    r2 = llm.messages(PLAN_MODEL, plan_system(), None, mt, effort="medium", msgs=_with_compact(msgs),
+                      schema=plan_schema(apps), stage="preprod.plan", stream=True,
+                      purpose=f"Claude {label} (medium effort, compact — after: {why[:60]})")
+    usd = round(float(r.get("usd") or 0) + float(r2.get("usd") or 0), 6)
+    usage = _add_usage(r.get("usage"), r2.get("usage"))
+    try:
+        ans = parse_plan_reply(r2)
+    except ValueError as e2:
+        raise PlanReplyError(f"{label}: {why}; the medium retry too: {e2}", usd=usd, usage=usage) from None
+    r2["usd"], r2["usage"], r2["calls"] = usd, usage, 2
+    r2["retry_msgs"] = _with_compact(msgs)        # the conversation that produced the answer (for a re-ask)
+    return ans, r2
 
 
 # ── checkpoint 1: the plan check (code) ──
@@ -636,11 +815,13 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                                        "narration (start <= end)"))
             continue
         if a <= last_end:
-            errs.append(_err("schema", f"segment {si} ({s['t0']:.1f}-{s['t1']:.1f} s) overlaps the previous screencast"))
+            errs.append(_err("schema", f"segment {si} ({s['t0']:.1f}-{s['t1']:.1f} s) overlaps the previous screencast",
+                             word_ids=[s["start_word"], s["end_word"]]))
         last_end = b
         app = apps.get(s["app"])
         if app is None:
-            errs.append(_err("schema", f"segment {si}: app '{s['app']}' is not one of the job's apps {sorted(apps)}"))
+            errs.append(_err("schema", f"segment {si}: app '{s['app']}' is not one of the job's apps {sorted(apps)}",
+                             word_ids=[s["start_word"], s["end_word"]]))
             continue
         allowed = set(app["actions"]) | set(CAMERA_ACTIONS) | (set(OUTSIDE_ACTIONS) if s["session"] == "outside" else set())
         for bt in s["beats"]:
@@ -709,7 +890,8 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
     for x in plan["plates"]:
         for aid in x.get("asset_ids", []):
             if aid not in usable:
-                errs.append(_err("asset", f"plate {x['t0']}-{x['t1']} s: asset '{aid}' was not produced"))
+                errs.append(_err("asset", f"plate {x['t0']}-{x['t1']} s: asset '{aid}' was not produced",
+                                 word_ids=[i for i in (x.get("start_word"), x.get("end_word")) if i is not None]))
     raw = to_raw(plan, apps, video)
     checked = validate(raw, video, list(sites) or [{"url": x["url"]} for x in apps.values()], facts)
     # the fit: what the ledger refused (a rewrite to the honest route is fine), the reference bands, the hook
@@ -806,11 +988,18 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
     return out, {"plan": plan, "raw": raw, "checked": checked}
 
 
-def reask_text(errors, attempt, max_attempts):
-    return (f"PLAN CHECK FAILED (answer {attempt} of {max_attempts}). Fix every error below and return the COMPLETE "
-            "corrected plan in the same JSON form. Never invent an action, a control, a chat or a picture: where no "
-            "proven action or produced asset can show a sentence, put it in needs_primitive (with the honest route) or "
-            "leave it on the presenter with a why in \"aroll\".\n" + "\n".join(f"- [{e['code']}] {e['msg']}" for e in errors))
+def reask_text(errors, attempt, max_attempts, sec=None):
+    """The patch re-ask: ONLY this section's errors, and only this section's plan back (never the whole video)."""
+    if sec is None or sec.get("of", 1) <= 1:
+        head = (f"PLAN CHECK FAILED (answer {attempt} of {max_attempts}). Fix every error below and return the COMPLETE "
+                "corrected plan in the same JSON form.")
+    else:
+        head = (f"PLAN CHECK FAILED for YOUR SECTION {sec['n']} of {sec['of']} ({sec['t0']:.1f}-{sec['t1']:.1f} s, word ids "
+                f"{sec['first']}-{sec['last']}; answer {attempt} of {max_attempts}). Fix every error below and return the "
+                "corrected plan for THIS SECTION ONLY, complete, in the same JSON form (only its word ids).")
+    return (head + " Never invent an action, a control, a chat or a picture: where no proven action or produced asset can "
+            "show a sentence, put it in needs_primitive (with the honest route) or leave it on the presenter with a why in "
+            "\"aroll\".\n" + "\n".join(f"- [{e['code']}] {e['msg']}" for e in errors))
 
 
 def as_needs_primitive(errors):
@@ -819,41 +1008,365 @@ def as_needs_primitive(errors):
              "why": e["msg"], "proposed": e.get("proposed"), "code": e["code"]} for e in errors]
 
 
+EMPTY_ANSWER = {"segments": [], "aroll": [], "plates": [], "needs_primitive": []}
+
+
+def merge_sections(secs, answers, video):
+    """The section answers → ONE plan answer (word ids), deterministic. Everything is clipped to its own section
+    (a span the model ran into its neighbour's words ends at the boundary; beats / rows on a neighbour's words are
+    the neighbour's). At a boundary a screencast continues ONLY when both halves agree on the app and the session —
+    the left one ends on the section's last word and the right one starts on the next section's first word; any
+    other pair stays split at the boundary. → (answer, notes) — notes = per-section problems the merge found
+    ({section index: [error]}), e.g. a segment whose word ids are not in the narration."""
+    ws = video["words"]
+    pos = {w["i"]: n for n, w in enumerate(ws)}
+    notes = {}
+    out = {"segments": [], "aroll": [], "plates": [], "needs_primitive": []}
+    for k, sec in enumerate(secs):
+        ans = answers[k] or EMPTY_ANSWER
+        lo, hi = sec["p0"], sec["p1"]
+        mine = lambda wid: wid in pos and lo <= pos[wid] <= hi
+        segs = []
+        for s in ans.get("segments", []):
+            a, b = pos.get(s.get("start_word")), pos.get(s.get("end_word"))
+            if a is None or b is None or b < a:
+                notes.setdefault(k, []).append(_err("schema", f"segment {s.get('start_word')}-{s.get('end_word')}: word ids "
+                                                              f"not in the narration (start <= end, your section is "
+                                                              f"{sec['first']}-{sec['last']})"))
+                continue
+            a2, b2 = max(a, lo), min(b, hi)
+            if a2 > b2:
+                continue                                  # wholly on the neighbour's words: theirs to plan
+            beats = [dict(bt) for bt in s.get("beats", []) if mine(bt.get("word_id")) and a2 <= pos[bt["word_id"]] <= b2]
+            for bt in beats:
+                if bt.get("wait_end_word") is not None and not mine(bt["wait_end_word"]):
+                    bt["wait_end_word"] = ws[min(max(pos.get(bt["wait_end_word"], b2), a2), b2)]["i"]
+            segs.append({**s, "start_word": ws[a2]["i"], "end_word": ws[b2]["i"], "beats": beats, "_sec": [k]})
+        segs.sort(key=lambda s: pos[s["start_word"]])
+        if segs and out["segments"]:
+            L, R = out["segments"][-1], segs[0]
+            if (pos[L["end_word"]] == lo - 1 and pos[R["start_word"]] == lo and L.get("app") == R.get("app")
+                    and L.get("session") == R.get("session")):
+                out["segments"][-1] = {**L, "end_word": R["end_word"], "beats": L["beats"] + R["beats"],
+                                       "_sec": L["_sec"] + [k]}
+                segs = segs[1:]
+        out["segments"] += segs
+        for x in ans.get("aroll", []):
+            a, b = pos.get(x.get("start_word")), pos.get(x.get("end_word"))
+            if a is None or b is None or b < max(a, lo) or a > hi:
+                continue
+            out["aroll"].append({**x, "start_word": ws[max(a, lo)]["i"], "end_word": ws[min(b, hi)]["i"]})
+        for x in ans.get("plates", []):
+            if mine(x.get("start_word")):
+                out["plates"].append(dict(x))
+        for x in ans.get("needs_primitive", []):
+            ids = [i for i in x.get("word_ids") or [] if mine(i)]
+            if ids or (not x.get("word_ids") and k == 0):
+                out["needs_primitive"].append({**x, "word_ids": ids})
+    return out, notes
+
+
+def _strip_internal(ans):
+    return {**ans, "segments": [{k: v for k, v in s.items() if k != "_sec"} for s in ans["segments"]]}
+
+
+_TIME_RE = re.compile(r"(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*s\b")
+
+
+def _sec_at_pos(secs, p):
+    return next((k for k, s in enumerate(secs) if s["p0"] <= p <= s["p1"]), None)
+
+
+def _sec_at_time(secs, t):
+    for k, s in enumerate(secs):
+        if t < s["t1"] or k == len(secs) - 1:
+            return k
+    return None
+
+
+def locate(e, secs, pos):
+    """The sections an error belongs to: by its word ids, else by the first time in its message; [] = unknown."""
+    ids = [i for i in e.get("word_ids") or [] if i in pos]
+    if ids:
+        ks = {_sec_at_pos(secs, pos[min(ids, key=pos.get)]), _sec_at_pos(secs, pos[max(ids, key=pos.get)])}
+        return sorted(k for k in ks if k is not None)
+    m = _TIME_RE.search(e.get("msg") or "")
+    if m:
+        k = _sec_at_time(secs, float(m.group(1)))
+        return [] if k is None else [k]
+    return []
+
+
+def _window_stats(segs, t0, t1):
+    """The structure of one section's window, from the fitted screencasts (planfit.validate form)."""
+    dur = max(0.01, t1 - t0)
+    cut = [(max(t0, s["t0"]), min(t1, s["t1"])) for s in segs if s["t1"] > t0 and s["t0"] < t1]
+    cov = sum(b - a for a, b in cut)
+    spans = [s["t1"] - s["t0"] for s in segs if t0 <= (s["t0"] + s["t1"]) / 2 < t1]
+    bounds = sum((t0 < a) + (b < t1) for a, b in cut)
+    gaps = [b[0] - a[1] for a, b in zip(cut, cut[1:]) if b[0] - a[1] > 0.05]
+    med = lambda xs: sorted(xs)[len(xs) // 2] if xs else 0.0
+    return {"share": round(cov / dur, 3), "bounds_per_min": round(bounds / (dur / 60.0), 2),
+            "span_p50": round(med(spans), 1), "span_max": round(max(spans), 1) if spans else 0.0,
+            "aroll_p50": round(med(gaps), 1), "aroll_blocks": len(gaps)}
+
+
+def structure_targets(e, checked, secs):
+    """A whole-video structure error → the sections that pull the measure out of its band, each with a targeted
+    message ({section index: error}). Section shares/boundaries are measured on the fitted screencasts."""
+    m = re.match(r"structure (\w+) = ([\d.]+)", e["msg"])
+    if not m:
+        return {}
+    name, val = m.group(1), float(m.group(2))
+    band = {"share": planfit.SHARE, "bounds_per_min": planfit.BOUNDS_PER_MIN, "span_p50": planfit.SPAN_P50,
+            "span_max": (0.0, planfit.SPAN_MAX), "aroll_p50": planfit.AROLL_BEAT}.get(name)
+    if band is None:
+        return {}
+    low = val < band[0]
+    stats = [_window_stats(checked.get("segments") or [], s["t0"], s["t1"]) for s in secs]
+    if name == "aroll_p50":
+        pick = [k for k, st in enumerate(stats) if st["aroll_blocks"] and (st["aroll_p50"] < band[0] if low else st["aroll_p50"] > band[1])]
+    else:
+        pick = [k for k, st in enumerate(stats) if (st[name] < band[0] if low else st[name] > band[1])]
+    if not pick:                                     # nobody out of band alone: the section furthest that way
+        pick = [(min if low else max)(range(len(secs)), key=lambda k: stats[k][name])]
+    what = {"share": ("plan MORE screencast here (longer / more spans)", "plan LESS screencast here (more A-roll)"),
+            "bounds_per_min": ("more screen<->face changes here (more, shorter spans)", "fewer screen<->face changes here"),
+            "span_p50": ("longer screencast spans here", "shorter screencast spans here"),
+            "span_max": ("", "no screencast span over the maximum here"),
+            "aroll_p50": ("longer A-roll beats between the screencasts here", "shorter A-roll beats here")}[name][0 if low else 1]
+    return {k: {**e, "msg": f"{e['msg']} — YOUR section measures {name} = {stats[k][name]}: {what}"} for k in pick}
+
+
+def _jdump(path, obj):
+    tmp = str(path) + ".part"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    import os
+    os.replace(tmp, path)
+
+
+def _usage_line(sec, r, secs_s, tag=""):
+    u = r.get("usage") or {}
+    return (f"plan section {sec['n']}/{sec['of']} ({sec['t0']:.0f}-{sec['t1']:.0f} s){tag}: "
+            f"{u.get('input_tokens', 0) + u.get('cache_read_input_tokens', 0) + u.get('cache_creation_input_tokens', 0)} in "
+            f"({u.get('cache_read_input_tokens', 0)} cached, {u.get('cache_creation_input_tokens', 0)} written) / "
+            f"{u.get('output_tokens', 0)} out tokens, ${float(r.get('usd') or 0):.3f}, {secs_s:.0f} s")
+
+
+def _run_parallel(jobs, warm_first=False):
+    """jobs = [(key, fn)] → {key: result | exception}; at most SECTION_PARALLEL at once. warm_first: the first job
+    runs alone for SECTION_WARM_S (or until it ends) so the others read its cached prefix. A budget refusal or an
+    on-camera refusal stops what has not started yet and is raised."""
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+    out = {}
+    if not jobs:
+        return out
+    fatal = (llm.apiledger.BudgetExceeded, llm.OnCameraCall)
+    with ThreadPoolExecutor(max_workers=min(SECTION_PARALLEL, len(jobs))) as ex:
+        todo = list(jobs)
+        running = {}
+        if warm_first and len(todo) > 1 and SECTION_WARM_S > 0:
+            k, fn = todo.pop(0)
+            running[ex.submit(fn)] = k
+            wait(list(running), timeout=SECTION_WARM_S)
+        stop = None
+        while todo or running:
+            while todo and len(running) < SECTION_PARALLEL and stop is None:
+                k, fn = todo.pop(0)
+                running[ex.submit(fn)] = k
+            if not running:
+                break
+            done, _ = wait(list(running), return_when=FIRST_COMPLETED)
+            for f in done:
+                k = running.pop(f)
+                try:
+                    out[k] = f.result()
+                except BaseException as e:  # noqa: BLE001 — sorted below
+                    out[k] = e
+                    if isinstance(e, fatal) and stop is None:
+                        stop = e
+            if stop is not None:
+                todo = []
+        if stop is not None:
+            raise stop
+    return out
+
+
 def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, playbooks=None, rulebook=None,
-                   max_reasks=None, handoff=False):
-    """The single plan call + checkpoint 1: ask, check, re-ask with the error list (<= config.PLAN_REASKS
-    times). → {"answer", "plan", "raw", "checked", "attempts", "needs_primitive", "held", "calls", "usd", "seconds"}.
-    held = something is still missing (needs_primitive): the job stops with the list — never A-roll filler."""
+                   max_reasks=None, handoff=False, cache=None):
+    """SECTIONED planning + checkpoint 1. The narration is cut into sections (plan_sections); each is planned by its
+    own call (parallel, cached shared prefix); the answers are merged (merge_sections) and the WHOLE plan is
+    checked (check_plan: per-sentence rules + the whole-video bands). Each error goes back to the section it sits
+    in — a patch re-ask with only that section's errors, <= config.PLAN_REASKS rounds; a section never re-emits the
+    video. A section whose call fails (truncated twice) is marked failed: its words become one needs_primitive row
+    (held) and the rest of the plan stands. cache = a json path: section answers are saved as they arrive and an
+    unchanged section is reused on the next run (no second call).
+    → {"answer", "plan", "raw", "checked", "attempts", "needs_primitive", "held", "calls", "usd", "seconds",
+       "sections": [{n, t0, t1, status, calls, usd, out_tokens}]}."""
+    import hashlib
+    import threading
     max_reasks = config.PLAN_REASKS if max_reasks is None else max_reasks
     # hand-off (graphics only): the screencast beats are INSTRUCTIONS for a human editor, so every known action
     # of the app may be named, proven or not (2026-10-09: the proven-only list rejected 120 beats of a hand-off
     # plan and each re-ask grew towards the token ceiling)
     apps = apps_for(sites, playbooks, proven_only=not handoff)
-    t0 = time.time()
-    msgs = [{"role": "user", "content": plan_prompt(video, apps, facts, sponsored, knowledge, rulebook)}]
-    attempts, usd, info, errs, ans = [], 0.0, {}, [], {}
+    t_start = time.time()
+    ws = video["words"]
+    pos = {w["i"]: n for n, w in enumerate(ws)}
+    secs = plan_sections(video)
+    shared = plan_shared(video, apps, facts, sponsored, knowledge, rulebook, n_sections=len(secs))
+    schema = plan_schema(apps)
+    tails = [section_tail(video, s, len(secs)) for s in secs]
+    key = hashlib.sha256(json.dumps([PLAN_MODEL, PLAN_SYSTEM, shared, schema, tails], sort_keys=True).encode()).hexdigest()
+    state = [{"msgs": plan_messages(shared, t), "answer": None, "status": "pending", "calls": 0, "usd": 0.0,
+              "out": 0, "why": None, "stuck": False} for t in tails]
+    lock = threading.Lock()
+    if cache:
+        try:
+            doc = json.load(open(cache))
+        except (OSError, ValueError):
+            doc = {}
+        if doc.get("key") == key:
+            for st, old in zip(state, doc.get("sections") or []):
+                if old.get("status") == "ok" and old.get("answer") is not None:
+                    st.update(answer=old["answer"], msgs=old.get("msgs") or st["msgs"], status="ok", cached=True)
+            n_c = sum(1 for st in state if st.get("cached"))
+            if n_c:
+                events.emit("log", f"plan: {n_c} of {len(secs)} section(s) reused from the last run — not asked again")
+
+    def save():
+        if not cache:
+            return
+        with lock:
+            _jdump(cache, {"key": key, "model": PLAN_MODEL, "sections": [
+                {"n": s["n"], "first": s["first"], "last": s["last"], "t0": s["t0"], "t1": s["t1"],
+                 "status": st["status"], "why": st["why"], "answer": st["answer"],
+                 "msgs": st["msgs"] if st["status"] == "ok" else None, "calls": st["calls"], "usd": round(st["usd"], 4)}
+                for s, st in zip(secs, state)]})
+
+    def ask(k, msgs, tag):
+        sec, st = secs[k], state[k]
+        t0 = time.time()
+        label = f"plan section {sec['n']}/{sec['of']}" + tag if len(secs) > 1 else "plan call" + tag
+        try:
+            ans, r = plan_call(video, apps, msgs=msgs, label=label)
+        except PlanReplyError as e:
+            with lock:
+                st["calls"] += e.calls
+                st["usd"] += e.usd
+                st["out"] += (e.usage or {}).get("output_tokens", 0)
+            events.emit("log", _usage_line(sec, {"usage": e.usage, "usd": e.usd}, time.time() - t0, tag)
+                        + f" — FAILED: {e}", level="error")
+            raise
+        with lock:
+            st["calls"] += r.get("calls", 1)
+            st["usd"] += float(r.get("usd") or 0)
+            st["out"] += (r.get("usage") or {}).get("output_tokens", 0)
+        events.emit("log", _usage_line(sec, r, time.time() - t0, tag))
+        base = r.get("retry_msgs") or msgs
+        return ans, base + [{"role": "assistant", "content": r.get("content") or [{"type": "text", "text": r.get("text")}]}]
+
+    # round 0: every section not reused from the cache
+    todo = [(k, (lambda k=k: ask(k, state[k]["msgs"], ""))) for k, st in enumerate(state) if st["status"] != "ok"]
+    if todo:
+        events.emit("log", f"plan: {len(secs)} section(s) of ~{SECTION_IDEAL_S:.0f} s — "
+                    + ", ".join(f"{s['n']}: {s['t0']:.0f}-{s['t1']:.0f} s" for s in secs)
+                    + f"; {len(todo)} call(s), {SECTION_PARALLEL} at a time")
+    res = _run_parallel(todo, warm_first=True)
+    for k, v in res.items():
+        st = state[k]
+        if isinstance(v, PlanReplyError):
+            st.update(status="failed", why=str(v))
+        elif isinstance(v, BaseException):
+            raise v
+        else:
+            st["answer"], st["msgs"], st["status"] = v[0], v[1], "ok"
+    save()
+
+    attempts, errs, info, ans = [], [], {}, EMPTY_ANSWER
     for n in range(max_reasks + 1):
-        ans, r = plan_call(video, apps, facts, msgs=msgs)
-        usd += r["usd"]
+        # each section's own answer checked against the schema first (its errors are its own)
+        per = {}
+        for k, st in enumerate(state):
+            if st["status"] == "ok":
+                for m in _schema_errors(st["answer"], schema):
+                    per.setdefault(k, []).append(_err("schema", f"section {secs[k]['n']}: {m}"))
+        answers = [st["answer"] if st["status"] == "ok" and k not in per else None for k, st in enumerate(state)]
+        merged, notes = merge_sections(secs, answers, video)
+        for k, es in notes.items():
+            per.setdefault(k, []).extend(es)
+        ans = _strip_internal(merged)
         errs, info = check_plan(ans, video, apps, facts, sites, handoff=handoff)
-        attempts.append({"answer": n + 1, "errors": errs, "usd": r["usd"]})
-        by = {}
         for e in errs:
+            if e["code"] == "structure":
+                tg = structure_targets(e, info.get("checked") or {}, secs)
+                for k, e2 in tg.items():
+                    per.setdefault(k, []).append(e2)
+                continue
+            ks = locate(e, secs, pos)
+            for k in ks:
+                per.setdefault(k, []).append(e)
+        all_errs = errs + [e for k in sorted(per) for e in per[k] if e not in errs]
+        all_errs = list({e["msg"]: e for e in all_errs}.values())
+        attempts.append({"answer": n + 1, "errors": all_errs, "usd": round(sum(st["usd"] for st in state), 4),
+                         "sections": {secs[k]["n"]: len(v) for k, v in sorted(per.items())}})
+        by = {}
+        for e in all_errs:
             by[e["code"]] = by.get(e["code"], 0) + 1
         events.emit("log", f"plan check {n + 1}/{max_reasks + 1}: " + (
-            f"{len(errs)} error(s) — " + ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda x: -x[1]))
-            + " — e.g. " + "; ".join(e["msg"][:160] for e in errs[:3]) if errs else "pass"),
-            level="warn" if errs else "info")
-        if not errs:
+            f"{len(all_errs)} error(s) — " + ", ".join(f"{c} {v}" for c, v in sorted(by.items(), key=lambda x: -x[1]))
+            + (f" — in section(s) {', '.join(str(secs[k]['n']) for k in sorted(per))}" if len(secs) > 1 and per else "")
+            + " — e.g. " + "; ".join(e["msg"][:160] for e in all_errs[:3]) if all_errs else "pass"),
+            level="warn" if all_errs else "info")
+        errs = all_errs
+        if not errs or n == max_reasks:
             break
-        if n < max_reasks:
-            msgs = msgs + [{"role": "assistant", "content": r["content"] or [{"type": "text", "text": r.text}]},
-                           {"role": "user", "content": reask_text(errs, n + 1, max_reasks + 1)}]
-    needs = list((info.get("plan") or {}).get("needs_primitive") or []) + as_needs_primitive(errs)
+        # patch re-asks: only the sections with errors, each with only its errors
+        targets = [k for k in sorted(per) if state[k]["status"] == "ok" and not state[k]["stuck"]]
+        if not targets:
+            break
+        jobs = []
+        for k in targets:
+            msgs = state[k]["msgs"] + [{"role": "user", "content": reask_text(per[k], n + 1, max_reasks + 1, secs[k])}]
+            jobs.append((k, (lambda k=k, msgs=msgs: ask(k, msgs, f" — re-ask {n + 1}"))))
+        res = _run_parallel(jobs)
+        for k, v in res.items():
+            st = state[k]
+            if isinstance(v, PlanReplyError):
+                st["stuck"] = True                       # its previous answer stands; its errors stay open
+                events.emit("log", f"plan section {secs[k]['n']}/{secs[k]['of']}: the re-ask failed ({v}) — "
+                                   "its previous answer stands", level="warn")
+            elif isinstance(v, BaseException):
+                raise v
+            else:
+                st["answer"], st["msgs"] = v
+        save()
+    # what is still open: needs_primitive / held for the sections it sits in; a failed section = one row
+    failed = [k for k, st in enumerate(state) if st["status"] == "failed"]
+    in_failed = lambda e: any(k in failed for k in locate(e, secs, pos))
+    rows = []
+    for k in failed:
+        s = secs[k]
+        events.emit("log", f"plan section {s['n']}/{s['of']} ({s['t0']:.0f}-{s['t1']:.0f} s) FAILED — no plan for "
+                           f"these words: {state[k]['why']}", level="error")
+        rows.append({"sentence": f"section {s['n']}/{s['of']} ({s['t0']:.1f}-{s['t1']:.1f} s)",
+                     "word_ids": [s["first"], s["last"]], "code": "section_failed", "proposed": None,
+                     "why": f"the plan call for section {s['n']} ({s['t0']:.0f}-{s['t1']:.0f} s) failed: {state[k]['why']}"[:600]})
+    needs = (list((info.get("plan") or {}).get("needs_primitive") or [])
+             + as_needs_primitive([e for e in errs if not in_failed(e)]) + rows)
+    usd = round(sum(st["usd"] for st in state), 4)
+    calls = sum(st["calls"] for st in state)
+    secs_s = round(time.time() - t_start)
+    events.emit("log", f"plan: {len(secs)} section(s), {calls} call(s), ${usd:.2f}, {secs_s} s"
+                + (f" — {len(failed)} section(s) failed" if failed else ""))
     return {"answer": ans, "plan": info.get("plan"), "raw": info.get("raw"), "checked": info.get("checked"),
             "attempts": attempts, "needs_primitive": needs, "held": bool(needs), "apps": sorted(apps),
-            "action_ids": action_ids(apps), "calls": len(attempts), "usd": round(usd, 4),
-            "seconds": round(time.time() - t0)}
+            "action_ids": action_ids(apps), "calls": calls, "usd": usd, "seconds": secs_s,
+            "sections": [{"n": s["n"], "t0": s["t0"], "t1": s["t1"], "first": s["first"], "last": s["last"],
+                          "status": st["status"], "calls": st["calls"], "usd": round(st["usd"], 4),
+                          "out_tokens": st["out"], **({"why": st["why"]} if st["why"] else {}),
+                          **({"cached": True} if st.get("cached") else {})} for s, st in zip(secs, state)]}
 
 
 # ════════════════════════════ the overlay plan (one Sonnet call) ════════════════════════════
@@ -959,9 +1472,23 @@ def overlay_plan(video, segments, sponsored=False, apps=()):
     """ONE Sonnet call → the raw overlay list ({template, start, end, fields, why}; a question = a TX03
     lower_title line). validate() checks the words and screencasts, planfit.overlays_fit the budget,
     motiontemplates.check the motion templates' hard limits."""
-    r = llm.messages(OVERLAY_MODEL, OVERLAY_SYSTEM, overlay_prompt(video, segments, sponsored, apps), 8000, effort="medium",
-                     schema=overlay_schema(), stage="preprod.overlays", purpose="Claude overlay plan (Sonnet)")
-    ans = _json_answer(r.text)
+    prompt = overlay_prompt(video, segments, sponsored, apps)
+    r = llm.messages(OVERLAY_MODEL, OVERLAY_SYSTEM, prompt, 8000, effort="medium",
+                     schema=overlay_schema(), stage="preprod.overlays", purpose="Claude overlay plan")
+    try:
+        ans = parse_plan_reply(r)                  # a truncated / invalid reply is never parsed
+    except ValueError as e:
+        events.emit("log", f"overlay plan: {e} — retrying once at low effort, compact", level="warn")
+        r2 = llm.messages(OVERLAY_MODEL, OVERLAY_SYSTEM, prompt + "\n\n" + COMPACT.replace("section", "overlay list"),
+                          8000, effort="low", schema=overlay_schema(), stage="preprod.overlays",
+                          purpose="Claude overlay plan (low effort, compact retry)")
+        usd = round(float(r.get("usd") or 0) + float(r2.get("usd") or 0), 6)
+        try:
+            ans = parse_plan_reply(r2)
+        except ValueError as e2:
+            raise PlanReplyError(f"overlay plan: {e}; the retry too: {e2}", usd=usd) from None
+        r2["usd"], r2["calls"], r2["seconds"] = usd, 2, (r.get("seconds") or 0) + (r2.get("seconds") or 0)
+        r = r2
     out = []
     for o in ans.get("overlays", []):
         q = o.get("template") == "question"
