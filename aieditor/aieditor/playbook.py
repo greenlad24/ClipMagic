@@ -319,6 +319,8 @@ def resolve(app, action_id, params=None):
     tgt = _target(sels[0], p) if sels else {}
     alt = [_target(s, p) for s in sels[1:]]
     extra = {k: p[k] for k in ("at",) if k in p}
+    if k_rel := (p.get("rel") if a["kind"] == "click" else None):
+        extra["rel"] = list(k_rel)              # a spot inside the element (R14 P2: a comment pin on the image)
     k = a["kind"]
     if k == "click":
         st = [{"type": "click", **tgt, **({"nth": p["nth"]} if "nth" in p else {})}]
@@ -339,7 +341,11 @@ def resolve(app, action_id, params=None):
     elif k == "scroll":
         st = [{"type": "scroll", "by": p.get("by", 0)}]
     elif k == "drag":
-        st = [{"type": "drag", "from": p.get("from"), "to": p.get("to")}]
+        if p.get("rel_from") is not None and p.get("rel_to") is not None and "selector" in tgt:
+            # element-relative (R14 P2): fractions of the selector's box, measured on the live page (agent_rec.mjs)
+            st = [{"type": "drag", "selector": tgt["selector"], "rel_from": list(p["rel_from"]), "rel_to": list(p["rel_to"])}]
+        else:
+            st = [{"type": "drag", "from": p.get("from"), "to": p.get("to")}]
     elif k == "draw":
         st = [{"type": "draw", "strokes": p.get("strokes", []), **({"box": p["box"]} if "box" in p else {})}]
     elif k == "reveal":
@@ -509,7 +515,9 @@ def _run_once(session, pb, action_id, params):
     that one action, and the start_state asserts are checked AFTER it, with its post."""
     a = pb["actions"][action_id]
     dressing = action_id in pb.get("set_dressing", [])
-    ok, why = session.open(pb["start_state"]["url"])
+    # an action proven per video may start somewhere else than the app's home (R14 P2): "start_url", filled from the
+    # params — e.g. "{chat_url}" = a chat THIS job created (never one of Jake's existing chats)
+    ok, why = session.open(_fill(a.get("start_url") or pb["start_state"]["url"], dict(params or {})))
     if not ok:
         return False, f"start: {why}"
     for c in [] if dressing else pb["start_state"].get("asserts", []):

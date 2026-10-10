@@ -964,6 +964,10 @@ async function act(a) {
   }
   if (pointer && startAt != null && rec) await holdUntil(Math.max(t(), startAt));
   if (need && !b) return { ok: false, error: `no element for ${JSON.stringify({ ref: a.ref, text: a.text, target: a.target })} — observe again and use a ref from the list` };
+  // "rel": [fx, fy] — a point INSIDE the element (fractions of its box): a comment pin on a spot of the image
+  // (Jake R14 P2: actions onboarded per video are element-relative, never absolute screen coordinates)
+  if (b && Array.isArray(a.rel) && a.rel.length === 2 && a.rel.every((v) => Number.isFinite(v)))
+    b = { ...b, at: [b.x + a.rel[0] * b.width, b.y + a.rel[1] * b.height] };
   const c = b ? (b.at || [b.x + b.width / 2, b.y + b.height / 2]) : null;
   const zoomKey = a.type === "key" && /^(shift\+[0-2]|(control|ctrl|meta|cmd)\+[-=+0])$/i.test(String(a.key || ""));
   if ((zoomKey || (a.type === "scroll" && a.zoom)) && fittedUrl && page.url() === fittedUrl)
@@ -1153,7 +1157,15 @@ async function act(a) {
       // drag from → to (SCREENSHOT px): a markup box over the label, a file onto the chat, an artboard.
       // On camera too (G3 #31): the press lands on its word, the drag runs at human pace (~0.6 s, eased)
       // a compiled beat carries drag_from/drag_to ("from" is then its clause start for the camera)
-      const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from, p1 = Array.isArray(a.drag_to) ? a.drag_to : a.to;
+      let p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from, p1 = Array.isArray(a.drag_to) ? a.drag_to : a.to;
+      if ((!Array.isArray(p0) || !Array.isArray(p1)) && a.selector && Array.isArray(a.rel_from) && Array.isArray(a.rel_to)) {
+        // element-relative drag (Jake R14 P2 per-video playbook): fractions of the first VISIBLE match's box
+        const r = await page.evaluate((sel) => { const els = [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect())
+          .filter((q) => q.width > 20 && q.height > 20 && q.bottom > 0 && q.top < innerHeight); return els[0] ? [els[0].x, els[0].y, els[0].width, els[0].height] : null; }, a.selector).catch(() => null);
+        if (!r) return { ok: false, error: `no element ${a.selector} to drag on` };
+        p0 = [(r[0] + a.rel_from[0] * r[2]) / SHOT_F, (r[1] + a.rel_from[1] * r[3]) / SHOT_F];
+        p1 = [(r[0] + a.rel_to[0] * r[2]) / SHOT_F, (r[1] + a.rel_to[1] * r[3]) / SHOT_F];
+      }
       if (!Array.isArray(p0) || !Array.isArray(p1)) return { ok: false, error: "drag needs from/to [x, y]" };
       const f = p0.map((v) => v * SHOT_F), g = p1.map((v) => v * SHOT_F);
       const e = log("drag", { from: p0, to: p1, box: toCap({ x: Math.min(f[0], g[0]), y: Math.min(f[1], g[1]), width: Math.abs(g[0] - f[0]) || 2, height: Math.abs(g[1] - f[1]) || 2 }) });
@@ -1164,7 +1176,7 @@ async function act(a) {
       for (let i = 1; i <= n; i++) { const u = i / n, ez = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
         cx = f[0] + (g[0] - f[0]) * ez; cy = f[1] + (g[1] - f[1]) * ez; await page.mouse.move(cx, cy); if (rec) await step(); else await sleep(40); }
       await page.mouse.up(); e.end = t();
-      if (rec) await hold(0.3); else await sleep(500);
+      if (rec) await hold(Math.min(a.after ?? 0.3, MAX_STILL)); else await sleep(500);
       break;
     }
     case "draw": {
