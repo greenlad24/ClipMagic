@@ -6,11 +6,11 @@
   "beats": {
    "in": 0.0,
    "type": 0.767,
-   "chip_0": 2.767,
-   "chip_1": 3.3,
-   "chip_2": 3.5,
-   "chip_3": 3.9,
-   "chip_4": 4.3,
+   "chip_0": 2.766,
+   "chip_1": 3.299,
+   "chip_2": 3.499,
+   "chip_3": 4.032,
+   "chip_4": 4.366,
    "working": 5.933,
    "out": 7.167
   },
@@ -18,8 +18,8 @@
   "chip_gaps_s": [
    0.533,
    0.2,
-   0.4,
-   0.4
+   0.533,
+   0.333
   ],
   "chip_gap_default_s": 0.4
  },
@@ -161,7 +161,8 @@
   },
   "center_on_card": {
    "k": 1.0,
-   "note": "the camera keeps the growing card centred: ty += s * dH / 2 with the card-growth easing (measured +30 px at row 1, +56 row 2, +34 row 3 (s falling), +53 working)"
+   "note": "the camera keeps the growing card centred: ty += s * dH / 2 with the card-growth easing (measured +30 px at row 1, +56 row 2, +34 row 3 (s falling), +53 working)",
+   "kit_note": "kits: the camera centres on the box's TEXT height only (a typed line wrap shifts half a line each way, as in round 2); attachments grow the box upward with the camera still (centring them added an opposite drift while the tile rose)"
   },
   "exit": {
    "anchor": "out",
@@ -217,67 +218,77 @@
  },
  "chips": {
   "flight": {
-   "dur": 0.3,
+   "dur": 0.45,
    "ease": [
-    0.55,
-    0.0,
+    0.12,
+    0.6,
     0.25,
     1.0
    ],
    "fade_in_s": 0.0,
    "from": [
     {
-     "dx": -878,
-     "dy": -27,
-     "s": 3.7,
+     "dx": -66,
+     "dy": 91,
+     "s": 2.08,
      "rx": 0,
-     "ry": 22,
-     "rz": -6
-    },
-    {
-     "dx": 702,
-     "dy": 580,
-     "s": 3.9,
-     "rx": -18,
-     "ry": -14,
-     "rz": 5
-    },
-    {
-     "dx": -621,
-     "dy": 526,
-     "s": 3.7,
-     "rx": -16,
-     "ry": 18,
-     "rz": -5
-    },
-    {
-     "dx": 162,
-     "dy": -702,
-     "s": 3.7,
-     "rx": 20,
-     "ry": -6,
-     "rz": 4
-    },
-    {
-     "dx": -837,
-     "dy": 270,
-     "s": 3.5,
-     "rx": -8,
-     "ry": 20,
+     "ry": 10,
      "rz": -4
     },
     {
-     "dx": 756,
-     "dy": -513,
-     "s": 3.7,
-     "rx": 16,
-     "ry": -16,
-     "rz": 5
+     "dx": 388,
+     "dy": 466,
+     "s": 3.1,
+     "rx": -8,
+     "ry": -8,
+     "rz": 4
+    },
+    {
+     "dx": 23,
+     "dy": 312,
+     "s": 3.3,
+     "rx": -8,
+     "ry": 6,
+     "rz": -3
+    },
+    {
+     "dx": 80,
+     "dy": -178,
+     "s": 2.35,
+     "rx": 8,
+     "ry": -4,
+     "rz": 3
+    },
+    {
+     "dx": -200,
+     "dy": -21,
+     "s": 2.6,
+     "rx": 0,
+     "ry": 10,
+     "rz": -3
+    },
+    {
+     "dx": 300,
+     "dy": -300,
+     "s": 2.6,
+     "rx": 8,
+     "ry": -6,
+     "rz": 3
     }
    ],
-   "note": "each file flies in from beside / below the card as an icon tile, large (x2.2-2.6, near the camera) and tilted, and lands in 8-9 frames (c0 f84->f92, c1 f100->f108, c2 f106->f114, c3 f118->f126, c4 f130->f138); chip beats = first visible frame",
+   "note": "round 3b (re-measured from the coloured file icons in the raw frames f82-f142): first visible frame = beat; each tile is already near the card on its first frame (c0 at left edge, c1 from bottom-right, c2 from below-left, c3 from above, c4 from the left), 1.75-2.8x its landed size, lands in ~11 frames on a strong ease-out (55% of the travel after 2 frames). Landed tile icon is 1.3x the pill icon (icon area 380 vs 217 px), it shrinks to the pill as the pill opens.",
    "ease_note": "hand-fitted to the tile path (c3 holds big at the top f118-f122 then lands f126; c1 crosses fast): ease-in-out; not a least-squares fit (tiles are motion-blurred and occluded)",
-   "perspective_px": 1000
+   "perspective_px": 1000,
+   "kit_fade_in_s": 0.1,
+   "kit_from": {
+    "dx": 0,
+    "dy": 120,
+    "s": 1.25,
+    "rx": -10,
+    "ry": 0,
+    "rz": 0
+   },
+   "kit_note": "kit composers are bottom-anchored, so an attachment's room grows the box UPWARD; the tile rises in from straight below so everything moves the same way (frame-by-frame flow check)"
   },
   "tile_px": 75,
   "grow": {
@@ -289,7 +300,7 @@
     0.8
    ],
    "max_err": 0.032,
-   "after_last_land_s": -0.13,
+   "after_last_land_s": -0.28,
    "min_spacing_s": 0.717,
    "note": "the card grows one chip row at a time: +70 px (row 1, f105-f111), +95 (row 2, f127-f137), +97 (row 3, f148-f157); a row grows when its last chip lands, rows >= 0.72 s apart"
   },
@@ -306,8 +317,45 @@
    "note": "tile -> pill with the file name wiping in left->right: c0 f118, c1 f128, c2 f142, c3 f154, c4 f166 (12 frames apart), ~14 frames each",
    "soft_edge_px": 40
   },
-  "tile_land_scale": 0.8,
-  "upload_note": "re-measured 2026-10-10 (rectified f84-f166): a tile lands where its slot will be but LOWER by the rooms not yet opened (its row + rows below), i.e. over the text, at ~0.8 of the pill height (glass square ~60 px), then rises into the slot as each row opens; the pill (fill + border + name) then wipes open to the right behind a ~40 px soft edge (~14 frames)"
+  "tile_land_scale": 1.2,
+  "upload_note": "re-measured 2026-10-10 (rectified f84-f166): a tile lands where its slot will be but LOWER by the rooms not yet opened (its row + rows below), i.e. over the text, at ~0.8 of the pill height (glass square ~60 px), then rises into the slot as each row opens; the pill (fill + border + name) then wipes open to the right behind a ~40 px soft edge (~14 frames)",
+  "park": [
+   [
+    -98,
+    -81
+   ],
+   [
+    36,
+    -32
+   ],
+   [
+    3,
+    26
+   ],
+   [
+    -23,
+    -100
+   ],
+   [
+    0,
+    -3
+   ],
+   [
+    0,
+    0
+   ]
+  ],
+  "park_note": "round 3b: where each tile lands BEFORE its row opens, relative to its final slot (plane px, measured from the raw icon tracks: c0 parks off the card's top-left edge (-100,-62 screen px at f98), c1 right of its slot, c2 over the text below its slot); it glides into the slot with its row's growth curve",
+  "park_resolve": {
+   "after_land_s": 0.13,
+   "dur": 0.35,
+   "ease": [
+    0.2,
+    0.1,
+    0.0,
+    0.8
+   ]
+  }
  },
  "working": {
   "anchor": "working",
@@ -324,7 +372,10 @@
   "label_in_s": 0.2,
   "label_at": 0.1,
   "spinner_period_s": 1.0,
-  "note": "f179-f189: card +98 px; the typed prompt moves into a right-aligned bubble (30 -> 26 px type) with an avatar, then 'Working' + a dot spinner fade in"
+  "note": "f179-f189: card +98 px; the typed prompt moves into a right-aligned bubble (30 -> 26 px type) with an avatar, then 'Working' + a dot spinner fade in",
+  "grow_delay_s": 0.067,
+  "ty_adjust_px": -16,
+  "round3_note": "send button tracked f179-f224: the card starts growing 2 frames after 'working' and its centre rises 16 px less than a centred growth"
  },
  "result": {
   "anchor": "result",
@@ -337,8 +388,18 @@
   ],
   "tilt_rx": 9,
   "composer_out_s": 0.3,
-  "panel_from_dy": 140,
-  "note": "NEW (MO05) — not in the reference: reuses the measured entrance easing + tilt language; the camera pans up / pulls back to frame the app's real result panel above the composer"
+  "panel_from_dy": 0,
+  "note": "NEW (MO05) — not in the reference: reuses the measured entrance easing + tilt language; the camera pans up / pulls back to frame the app's real result panel above the composer",
+  "pan_tilt_rx": 0,
+  "pan_note": "round 3: the panel pan (ChatGPT image result) is single-direction (no tilt bump; it made a 9.9 px reversal). tilt_rx stays for the approved Claude artifact view.; the pan is an ease-in-out over 0.8 s and the panel fades in over 0.3 s with it (the ease-out start moved 80 px in one frame and the panel popped in against it)",
+  "pan_ease": [
+   0.45,
+   0.0,
+   0.25,
+   1.0
+  ],
+  "pan_dur": 0.8,
+  "panel_fade_s": 0.3
  },
  "cursor_click": {
   "_src": "COPIED from prompt_menu.kf.json cursor.entry / cursor.send.end_offset_frac_of_button / out.hold_after_click_s (measured on motion3) so the two templates share one cursor language. Table rows: [t s relative to the click, dx px, dy px from the rest point (send centre + offset x button d), alpha]; the last row is the arrival = the click.",
@@ -505,13 +566,73 @@
   "view_in_s": 0.3,
   "user_at_s": 0.2,
   "user_in_s": 0.35,
-  "user_rise_px": 14,
+  "user_rise_px": 0,
   "working_at_s": 0.55,
   "stream_after_click_s": 1.25,
   "stream_wps": 60,
   "spark_period_s": 2.4,
   "spark_room_css": 40,
   "scroll_smooth_s": 0.5,
-  "note": "round 3 (Claude look, kit.conversation recipe): on the click the composer docks at the bottom (measured result ease), the user bubble rises in top-right, the kit's working state (spark + 'Thinking' sweep) shows, then the REAL reply streams (60 words/s — not measurable: clip 6 holds a paused frame; verify) with the clip-6 tail; the column scrolls to keep the stream above the dock (smoothed). Timings are design choices, not measurements."
+  "note": "round 3 (Claude look, kit.conversation recipe): on the click the composer docks at the bottom (measured result ease), the user bubble rises in top-right, the kit's working state (spark + 'Thinking' sweep) shows, then the REAL reply streams (60 words/s — not measurable: clip 6 holds a paused frame; verify) with the clip-6 tail; the column scrolls to keep the stream above the dock (smoothed). Timings are design choices, not measurements.",
+  "scroll_after_dock_s": 0.2,
+  "move_after_click_s": 0.1,
+  "round3c_note": "round 3c (smoothness): the composer docks 0.1 s after the click (the cursor's glide still moved up ~10 px/frame on the click frame while the card shot down), the cursor rides with the send button through the dock and fades, and the column scroll waits for the dock to settle (scroll_after_dock_s 0.2)"
+ },
+ "smoothness_note": "round 3c (frame-by-frame flow check): opposite motions were removed — the user bubble no longer rises while the card docks downward, the ChatGPT result panel no longer slides up against the camera's pan, and kit attachment tiles fade in over 0.1 s instead of popping (the neutral reference look keeps the measured hard appearance)",
+ "looks": {
+  "claude": {
+   "_note": "round 4 motion for the Claude look (design choices, not measurements; the reference motion4 is a neutral card)",
+   "attach_first": true,
+   "attach_first_note": "real flow: the files are attached first (tiles above the text area), then the prompt is typed. Default when no chip_i beats are given; the attaching starts on the 'type' beat and typing follows. When chip_i beats are given and fall after typing starts (narration attaches after typing), the box grows upward with the tiles, never over the text.",
+   "attach_stagger_s": 0.12,
+   "type_after_attach_s": 0.25,
+   "row_grow": {
+    "dur": 0.5,
+    "ease": [
+     0.4,
+     0.0,
+     0.2,
+     1.0
+    ]
+   },
+   "tile_pop": {
+    "dur": 0.32,
+    "from_scale": 0.7,
+    "ease": [
+     0.2,
+     0.8,
+     0.5,
+     1.0
+    ],
+    "fade_s": 0.14,
+    "note": "scale from the tile's top centre, clamped to the room opened so far (tile bottom <= room bottom at every frame)"
+   },
+   "line_grow": {
+    "dur": 0.2,
+    "ease": [
+     0.4,
+     0.0,
+     0.2,
+     1.0
+    ],
+    "note": "a new prompt line opens over 0.2 s (clipped reveal) instead of snapping, so the camera's re-centring never jumps"
+   },
+   "push": {
+    "s_to": 1.0,
+    "ty_add": 0.0,
+    "note": "no push-in: at the readable scale the group fills ~80 % of the frame height"
+   },
+   "press": {
+    "down_s": 0.06,
+    "hold_s": 0.1,
+    "up_s": 0.22
+   },
+   "end_note": "no result: the clip ends on the click (no dock, no greeting slide): default click = duration - cursor_click.hold_after_click_s when no click beat is given",
+   "attach_after_in_s": 0.9,
+   "attach_after_in_note": "the attaching waits for the whip entrance to settle (its ty settle went up while the first row pushed the composer's bottom down: a 3.7 px reversal at f17)",
+   "entrance_no_overshoot": true,
+   "entrance_note": "the measured whip tracks (s, ty, rz) overshoot their rest value; on the 2.45x card (radius from the camera origin ~2x) that overshoot read as 5-8 px frame-to-frame reversals (KLT). The Claude look clamps each track's ease control points to [0,1] (same start values + durations, no overshoot). The whip's start scale is divided by card_w/1034 so it starts at the same apparent size as the reference card (s0 3.25 -> 2.34 on the 1440 px card).",
+   "entrance_same_apparent_size": true
+  }
  }
 }

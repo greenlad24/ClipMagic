@@ -89,12 +89,26 @@
     }
     if (!caretHtml) caretHtml = '<span class="pc-caret"></span>';
     const chipIcon = (kind) => (N.chip.icons[kind] || N.chip.icons.other);
+    // round 4: a per-app look (style.looks[app] + kf.looks[app]) — not for the MO05 artifact view (Jake likes it as is)
+    const P0 = scene.params || {};
+    const artView = !!(P0.result && P0.result.kind === "artifact");
+    const look = kit && kit.chip && S.looks && S.looks[app] && !artView
+      ? Object.assign({}, S.looks[app], { motion: (scene.kf.looks && scene.kf.looks[app]) || {} }) : null;
+    if (look) {
+      const lw = num(look.composer_w_css, num(KC.width, S.card.w));
+      TR.addCss(`.${cls} .cl-composer{width:${lw}px !important}\n.${cls} .cl-input.pc-look-in{display:flex !important;flex-direction:column !important;flex-wrap:nowrap !important;gap:0 !important;padding-top:12.75px !important}` +
+        `\n.${cls} .cl-input.pc-look-in .cl-prompt{order:0 !important;margin-top:0 !important;width:auto !important;overflow:hidden}` +
+        `\n.${cls} .pc-attrow{order:-1;display:flex;flex-wrap:wrap;gap:${num(look.att_gap_css, 8)}px;overflow:visible;flex:none}` +
+        `\n.${cls} .pc-att{display:block;flex:none;line-height:0}\n.${cls} .pc-att .clk-chip{display:block}\n.${cls} .pc-ph{display:block;width:100%;height:100%}`);
+    }
     // kits: an image chip shows its REAL thumbnail when params give one (data URI), else the kit's file tile
-    const chipKind = (c) => (kit && kit.chip ? (c.thumb ? "image" : "file") : c.kind);
+    // (round 4 look: an image chip with no picture shows a neutral placeholder photo, never a blank file card)
+    const chipKind = (c) => (kit && kit.chip ? (c.thumb || (look && look.image_placeholder && c.kind === "image") ? "image" : "file") : c.kind);
     const page = kit ? (kit.bg || tokens[Object.keys(tokens).find((k) => /-page$/.test(k))] || null) : null;
     return {
-      kit, cls, KC, dark, tokenCss, page,
-      W: num(KC.width, S.card.w),
+      kit, cls, KC, dark, tokenCss, page, look,
+      W: look ? num(look.composer_w_css, num(KC.width, S.card.w)) : num(KC.width, S.card.w),
+      cardW: look ? num(look.card_w, S.card.w) : S.card.w,
       model: (KC.model || (kit && kit.model_label) || (kit ? "" : N.model)),
       placeholder: KC.placeholder || "",
       caretHtml,
@@ -102,7 +116,8 @@
         const ch = (kit && kit.chip) || N.chip;
         const ext = (String(c.name).match(/\.([a-z0-9]{1,5})$/i) || [, ""])[1];
         return TR.fill(ch.html, { name: c.name, kind: chipKind(c), icon_html: chipIcon(c.kind), ext, meta: "",
-          thumb_html: c.thumb ? `<img src="${String(c.thumb).replace(/"/g, "&quot;")}" alt="">` : "" });
+          thumb_html: c.thumb ? `<img src="${String(c.thumb).replace(/"/g, "&quot;")}" alt="">`
+            : (look && look.image_placeholder && c.kind === "image" ? `<span class="pc-ph">${look.placeholder_svg || ""}</span>` : "") });
       },
       workingHtml(text) {
         if (working) return TR.fill(working.html, { text });
@@ -153,11 +168,12 @@
     // Claude (kits with a conversation recipe): after the click the composer docks at the bottom, the user bubble
     // appears top-right and the REAL reply streams in under it (round 3). The artifact view stays as approved.
     const convMode = !!(A.kit && A.kit.conversation && A.kit.message && A.kit.result && A.kit.result.user &&
-      (!p.result || p.result.kind === "text") && (p.end_on_click != null ? p.end_on_click : A.kit.app === "claude"));
+      (!p.result || p.result.kind === "text") && (p.end_on_click != null ? p.end_on_click : A.kit.app === "claude") &&
+      !(A.look && !p.result)); // round 4: with no result the Claude look ENDS on the click (no dock into the greeting)
     const msgMode = !convMode && !!(p.result && A.kit && A.kit.message && /^(text|artifact)$/.test(p.result.kind));
     if (p.result && !msgMode && (A.kit ? !(A.kit.result && A.kit.result[p.result.kind]) : p.result.kind === "artifact")) p.result = null;
     const endOnClick = p.end_on_click != null ? p.end_on_click : !!(A.kit && A.kit.app === "claude");
-    const k = S.card.w / A.W; // kit natural px → plane px
+    const k = A.cardW / A.W; // kit natural px → plane px (round 4: the Claude look has its own, readable, card width)
     // ── backdrop (screen space; the reference's plate does not move)
     if (p.backdrop) {
       if (A.kit) {
@@ -171,13 +187,15 @@
     const stage = TR.el("div", `position:absolute;left:0;top:0;width:1920px;height:1080px;perspective:${C.perspective_px}px;perspective-origin:960px 540px`, exitWrap);
     const plane = TR.el("div", `position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:${C.origin[0]}px ${C.origin[1]}px`, stage);
 
-    const cardW = S.card.w, cardLeft = C.origin[0] - cardW / 2;
+    const cardW = A.cardW, cardLeft = C.origin[0] - cardW / 2;
     const prompt = p.prompt;
     const placeholder = p.placeholder != null ? p.placeholder : A.placeholder;
     const label = A.workingText(p);
     const kitChips = !!(A.kit && A.kit.chip);           // the kit draws its own attachments inside its composer
     const neutralChips = !kitChips;                      // else: the reference's own chip grid (above the text)
-    const chipsHtml = p.chips.map((c, i) => `<span data-pc-chip="${i}" style="display:contents">${A.chipHtml(c)}</span>`).join("");
+    const chipsHtml = A.look
+      ? (p.chips.length ? `<div class="pc-attrow">${p.chips.map((c, i) => `<span data-pc-chip="${i}" class="pc-att">${A.chipHtml(c)}</span>`).join("")}</div>` : "")
+      : p.chips.map((c, i) => `<span data-pc-chip="${i}" style="display:contents">${A.chipHtml(c)}</span>`).join("");
     const extraGrid = A.kit && !kitChips && p.chips.length
       ? `<div class="nb-chips pc-xchips" style="zoom:${1 / k};padding:25px 36px 0 44px;margin:0;display:grid;grid-template-columns:408px 408px;column-gap:21px;row-gap:18px">${chipsHtml}</div>` : "";
     const vals = (over) => Object.assign({ prompt: "", placeholder, chips_html: A.kit ? (kitChips ? chipsHtml : "") : chipsHtml, caret_html: "", state_html: "",
@@ -186,6 +204,9 @@
     // card background (shadow + fill + rim); kits: the composer's own fill/radius moved here
     const bg = TR.el("div", "position:absolute;box-sizing:border-box", plane);
     const rim = A.kit ? null : TR.el("div", "position:absolute;inset:0;box-sizing:border-box;pointer-events:none", bg);
+    const late = A.kit || !S.card.fill_late ? null : TR.el("div", `position:absolute;inset:0;border-radius:${S.card.radius}px;background:${S.card.fill_late};opacity:0;pointer-events:none`, bg);
+    const entGlow = A.kit || !S.card.fill_entrance ? null : TR.el("div", `position:absolute;inset:0;border-radius:${S.card.radius}px;background:${S.card.fill_entrance};opacity:0;pointer-events:none`, bg);
+    const pushGlow = A.kit || !S.card.fill_push ? null : TR.el("div", `position:absolute;inset:0;border-radius:${S.card.radius}px;background:${S.card.fill_push};opacity:0;pointer-events:none`, bg);
 
     function instance(v, extra) {
       const wrap = TR.el("div", `position:absolute;left:${cardLeft}px;top:0;width:${cardW}px`, plane);
@@ -196,6 +217,7 @@
       return { wrap, inner, rootEl, comp: rootEl.lastElementChild };
     }
     const IT = instance(vals({ prompt: prompt }), extraGrid);
+    if (A.look) { const ci = IT.inner.querySelector(".cl-input"); if (ci) ci.classList.add("pc-look-in"); }
     // neutral: the sent prompt becomes a bubble INSIDE the card (the reference); kits: a thread ABOVE the composer
     // (the app's own layout after send), the composer empties
     const IW = A.kit ? null : instance(vals({ prompt: "", placeholder: "", state_html: A.stateHtml(prompt, label) }));
@@ -345,7 +367,7 @@
     const rowOf = []; rows.forEach((r, ri) => r.items.forEach((i) => (rowOf[i] = ri)));
     const after = []; let seen = 0;
     rows.forEach((r) => { seen += r.items.length; r.items.forEach((i) => (after[i] = seen)); });
-    const st = { textDrop, textBox, rowOf, root, chipH: chipEls.map((e, i) => (e && e.offsetHeight) || slots[i].h), chipK: extraGrid ? 1 : k, chipWraps, thread, neutralChips, greetEl, after, p, A, k, plane, exitWrap, bg, IT, IW, promptEl, caretEl, phChars, mic, arrow, chipEls, chipNames, slots, rows, Hk, Hall, Hwork,
+    const st = { late, pushGlow, entGlow, textDrop, textBox, rowOf, root, chipH: chipEls.map((e, i) => (e && e.offsetHeight) || slots[i].h), chipK: extraGrid ? 1 : k, chipWraps, thread, neutralChips, greetEl, after, p, A, k, plane, exitWrap, bg, IT, IW, promptEl, caretEl, phChars, mic, arrow, chipEls, chipNames, slots, rows, Hk, Hall, Hwork,
       H0, cardBottom, cardLeft, cardW, bubbleEl, wkEl, spinEl, sweepEl, resWrap, resH, endOnClick, msgMode };
     // the cursor that clicks send (end_on_click) — prompt_menu's sprite + measured glide (kf.cursor)
     if (endOnClick) {
@@ -357,7 +379,10 @@
     if (msgMode) buildMessage(root, scene, st);
     st.conv = convMode;
     if (convMode) { if (thread) thread.style.display = "none"; buildConv(root, scene, st); }
+    st.look = A.look;
+    if (A.look) buildLook(scene, st);
     st.tl = timeline(scene, st);
+    if (A.look) lookLines(scene, st);
     if (resWrap) resWrap.style.top = st.tl.resTop + "px";
     return st;
   }
@@ -371,6 +396,18 @@
     T.in = has("in") ? b("in") : 0;
     T.type = has("type") ? b("type") : T.in + (R.beats.type - R.beats.in);
     const N = [...p.prompt].length;
+    // round 4 (Claude look): the files are attached FIRST (from the 'type' beat), then the prompt is typed — unless
+    // the narration's chip_i beats put them after typing starts (then the box grows upward with them)
+    const LM = st.look ? st.look.motion : null;
+    let preChip = null;
+    if (LM && p.chips.length) {
+      const given = p.chips.some((_, i) => has(`chip_${i}`));
+      if (!given && LM.attach_first) {
+        T.attach = Math.max(T.type, T.in + (LM.attach_after_in_s || 0));
+        preChip = p.chips.map((_, i) => T.attach + i * LM.attach_stagger_s);
+        T.type = preChip[preChip.length - 1] + Math.max(LM.tile_pop.dur, LM.row_grow.dur) + LM.type_after_attach_s;
+      }
+    }
     const Y = K.typing;
     T.out = has("out") ? b("out") : (scene.duration || R.duration) - K.camera.exit.dur;
     let rate = Y.rate_cps;
@@ -380,6 +417,8 @@
     if (st.endOnClick) {
       // the clip ends on the cursor's click on send (Jake 2026-10-10, Claude look): the click takes the 'working' slot
       T.work0 = has("click") ? b("click") : has("send") ? b("send") : has("working") ? b("working") : null;
+      // round 4 (Claude look, no result): no click beat → the click lands hold_after_click_s before the clip ends
+      if (T.work0 == null && st.look && !p.result && scene.duration) T.work0 = Math.max(T.type + 0.6, scene.duration - K.cursor_click.hold_after_click_s);
     }
     if (T.work0 != null) {
       const avail = T.work0 - Y.finish_before_working_s - T.type;
@@ -392,7 +431,9 @@
     const nC = p.chips.length, F = K.chips;
     T.chip = [];
     for (let i = 0; i < nC; i++) {
-      if (has(`chip_${i}`)) T.chip.push(b(`chip_${i}`));
+      if (preChip) T.chip.push(preChip[i]);
+      else if (has(`chip_${i}`)) T.chip.push(b(`chip_${i}`));
+      else if (LM && i > 0) T.chip.push(T.chip[i - 1] + LM.attach_stagger_s);
       else if (i === 0) T.chip.push(T.typeEnd + (R.beats.chip_0 - R.typing_end));
       else T.chip.push(T.chip[i - 1] + (R.chip_gaps_s[i - 1] != null ? R.chip_gaps_s[i - 1] : R.chip_gap_default_s));
     }
@@ -462,10 +503,22 @@
     Hn = st.Hk[0];
     for (const g of T.grow) { const q = TR.prog(t, g.start, K.chips.grow.dur, K.chips.grow.ease); if (t >= g.start) Hn = lerp(g.from, g.to, q); }
     const W = K.working;
-    const gw = TR.prog(t, T.work, W.grow_dur, W.grow_ease);
+    const gw = TR.prog(t, T.work + (st.thread || st.conv ? 0 : W.grow_delay_s || 0), W.grow_dur, W.grow_ease);
     const dWork = (st.Hwork - st.Hall) * k; // the shift of everything above the state (chips) when sent
     let Hcur = Hn * k + (st.Hwork * k - st.Hk[st.Hk.length - 1] * k) * gw;
-    if (st.thread) {
+    let HgreetK = null; // round 4 look: the box height the greeting sits on (frozen at the click)
+    if (st.look) {
+      // round 4 (Claude look): attachments open their row ABOVE the text (analytic heights, no tile ever over the text),
+      // new prompt lines open over line_grow.dur; the card stays bottom-anchored
+      if (st.HclickK == null) st.HclickK = lookLayout(st, Math.min(T.work, 1e8), scene) * k;
+      const Hnat = lookLayout(st, t, scene);
+      st.IT.wrap.style.top = st.cardBottom - Hnat * k + "px";
+      // (conv: the box holds its click height until its text + tiles have faded, THEN empties — round 3c shrank it
+      // under the still-visible tiles, which stuck out above the card while it docked)
+      const gwL = st.conv ? TR.prog(t, T.work + W.text_out_s, W.grow_dur, W.grow_ease) : gw;
+      Hcur = t < T.work ? Hnat * k : lerp(st.HclickK, st.Hwork * k, gwL);
+      HgreetK = t < T.work ? Hcur : st.HclickK;
+    } else if (st.thread) {
       // kits: the app's composer reflows as you type and as files attach (it is a real UI); keep it bottom-anchored
       // at its live natural height, and ease the box over each attachment row with the measured growth curve
       const sent = t >= T.work + W.text_out_s;
@@ -474,12 +527,15 @@
       if (st.promptEl) st.promptEl.textContent = sent ? "" : [...p.prompt].slice(0, t < T.type ? 0 : Math.round(N0 * TR.ease(K.typing.ease)(tq))).join("");
       // each attachment opens its own room: the wrapper's height eases 0 → natural with its row's growth curve,
       // so the app's layout (text, tools) reflows smoothly; the chip itself flies in over it (overflow visible)
+      st.chipWraps.forEach((w) => { if (w) w.style.display = "none"; });
+      const xg0 = st.IT.inner.querySelector(".pc-xchips"); if (xg0) xg0.style.display = "none";
+      st.HtextK = st.IT.rootEl.offsetHeight * k; // the box with the typed text only (camera centres on this; attachments grow upward)
       st.chipWraps.forEach((w, i) => {
         if (!w) return;
         if (sent || t < T.chip[i]) { w.style.display = "none"; return; }
         const g = T.grow.find((gg) => st.rows[gg.row].items.includes(i));
         const qg = g ? TR.prog(t, g.start, K.chips.grow.dur, K.chips.grow.ease) : 1;
-        w.style.cssText = `display:inline-block;vertical-align:top;overflow:visible;height:${st.chipH[i] * qg}px`;
+        w.style.cssText = `display:inline-block;vertical-align:top;overflow:visible;height:${Math.round(st.chipH[i] * qg)}px`; // whole px: offsetHeight is an integer, so a fractional room made the bottom-anchored text bob ±1 px
       });
       const xg = st.IT.inner.querySelector(".pc-xchips");
       if (xg) xg.style.display = !sent && T.chip.some((c) => t >= c) ? "" : "none";
@@ -492,6 +548,19 @@
     st.bg.style.top = st.cardBottom - Hcur + "px";
     st.bg.style.height = Hcur + "px";
     const Hbox = Hcur; // the composer box itself
+    // per-phase glass track: the lower-left glow comes in with the push and holds (round 3b); round 3c adds a
+    // left-edge glow that is only there while the chips arrive (in with the push, out shortly after the pull starts)
+    if (st.late) st.late.style.opacity = String(TR.prog(t, T.push, K.camera.push.dur, K.camera.push.ease));
+    if (st.entGlow) {
+      // the glass reads brighter while the card whips in (rectified ours-ref: -6..-16 levels f10-f13, ~0 by f22)
+      const GE = S.card.fill_entrance_track;
+      st.entGlow.style.opacity = String(p.entrance === "cut" ? 0 : 1 - TR.prog(t, T.in + GE.hold_s, GE.out_dur_s, GE.ease));
+    }
+    if (st.pushGlow) {
+      const GT = S.card.fill_push_track;
+      const gin = TR.prog(t, T.push, GT.in_dur_s, GT.ease), gout = TR.prog(t, T.pull + GT.out_after_pull_s, GT.out_dur_s, GT.ease);
+      st.pushGlow.style.opacity = String(gin * (1 - gout));
+    }
     if (st.thread && !st.conv) {
       // kits: the thread (bubble + working) sits above the emptied composer; the camera centres the whole group
       st.thread.style.top = (st.cardBottom - Hcur - st.thread._gap - st.thread._h) + "px";
@@ -503,7 +572,7 @@
 
     if (st.greetEl) {
       const gh = st.greetEl.offsetHeight;
-      st.greetEl.style.top = (st.cardBottom - Hcur - Number(st.greetEl.dataset.gap) * k - gh) + "px";
+      st.greetEl.style.top = (st.cardBottom - (HgreetK != null ? HgreetK : Hcur) - Number(st.greetEl.dataset.gap) * k - gh) + "px";
       st.greetEl.style.transform = `scale(${k})`;
       st.greetEl.style.opacity = String((1 - clamp((t - T.work) / 0.2, 0, 1)) * (T.result != null && st.msgMode ? 1 - clamp((t - T.result) / K.message.card_out_s, 0, 1) : 1));
     }
@@ -550,12 +619,27 @@
     }
     // ── chips
     const Fl = K.chips.flight, Ex = K.chips.expand;
-    st.chipEls.forEach((e, i) => {
+    if (st.look) {
+      // round 4: each tile pops in its own slot from its top centre, its scale clamped to the room opened so far
+      const TP = st.look.motion.tile_pop, sentL = st.conv && t >= T.work + W.text_out_s;
+      st.chipEls.forEach((e, i) => {
+        if (!e) return;
+        if (t < T.chip[i] || sentL) { e.style.visibility = "hidden"; return; }
+        const r = st.lookRows[st.rowOf[i]];
+        const frac = clamp((st.lookRoom - r.top) / r.h, 0, 1);
+        const sc = Math.min(lerp(TP.from_scale, 1, TR.prog(t, T.chip[i], TP.dur, TP.ease)), frac);
+        e.style.visibility = sc > 0.01 ? "visible" : "hidden";
+        e.style.transformOrigin = "50% 0";
+        e.style.transform = sc < 1 ? `scale(${sc})` : "";
+        e.style.opacity = String(clamp((t - T.chip[i]) / TP.fade_s, 0, 1) * (st.conv && t >= T.work ? textOut : 1));
+      });
+    }
+    if (!st.look) st.chipEls.forEach((e, i) => {
       if (!e) return;
       const t0 = T.chip[i];
       if (t < t0) { e.style.visibility = "hidden"; return; }
       e.style.visibility = "visible";
-      const f = Fl.from[i % Fl.from.length];
+      const f = st.A.kit && Fl.kit_from ? Fl.kit_from : Fl.from[i % Fl.from.length];
       const q = TR.prog(t, t0, Fl.dur, Fl.ease), u = 1 - q;
       const tile = K.chips.tile_px;
       const sl = st.slots[i];
@@ -564,14 +648,24 @@
       // be, but lower by the rooms that have not opened yet (its own row and every row below it) — so it first lies
       // over the text/footer, then rises into its slot as the card grows row by row
       let pend = 0;
-      if (!st.thread) for (const g of T.grow) if (g.row >= st.rowOf[i]) pend += (g.to - g.from) * k * (1 - (t < g.start ? 0 : TR.prog(t, g.start, K.chips.grow.dur, K.chips.grow.ease)));
+      let parkX = 0, parkY = 0;
+      if (!st.thread) {
+        for (const g of T.grow) {
+          const qg = t < g.start ? 0 : TR.prog(t, g.start, K.chips.grow.dur, K.chips.grow.ease);
+          if (g.row >= st.rowOf[i]) pend += (g.to - g.from) * k * (1 - qg);
+        }
+        // the tile first parks off its slot (measured per chip), then glides in on its own clock
+        const pk = (K.chips.park && K.chips.park[i]) || [0, 0], PR = K.chips.park_resolve || { after_land_s: 0, dur: 0.3, ease: null };
+        const qp = TR.prog(t, T.land[i] + PR.after_land_s, PR.dur, PR.ease);
+        parkX = pk[0] * (1 - qp); parkY = pk[1] * (1 - qp);
+      }
       // + the working growth: when sent, everything above the state rides up with the card top (neutral card)
-      const ride = pend / k - (st.thread ? 0 : (st.Hwork - st.Hall) * gw);
+      const ride = (pend + parkY) / k - (st.thread ? 0 : (st.Hwork - st.Hall) * gw);
       const pe0 = st.neutralChips ? TR.prog(t, T.expand[i], Ex.dur, Ex.ease) : 1;
       const land = st.neutralChips ? K.chips.tile_land_scale : 1;
       const sc = lerp(f.s, land, q) * lerp(1, 1 / land, pe0);
-      e.style.transform = `translateY(${ride}px) perspective(${Fl.perspective_px || C.perspective_px}px) translate3d(${(f.dx * u) / st.chipK}px,${(f.dy * u) / st.chipK}px,0) rotateX(${f.rx * u}deg) rotateY(${f.ry * u}deg) rotateZ(${f.rz * u}deg) scale(${sc})`;
-      e.style.opacity = Fl.fade_in_s > 0 ? String(clamp((t - t0) / Fl.fade_in_s, 0, 1)) : "1";
+      e.style.transform = `translate(${parkX / k}px,${ride}px) perspective(${Fl.perspective_px || C.perspective_px}px) translate3d(${(f.dx * u) / st.chipK}px,${(f.dy * u) / st.chipK}px,0) rotateX(${f.rx * u}deg) rotateY(${f.ry * u}deg) rotateZ(${f.rz * u}deg) scale(${sc})`;
+      { const fi = st.A.kit ? (Fl.kit_fade_in_s || 0) : Fl.fade_in_s; e.style.opacity = fi > 0 ? String(clamp((t - t0) / fi, 0, 1)) : "1"; }
       if (st.thread && t >= T.work) e.style.opacity = String(textOut); // kits: attachments go with the message
       if (st.neutralChips) {
         const pe = TR.prog(t, T.expand[i], Ex.dur, Ex.ease);
@@ -593,30 +687,58 @@
     const en = C.entrance, cut = p.entrance === "cut";
     const qe = cut ? 1 : TR.prog(t, T.in + en.at, en.dur, en.ease), ue = 1 - qe;
     // per-parameter entrance tracks (round 3: fitted on the tracked pose; the settle tail is long)
+    const noOver = !!(st.look && st.look.motion.entrance_no_overshoot); // round 4: Claude look, no overshoot (ease y in [0,1])
     const etr = (key) => {
       const tr = en.tracks && en.tracks[key];
       if (cut) return rest[key];
       if (!tr) return lerp(en.from[key], rest[key], qe);
-      return lerp(tr.from, rest[key], TR.prog(t, T.in + tr.at, tr.dur, tr.ease));
+      const e = noOver && tr.ease ? tr.ease.map((v, j) => (j % 2 ? clamp(v, 0, 1) : v)) : tr.ease;
+      // round 4: the bigger Claude card starts the whip at the reference card's apparent size
+      const from = key === "s" && st.look && st.look.motion.entrance_same_apparent_size ? Math.max(1, tr.from * scene.style.card.w / st.cardW) : tr.from;
+      return lerp(from, rest[key], TR.prog(t, T.in + tr.at, tr.dur, e));
     };
     let s = etr("s"), tx = etr("tx"), ty = etr("ty"), rx = etr("rx"), ry = etr("ry"), rz = etr("rz");
     const pushQ = TR.prog(t, T.push, C.push.dur, C.push.ease);
-    let sPush = lerp(1, C.push.s_to, pushQ);
-    const sAtPull = lerp(1, C.push.s_to, TR.prog(T.pull, T.push, C.push.dur, C.push.ease));
+    const LP = st.look && st.look.motion.push ? st.look.motion.push : null; // round 4: the Claude look has no push-in
+    const pushTo = LP ? LP.s_to : C.push.s_to;
+    let sPush = lerp(1, pushTo, pushQ);
+    const sAtPull = lerp(1, pushTo, TR.prog(T.pull, T.push, C.push.dur, C.push.ease));
     if (t >= T.pull) sPush = lerp(sAtPull, C.pull.s_to, TR.prog(t, T.pull, T.pullDur, C.pull.ease));
     s *= sPush;
     // the push also drops the card slightly (tracked), returned by the pull
     {
       const pushAt = TR.prog(Math.min(t, T.pull), T.push, C.push.dur, C.push.ease);
       const back = t >= T.pull ? TR.prog(t, T.pull, T.pullDur, C.pull.ease) : 0;
-      ty += (C.push.ty_add || 0) * pushAt * (1 - back);
+      ty += ((LP ? LP.ty_add : C.push.ty_add) || 0) * pushAt * (1 - back);
     }
     // keep the growing card centred
-    ty += s * (Hcur - st.H0) / 2 * C.center_on_card.k;
+    // kits with a thread (ChatGPT): at the send the basis moves from the typed box to the whole group (box + thread)
+    // along the working growth, starting from the full typed box — a hard switch jumped 60 px and bounced back (round 3c)
+    let basis = Hcur;
+    if (st.look) {
+      // round 4: centre the whole group (greeting + composer incl. its attachments); frozen from the click on
+      basis = HgreetK + (st.greetEl ? (Number(st.greetEl.dataset.gap) + st.greetEl.offsetHeight) * k : 0);
+    } else if (st.A.kit && st.HtextK != null) {
+      if (st.conv || t < T.work) basis = st.HtextK;
+      else {
+        if (st.HtextFull == null && st.promptEl) {
+          const keep = st.promptEl.textContent, hid = [...st.chipWraps, st.IT.inner.querySelector(".pc-xchips")].filter(Boolean).map((e) => [e, e.style.display]);
+          hid.forEach(([e]) => (e.style.display = "none")); st.promptEl.textContent = p.prompt;
+          st.HtextFull = st.IT.rootEl.offsetHeight * st.k;
+          st.promptEl.textContent = keep; hid.forEach(([e, d]) => (e.style.display = d));
+        }
+        const W2 = K.working, gw2 = TR.prog(t, T.work, W2.grow_dur, W2.grow_ease);
+        // Hcur is linear in the growth progress: aim straight at its end value so the box moves one way only
+        const Hend = st.thread && !st.conv ? st.Hwork * st.k + st.thread._gap + st.thread._h : Hcur;
+        basis = lerp(st.HtextFull != null ? st.HtextFull : st.HtextK, Hend, gw2);
+      }
+    }
+    ty += s * (basis - st.H0) / 2 * C.center_on_card.k;
+    if (!st.A.kit) ty += (K.working.ty_adjust_px || 0) * TR.prog(t, T.work + (K.working.grow_delay_s || 0), K.working.grow_dur, K.working.grow_ease);
     // MO05 result: pan up / pull back to the result panel, tilt bump
     if (st.conv) {
       // card → docked composer (screen space), tilt flattens; the conversation view comes in behind it
-      const CV = K.conversation, qm = TR.prog(t, T.click, CV.move_dur_s, CV.move_ease);
+      const CV = K.conversation, qm = TR.prog(t, T.click + (CV.move_after_click_s || 0), CV.move_dur_s, CV.move_ease);
       if (t >= T.click && !st.clickRect && !st._inner) { st._inner = true; seek(st, T.click, scene); st.clickRect = st.bg.getBoundingClientRect(); st._inner = false; }
       if (t >= T.click && st.clickRect) {
         rx *= 1 - qm; ry *= 1 - qm; rz *= 1 - qm;
@@ -631,14 +753,14 @@
       st.plane.style.opacity = String(1 - clamp((t - T.result) / M.card_out_s, 0, 1));
       seekMessage(st, t, scene, qr);
     } else if (T.result != null) {
-      const Rk = K.result, qr = TR.prog(t, T.result, Rk.dur, Rk.ease);
+      const Rk = K.result, qr = TR.prog(t, T.result, Rk.pan_dur || Rk.dur, Rk.pan_ease || Rk.ease);
       const sNow = s, sRes = Math.min(sNow, T.resS * rest.s);
       s = lerp(sNow, sRes, qr);
       const cardCy = st.cardBottom - Hcur / 2;
       ty = lerp(ty, (540 - C.origin[1]) + s * (C.origin[1] - T.resCy), qr);
-      rx += Rk.tilt_rx * Math.sin(Math.PI * qr);
+      rx += (Rk.pan_tilt_rx != null ? Rk.pan_tilt_rx : Rk.tilt_rx) * Math.sin(Math.PI * qr);
       if (st.resWrap) {
-        st.resWrap.style.opacity = String(clamp(qr * 1.6, 0, 1));
+        st.resWrap.style.opacity = String(clamp((t - T.result) / (Rk.panel_fade_s || 0.3), 0, 1));
         st.resWrap.style.transform = `translateY(${Rk.panel_from_dy * (1 - qr)}px)`;
       }
       void cardCy;
@@ -661,9 +783,91 @@
       st.exitWrap.style.transformOrigin = `${bx}px ${by}px`;
       st.exitWrap.style.transform = `translate(${(D.x + D.w / 2 - bx) * qm}px,${(D.y + D.h - by) * qm}px) scale(${sc})`;
       st.exitWrap.style.filter = "";
-      st.exitWrap.style.opacity = String(1 - clamp((t - T.click - K.conversation.move_dur_s + K.conversation.card_fade_s) / K.conversation.card_fade_s, 0, 1));
+      st.exitWrap.style.opacity = String(1 - clamp((t - T.click - (K.conversation.move_after_click_s || 0) - K.conversation.move_dur_s + K.conversation.card_fade_s) / K.conversation.card_fade_s, 0, 1));
     }
+    if (st.look && st.sendEl) { st.sendEl.style.transform = ""; st.sendEl.style.filter = ""; } // the cursor aims at the unpressed button
     if (st.cur) seekCursor(st, t, scene, s);
+    if (st.look && st.sendEl && st.endOnClick && T.click != null) {
+      // round 4: the send button's pressed state on the click (then released; the clip holds or docks)
+      const PM = st.look.motion.press, PS = st.look.press;
+      const a = TR.prog(t, T.click, PM.down_s, [0.2, 0.8, 0.5, 1.0]) * (1 - TR.prog(t, T.click + PM.down_s + PM.hold_s, PM.up_s, [0.4, 0.0, 0.2, 1.0]));
+      st.sendEl.style.transform = a > 0 ? `scale(${lerp(1, PS.scale, a)})` : "";
+      st.sendEl.style.filter = a > 0 ? `brightness(${lerp(1, PS.brightness, a)})` : "";
+    }
+  }
+
+  // ───────────────────────── round 4: the Claude look's composer layout ─────────────────────────
+  function nCharsAt(scene, st, t) {
+    const T = st.tl, N = [...st.p.prompt].length;
+    return t < T.type ? 0 : Math.round(N * TR.ease(scene.kf.typing.ease)(clamp((t - T.type) / Math.max(T.typeDur, 1e-3), 0, 1)));
+  }
+  function buildLook(scene, st) {
+    const gap = Number(st.look.att_gap_css) || 8;
+    st.attRow = st.IT.inner.querySelector(".pc-attrow");
+    st.attBelow = st.look.att_below_css != null ? Number(st.look.att_below_css) : 12;
+    let top = 0;
+    st.lookRows = st.rows.map((r, ri) => {
+      const h = Math.max(...r.items.map((i) => st.chipH[i] || 120));
+      const row = { top: top + (ri ? gap : 0), h, gap: ri ? gap : 0, items: r.items };
+      top = row.top + h;
+      return row;
+    });
+    st.lookRoom = 0;
+  }
+  // after the timeline: row start times + the prompt's line-growth events (heights measured per typed prefix, with
+  // the caret while it shows), so a new line opens over line_grow.dur instead of snapping
+  function lookLines(scene, st) {
+    const T = st.tl, K = scene.kf, el = st.promptEl;
+    st.lookRows.forEach((r) => (r.start = Math.min(...r.items.map((i) => T.chip[i]))));
+    st.lines = null;
+    if (!el) return;
+    const chars = [...st.p.prompt], N = chars.length;
+    el.style.height = "";
+    const hOf = (n, caret) => {
+      el.textContent = chars.slice(0, n).join("");
+      if (caret) el.appendChild(st.caretEl);
+      const v = parseFloat(getComputedStyle(el).height);
+      if (st.caretEl.isConnected) st.caretEl.remove();
+      return v;
+    };
+    const withC = [];
+    for (let n = 0; n <= N; n++) withC.push(hOf(n, true));
+    const no0 = hOf(0, false), noN = hOf(N, false);
+    el.textContent = "";
+    const caretOff = Math.min(T.typeEnd + K.caret.hide_after_typing_s, T.work);
+    const hAt = (t) => {
+      const n = nCharsAt(scene, st, t);
+      return t >= T.type && t < caretOff ? withC[n] : n === 0 ? no0 : n >= N ? noN : withC[n];
+    };
+    const ev = [], h0 = hAt(0);
+    let prev = h0;
+    const tEnd = Math.min(caretOff, T.typeEnd + 5) + 0.05;
+    for (let t = 0; t <= tEnd; t += 1 / 240) { const h = hAt(t); if (Math.abs(h - prev) > 0.01) { ev.push({ t, dh: h - prev }); prev = h; } }
+    st.lines = { h0, ev };
+  }
+  // sets the composer's DOM for time t (attachment room, typed text, prompt height); returns its natural height
+  function lookLayout(st, t, scene) {
+    const T = st.tl, LM = st.look.motion, p = st.p;
+    const sent = st.conv && t >= T.work + scene.kf.working.text_out_s;
+    let room = 0, q0 = 0;
+    st.lookRows.forEach((r, ri) => { const q = TR.prog(t, r.start, LM.row_grow.dur, LM.row_grow.ease); if (!ri) q0 = q; room += q * (r.h + r.gap); });
+    st.lookRoom = room;
+    if (st.attRow) {
+      st.attRow.style.display = sent ? "none" : "";
+      st.attRow.style.height = room + "px";
+      st.attRow.style.marginBottom = st.attBelow * q0 + "px";
+    }
+    const el = st.promptEl;
+    if (el) {
+      el.textContent = sent ? "" : [...p.prompt].slice(0, nCharsAt(scene, st, t)).join("");
+      if (sent || !st.lines) el.style.height = "";
+      else {
+        let h = st.lines.h0;
+        for (const e of st.lines.ev) h += e.dh * TR.prog(t, e.t, LM.line_grow.dur, LM.line_grow.ease);
+        el.style.height = h + "px";
+      }
+    }
+    return parseFloat(getComputedStyle(st.IT.rootEl).height);
   }
 
   // ── the cursor (end_on_click): prompt_menu's measured entry glide (kf.cursor_click.entry, t relative to the click,
@@ -672,7 +876,9 @@
     const K = scene.kf, CC = K.cursor_click, T = st.tl, tab = CC.entry.table;
     const tr = t - T.click + tab[tab.length - 1][0];
     if (tr < tab[0][0] || !st.sendEl) { st.cur.style.visibility = "hidden"; return; }
-    if (st.conv && t > T.click && st.curAtClick) { const q = st.curAtClick; st.cur.style.transform = q.tf; st.cur.style.opacity = String(q.a * (1 - clamp((t - T.click - 0.6) / 0.3, 0, 1))); st.cur.style.visibility = "visible"; return; }
+    // (round 3c) after the click the cursor rides with the send button as the composer docks (it used to freeze in
+    // screen space at the click: its glide tail went up while the card went down — a 4-5 px opposite motion)
+    const convFade = st.conv && t > T.click ? 1 - clamp((t - T.click - 0.6) / 0.3, 0, 1) : 1;
     const r = st.sendEl.getBoundingClientRect();
     const d = r.width, rx = r.left + d / 2 + CC.end_offset_frac_of_button[0] * d, ry = r.top + r.height / 2 + CC.end_offset_frac_of_button[1] * d;
     let row = tab[tab.length - 1];
@@ -682,10 +888,10 @@
     const sc = s * (scene.style.cursor.w / 64);
     let a = row[3];
     if (T.result != null) a *= 1 - clamp((t - T.result) / CC.fade_on_result_s, 0, 1);
+    a *= convFade;
     st.cur.style.visibility = a > 0.001 ? "visible" : "hidden";
     st.cur.style.opacity = String(a);
     st.cur.style.transform = `translate(${rx + row[1] * sc - 8}px,${ry + row[2] * sc - 8}px) scale(${sc})`;
-    if (st.conv && tr >= tab[tab.length - 1][0] && !st.curAtClick) st.curAtClick = { tf: st.cur.style.transform, a };
   }
 
   // ───────────────────────── MO05 in a kit's conversation view (kit.message; Claude) ─────────────────────────
@@ -908,7 +1114,8 @@
         return Math.max(0, c.tops[i] + CV.spark_room_css - c.visBottom);
       };
       let acc = 0; const N = 8;
-      for (let j = 0; j < N; j++) acc += target(t - (CV.scroll_smooth_s * j) / (N - 1));
+      const t0s = T.click + (CV.move_after_click_s || 0) + CV.move_dur_s + (CV.scroll_after_dock_s || 0);
+      for (let j = 0; j < N; j++) { const tj = t - (CV.scroll_smooth_s * j) / (N - 1); acc += tj < t0s ? 0 : target(tj); }
       c.col.style.transform = `translateY(${-acc / N}px)`;
     }
   }

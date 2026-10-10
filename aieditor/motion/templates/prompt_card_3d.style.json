@@ -28,7 +28,34 @@
   "tile_bg": "rgba(255,255,255,0.62)",
   "tile_border": "rgba(255,255,255,0.95)",
   "tile_bg_dark": "rgba(255,255,255,0.16)",
-  "round3_note": "re-measured on rectified f61: the glass is ~10 levels DARKER than the plate on its left and ~20 brighter on its right; no visible shadow below the card (plate level), a soft darkening to the LEFT (−17 at the edge, fading over ~80 px) → the shadow is cast left, not down"
+  "round3_note": "re-measured on rectified f61: the glass is ~10 levels DARKER than the plate on its left and ~20 brighter on its right; no visible shadow below the card (plate level), a soft darkening to the LEFT (−17 at the edge, fading over ~80 px) → the shadow is cast left, not down",
+  "fill_late": "radial-gradient(140% 110% at 0% 100%, rgba(255,255,255,0.26) 0%, rgba(255,255,255,0.12) 40%, rgba(255,255,255,0) 75%)",
+  "fill_late_note": "round 3b: per-phase glass track — from the push-in on (f64+) the card's lower-left reads 8-13 levels BRIGHTER in clip 4 than the typing-phase glass (rectified, signed ours-ref at (470,660) card px: -13 f100, -12 f130, -8 f190-f220); this layer fades in with the push and stays",
+  "fill_push": "linear-gradient(90deg, rgba(255,255,255,0.55) 0px, rgba(255,255,255,0.26) 45px, rgba(255,255,255,0) 130px)",
+  "fill_push_track": {
+   "in_dur_s": 1.0,
+   "out_after_pull_s": 0.55,
+   "out_dur_s": 0.6,
+   "ease": [
+    0.4,
+    0,
+    0.6,
+    1
+   ]
+  },
+  "fill_push_note": "round 3c: per-phase glass track, 2nd layer. Rectified ours-ref at card (470,660): -4..-8 levels from f85 to f145 (the reference's left edge brightens while the chips arrive), ~0 from f160 on. This left-edge glow fades in with the push (1.0 s) and out from pull+0.55 s over 0.6 s; the round-3b lower-left glow (fill_late) stays as it was (right for working/exit).",
+  "fill_entrance": "rgba(255,255,255,0.36)",
+  "fill_entrance_track": {
+   "hold_s": 0.4,
+   "out_dur_s": 0.35,
+   "ease": [
+    0.4,
+    0,
+    0.6,
+    1
+   ]
+  },
+  "fill_entrance_note": "round 3c: per-phase glass track, entrance layer. Rectified ours-ref (card px, 3 footer points): f10 -17/-11, f13 -6/-16, f16 -1/-7, f19 0/-4 — the whip frames read brighter in clip 4. This layer holds to 0.4 s, gone by 0.75 s (before the typing phase); off for entrance:'cut'."
  },
  "type": {
   "family": "Inter",
@@ -75,15 +102,15 @@
    "css": "\n.nb-chip{position:relative;box-sizing:border-box;width:408px;height:75px;display:flex;align-items:center;gap:16px;padding:0 0 0 21px;border-radius:18px;background:rgba(255,255,255,.10);border:1.5px solid rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(0,0,0,.035),0 2px 6px rgba(0,0,0,.04)}\n.nb-chip-ic{flex:none;width:34px;height:44px}\n.nb-chip-name{font-size:26px;line-height:26px;letter-spacing:0.012em;color:#2e2b2e;white-space:pre-line;max-width:332px}\n",
    "html": "<span class=\"nb-chip nb-chip--{{kind}}\"><span class=\"nb-chip-ic\">{{icon_html}}</span><span class=\"nb-chip-name\">{{name}}</span></span>",
    "icons": {
-    "doc": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"25\" font-family=\"Inter\" font-weight=\"700\" font-size=\"15\" fill=\"#2b7cd3\" text-anchor=\"middle\">W</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">DOC</text></svg>",
-    "pdf": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><path d=\"M16 11c-1.3 0-1 3 .6 6.5 1.3 2.8 3.5 5.4 6.3 6.3 1.8.6 2.4-.6 1.1-1.3-2.6-1.4-8.8-.3-12.3 1.9-1.9 1.2-1.4 2.6.3 1.7 2.3-1.3 4.3-6 5-9.8.4-2.3.1-5.3-1-5.3z\" fill=\"none\" stroke=\"#e0242f\" stroke-width=\"1.7\" stroke-linejoin=\"round\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">PDF</text></svg>",
-    "xlsx": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"25\" font-family=\"Inter\" font-weight=\"700\" font-size=\"15\" fill=\"#2fbf5b\" text-anchor=\"middle\">X</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">XLS</text></svg>",
+    "doc": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"27\" font-family=\"Inter\" font-weight=\"700\" font-size=\"20\" fill=\"#2b7cd3\" text-anchor=\"middle\">W</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">DOC</text></svg>",
+    "pdf": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><path d=\"M16 11c-1.3 0-1 3 .6 6.5 1.3 2.8 3.5 5.4 6.3 6.3 1.8.6 2.4-.6 1.1-1.3-2.6-1.4-8.8-.3-12.3 1.9-1.9 1.2-1.4 2.6.3 1.7 2.3-1.3 4.3-6 5-9.8.4-2.3.1-5.3-1-5.3z\" fill=\"none\" stroke=\"#e0242f\" stroke-width=\"2.3\" stroke-linejoin=\"round\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">PDF</text></svg>",
+    "xlsx": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"27\" font-family=\"Inter\" font-weight=\"700\" font-size=\"20\" fill=\"#2fbf5b\" text-anchor=\"middle\">X</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">XLS</text></svg>",
     "image": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><rect x=\"8\" y=\"12\" width=\"17\" height=\"13\" rx=\"2\" fill=\"none\" stroke=\"#7a5af8\" stroke-width=\"1.7\"/><circle cx=\"13\" cy=\"16.5\" r=\"1.6\" fill=\"#7a5af8\"/><path d=\"M9 24l5-5 4 4 2.5-2.5L24 24\" fill=\"none\" stroke=\"#7a5af8\" stroke-width=\"1.6\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">IMG</text></svg>",
     "other": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><path d=\"M9 15h15M9 19h15M9 23h10\" stroke=\"#888\" stroke-width=\"1.7\" stroke-linecap=\"round\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">FILE</text></svg>"
    }
   },
   "working": {
-   "css": "\n.nb-thread{display:flex;flex-direction:column;margin-top:17px}\n.nb-user{display:flex;justify-content:flex-end;align-items:flex-start;gap:10px;margin-right:-10px}\n.nb-bubble{box-sizing:border-box;max-width:744px;padding:14px 12px 13px 20px;border-radius:16px;background:rgba(40,30,35,.065);font-size:26px;line-height:34px;letter-spacing:0.03em;color:#3d3a3d;text-align:right;white-space:pre-wrap}\n.nb-av{flex:none;margin-top:6px}\n.nb-working{display:flex;align-items:center;gap:18px;height:40px;margin:25px 0 5px 6px;color:#7a777a;font-size:31px;letter-spacing:0.02em}\n",
+   "css": "\n.nb-thread{display:flex;flex-direction:column;margin-top:17px}\n.nb-user{display:flex;justify-content:flex-end;align-items:flex-start;gap:10px;margin-right:-10px}\n.nb-bubble{box-sizing:border-box;max-width:744px;padding:14px 12px 13px 20px;border-radius:16px;background:rgba(40,30,35,.065);font-size:26px;line-height:34px;letter-spacing:0.03em;color:#3d3a3d;text-align:right;white-space:pre-wrap}\n.nb-av{flex:none;margin-top:6px}\n.nb-working{display:flex;align-items:center;gap:18px;height:40px;margin:25px 0 26px 6px;color:#7a777a;font-size:31px;letter-spacing:0.02em}\n",
    "html": "<div class=\"nb-working\"><span class=\"nb-spin\"><svg viewBox=\"0 0 24 24\" width=\"32\" height=\"32\" fill=\"#4a474a\"><circle cx=\"12.00\" cy=\"4.00\" r=\"2\" opacity=\"1\"/><circle cx=\"18.93\" cy=\"8.00\" r=\"2\" opacity=\"0.85\"/><circle cx=\"18.93\" cy=\"16.00\" r=\"2\" opacity=\"0.7\"/><circle cx=\"12.00\" cy=\"20.00\" r=\"2\" opacity=\"0.55\"/><circle cx=\"5.07\" cy=\"16.00\" r=\"2\" opacity=\"0.4\"/><circle cx=\"5.07\" cy=\"8.00\" r=\"2\" opacity=\"0.25\"/></svg></span><span class=\"nb-wtext\">{{text}}</span></div>"
   },
   "bubble": {
@@ -129,5 +156,24 @@
  },
  "conversation": {
   "css": ".pc-conv{display:flex;flex-direction:column}\n.pc-conv .clk-thread{width:auto;padding:0}\n.pc-conv-user{display:flex;flex-direction:column;align-items:flex-end}\n.pc-conv-att{display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px}\n.pc-conv-work{margin-top:22px}\n.pc-conv-reply .clk-reply-md.pc-md{white-space:normal}\n.pc-conv-reply .clk-tail{opacity:0.22}\n.pc-conv-reply .clk-reply-md.pc-md{font-family:'Gelasio','Noto Color Emoji',Georgia,'Times New Roman',serif}\n.pc-md .clk-code pre.clk-code-pre{margin:0;padding:2px 16px 14px;border:0;border-radius:0;background:none}"
+ },
+ "looks": {
+  "_note": "round 4 (Jake on prompt_card_3d-claude-dark.mp4: 'it needs to be fixed'): per-app look overrides for a kit, applied by app id. NOT applied to the MO05 artifact view (msgMode; Jake likes it as it is). An app without an entry (ChatGPT, neutral) keeps the round-3c path unchanged.",
+  "claude": {
+   "composer_w_css": 588,
+   "card_w": 1440,
+   "framing_note": "Jake: too small, unreadable at 1080p; match the ChatGPT look's framing (70-80 % of the width). The kit composer is 727 css px with 16 px text, so reaching 28 px cap height (Inter cap 0.727 em -> 38.5 px type, x2.41) would need 91 % of the width. This template therefore narrows the composer to 588 css px (a narrower claude.ai window) at x2.449: 1440 px = 75 % of 1920, 16 px -> 39.2 px type, cap height 28.5 px. The kit itself is untouched.",
+   "image_placeholder": true,
+   "placeholder_svg": "<svg viewBox=\"0 0 120 120\" width=\"100%\" height=\"100%\" preserveAspectRatio=\"xMidYMid slice\"><defs><linearGradient id=\"pcph\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"#4a4a46\"/><stop offset=\"1\" stop-color=\"#30302d\"/></linearGradient></defs><rect width=\"120\" height=\"120\" fill=\"url(#pcph)\"/><circle cx=\"82\" cy=\"38\" r=\"10\" fill=\"#6b6a64\"/><path d=\"M0 96 L34 58 L58 84 L76 68 L120 104 L120 120 L0 120 Z\" fill=\"#5a5954\"/></svg>",
+   "placeholder_note": "a neutral placeholder photo for an image attachment with no real picture (params.chips[i].thumb missing); a real thumb always wins",
+   "att_gap_css": 8,
+   "att_below_css": 12,
+   "att_note": "tiles in one wrapped row ABOVE the text (kit chip css: 120x120, gap 8, prompt margin-top 4 -> 12 css between the tiles and the text); the row's height opens analytically so no tile ever covers the text",
+   "press": {
+    "scale": 0.94,
+    "brightness": 0.8,
+    "note": "send button pressed state on the click (Jake: the click lands, the button shows its pressed state, then a clean hold)"
+   }
+  }
  }
 }
