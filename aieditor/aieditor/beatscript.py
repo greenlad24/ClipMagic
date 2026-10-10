@@ -55,6 +55,21 @@ RESULT_TARGET = float(_S.get("result_median_s", 0.7))
 K2_AFTER = 0.65                                                  # inside k2_after_word_s 0.5-0.8
 K2_FRAMES = 6                                                    # inside k2_dissolve_f 3-8
 MAX_STILL = float(_S.get("max_still_s", 3.0))
+
+
+def _pace():
+    try:
+        from . import skill
+        return skill.rules().get("pace", {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_P = _pace()
+# Jake R14 P5 (2026-10-10, "screencasts a little bit longer (slower pace a little bit)"): the hold after each beat's
+# press, x1.2 of agent_rec.mjs's own 0.3 s (click) / 0.4 s (paste) — rules.json "pace"
+PACE_AFTER = {"click": float(_P.get("hold_after_click_s", 0.3)), "type": float(_P.get("hold_after_type_s", 0.4)),
+              "drag": float(_P.get("hold_after_other_s", 0.3)), "upload": float(_P.get("hold_after_other_s", 0.3))}
 LIVE_SHOW = tuple(_S.get("live_wait_s", (3.5, 6.0)))
 SETTLE_S = 0.12                     # agent_rec.mjs: the cursor rests this long on its target before the press
 FULL_SCREEN = (0, 0, 1280, 720)     # a camera beat with no named target frames the whole screen (screenshot px)
@@ -622,6 +637,12 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
             st = _resolve(pb, aid, {**params, "files": params.get("files") or []})[0]
             st.update(at=at, asset=aid_up, **meta)
             steps.append(st)
+        elif kind == "drag" and a.get("selectors") and params.get("rel_from") and params.get("rel_to"):
+            # an onboarded drag (Jake R14 P2, per-video playbook): from/to are fractions of the element the selector
+            # finds (the image in the viewer) — agent_rec.mjs measures the box on the live page
+            st = _resolve(pb, aid, params)[0]
+            st.update(at=at, travel_ms=travel, settle_s=settle, **meta)
+            steps.append(st)
         elif kind == "drag":
             dg = ({"from": params["from"], "to": params["to"]} if params.get("from") and params.get("to")
                   else next(drags, None))
@@ -715,6 +736,8 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
         last_target = steps[-1].get("target") or steps[-1].get("selector") or last_target
         for s in steps[i0:]:
             s.setdefault("beat_id", meta["beat_id"])
+            if s.get("beat") and s.get("type") in PACE_AFTER and not s.get("live"):
+                s.setdefault("after", PACE_AFTER[s["type"]])      # Jake R14 P5: a longer look after each beat
             if "assert_" in s:
                 s["assert"] = s.pop("assert_")
             s["playbook"] = s.get("playbook") or ("camera" if is_camera(aid) else aid if aid == OUTSIDE_GOTO

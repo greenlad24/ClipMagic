@@ -109,6 +109,36 @@ STYLE = {
 REF_FPS = 30000 / 1001
 
 
+def pace():
+    """Jake R14 P5 (2026-10-10: screencasts 'a little bit longer (slower pace a little bit) automatically'): the
+    skill's rules.json "pace" group (the code folder's .claude/skills/jake-editor, mounted with it) → {scale, keys,
+    hold_scale}; none → no change."""
+    for src in (HERE.parent / ".claude" / "skills" / "jake-editor" / "rules.json",):
+        try:
+            g = json.loads(src.read_text()).get("pace") or {}
+            return {"scale": float(g.get("scale", 1.0)), "keys": list(g.get("camera_frames_keys") or []),
+                    "hold_scale": float(g.get("camera_hold_target_scale", 1.0))}
+        except Exception:  # noqa: BLE001
+            pass
+    return {"scale": 1.0, "keys": [], "hold_scale": 1.0}
+
+
+def apply_pace(p, pc=None):
+    """Move durations x scale (the easing curves are the reference's, untouched) and the camera's rest before its
+    gap-filling push x hold_scale — slower moves, longer looks. hold_max_s (no still > 3 s) is never raised."""
+    pc = pc or pace()
+    s = pc["scale"]
+    for k in pc["keys"]:
+        if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool):
+            p[k] = round(p[k] * s, 2)
+    if isinstance(p.get("pan_frames_minmax"), list) and s != 1.0:
+        p["pan_frames_minmax"] = [round(x * s, 1) for x in p["pan_frames_minmax"]]
+    if p.get("hold_target_s") is not None:
+        p["hold_target_s"] = round(min(float(p["hold_target_s"]) * pc["hold_scale"], float(p.get("hold_max_s", 3.0))), 3)
+    p["pace"] = s
+    return p
+
+
 def params():
     p = dict(DEFAULTS)
     for src in (HERE.parent / "motion" / "keyframes.json", HERE.parent / "motion" / "screencast_system.json"):
@@ -118,7 +148,7 @@ def params():
             p.update({k: v for k, v in sc.items() if k in DEFAULTS})
         except Exception:  # noqa: BLE001
             pass
-    return p
+    return apply_pace(p)
 
 
 # ── easing ───────────────────────────────────────────────────────────────────

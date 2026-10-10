@@ -200,16 +200,16 @@ st = gates.structure({"blocks": JOB["blocks"]}, duration=JOB["duration"])
 check("structure FAILS on the failed job", st["ok"] is False)
 check("structure numbers: 43 %, 23.1 s, 29.9 s, 1.4/min",
       round(st["share"] * 100) == 43 and st["aroll_p50"] == 23.11 and st["span_p50"] == 29.91 and round(st["bounds_per_min"], 1) == 1.4)
-# a synthetic edit at the reference medians: 600 s, A-roll blocks 5.5 s, screencast spans 14 s
+# a synthetic edit at the medians: 600 s, A-roll blocks 5.5 s, screencast spans 14 s x the R14 P5 pace (16.8 s)
 bl, t = [], 0.0
 while t < 600:
-    t += 14.0
+    t += 14.0 * 1.2
     if t + 5.5 > 600:
         break
     bl.append([round(t, 2), round(t + 5.5, 2)])
     t += 5.5
 ref_st = gates.structure({"blocks": bl}, duration=600.0)
-check(f"structure PASSES a reference-median fixture {ref_st}", ref_st["ok"] is True and 0.72 <= ref_st["share"] <= 0.76)
+check(f"structure PASSES a reference-median fixture {ref_st}", ref_st["ok"] is True and gates.COVER_SHARE[0] <= ref_st["share"] <= gates.COVER_SHARE[1] == 0.8)
 cov = gates.coverage({"blocks": JOB["blocks"]}, {"segments": SEGS}, duration=JOB["duration"])
 check(f"coverage: kept 378/668 = 0.57 -> fail ({cov})", round(cov["planned_s"]) == 668 and round(cov["kept_s"]) == 378
       and round(cov["kept_frac"], 2) == 0.57 and cov["ok"] is False and len(cov["fails"]) == 2)

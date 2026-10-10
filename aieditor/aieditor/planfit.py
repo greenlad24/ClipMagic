@@ -22,20 +22,35 @@ import difflib
 import re
 import statistics
 
-# ── reference numbers (REFERENCE-BASELINE §1a/§1b; refs r2-r5) ──
-SPAN_P50 = (10.0, 18.0)          # screencast span median band
-SPAN_MAX = 30.0                  # no span longer than this
-SPAN_TARGET = 14.0               # where a split aims a piece
-AROLL_BEAT = (5.0, 7.0)          # A-roll block p50 5.1-6.5 s
-SHARE = (0.72, 0.76)             # screencast share of runtime
-SHARE_AIM = 0.74
-BOUNDS_PER_MIN = (3.0, 6.0)
+# ── reference numbers (REFERENCE-BASELINE §1a/§1b; refs r2-r5) + Jake R14 P5 (2026-10-10: screencasts "a little
+# bit longer (slower pace a little bit) automatically"): the skill's rules.json "structure" holds the numbers
+# (spans x1.2, share +3-4 points, boundaries /1.2); the reference values are the fallback
+
+
+def _structure():
+    try:
+        from . import skill
+        return skill.rules().get("structure") or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_ST = _structure()
+SPAN_P50 = tuple(_ST.get("span_p50_s", (10.0, 18.0)))         # screencast span median band (R14 P5: 12-21.5)
+SPAN_MAX = float(_ST.get("span_max_s", 30.0))                 # no span longer than this (R14 P5: 36)
+SPAN_TARGET = float(_ST.get("span_target_s", 14.0))           # where a split aims a piece (R14 P5: 16.8)
+PACE = SPAN_TARGET / 14.0                                     # the P5 span scale (1.2) for the split targets
+AROLL_BEAT = (5.0, 7.0)          # A-roll block p50 5.1-6.5 s (unchanged: the narration is never cut)
+SHARE = tuple(_ST.get("screencast_share", (0.72, 0.76)))      # screencast share of runtime (R14 P5: 0.75-0.80)
+SHARE_AIM = round(sum(SHARE) / 2, 3)
+SHARE_NEAR = float(_ST.get("near_miss_points", 0.03))         # R14 D: a share this close to the band is fixed by code
+BOUNDS_PER_MIN = tuple(_ST.get("boundaries_per_min", (3.0, 6.0)))
 PLATE_MAX_FRAC = 0.015           # plates <= 1.5 % of runtime ...
 HOOK_S = 40.0                    # ... and only inside the first 40 s
 BLOCK_AIM = 5.0                  # a pacing A-roll beat aims here (refs p50 5.1-6.5 s; shorter keeps the share)
 CLAUSE_SPLIT_S = 6.0             # a sentence longer than this may also be cut at a clause comma
 LEAD = 0.1                       # the picture leads the next sentence by ~0.1 s (CUT04/CUT05)
-MIN_SPAN = 2.5                   # RULEBOOK P4
+MIN_SPAN = float(_ST.get("min_span_s", 2.5))   # RULEBOOK P4 (R14 P5: 3.0)
 MIN_GAP = 3.0                    # at least this much A-roll between two screencasts of different worlds
 LONG_STRUCTURE_S = 120.0         # the share/fill rules are for tutorials, not 20 s tests
 
@@ -545,7 +560,7 @@ def _dur(run):
     return run[-1]["next_t0"] - run[0]["t0"]
 
 
-def _split_run(run, target=SPAN_TARGET, lo=10.0, hi=18.0, blk=AROLL_BEAT, relax=False):
+def _split_run(run, target=SPAN_TARGET, lo=SPAN_P50[0], hi=SPAN_P50[1], blk=AROLL_BEAT, relax=False):
     """Choose A-roll blocks (whole units, 5-7 s, sentence starts first, no beat cue inside) that cut a
     long screencast run into pieces of ~target s. → list of unit lists that become A-roll."""
     blocks, pos = [], run[0]["t0"]
@@ -617,9 +632,9 @@ def shape(U, duration, long_form=True):
     In: u["label"] from the plan, u["hard"] (presenter), u["forced"] (an unshowable beat), u["seg"]."""
     # P4: a span shorter than 2.5 s is not created
     for r in _runs(U, lambda u: u["label"] == "S"):
-        if _dur(r) < MIN_SPAN:
+        if _dur(r) < MIN_SPAN and not grow_short(U, r):
             for u in r:
-                u.update(label="A", why="span < 2.5 s (P4)")
+                u.update(label="A", why=f"span < {MIN_SPAN:g} s (P4)")
     if long_form:
         # FILL: an A-roll stretch longer than an A-roll beat keeps one 5-7 s beat (or its presenter
         # lines); the rest joins the neighbouring screencast (results held, BASELINE §3). Lines that name a
@@ -681,7 +696,7 @@ def shape(U, duration, long_form=True):
     # (refs p10 = 3-4 s); a run over 30 s is split whatever it costs
     for r in _runs(U, lambda u: u["label"] == "S"):
         if _dur(r) > SPAN_P50[1]:
-            for blk in _split_run(r, target=12.0, lo=6.0, hi=SPAN_P50[1]):
+            for blk in _split_run(r, target=12.0 * PACE, lo=6.0 * PACE, hi=SPAN_P50[1]):
                 cut(blk)
     for r in _runs(U, lambda u: u["label"] == "S"):
         if _dur(r) > SPAN_MAX:
@@ -711,7 +726,7 @@ def shape(U, duration, long_form=True):
         while share() > SHARE[1] and guard < 50:
             guard += 1
             for r in sorted(_runs(U, lambda u: u["label"] == "S"), key=_dur, reverse=True):
-                blks = _split_run(r, target=12.0, lo=6.0, hi=max(12.0, _dur(r) - 11.0))
+                blks = _split_run(r, target=12.0 * PACE, lo=6.0 * PACE, hi=max(12.0 * PACE, _dur(r) - 11.0))
                 if blks:
                     cut(blks[0])
                     break
@@ -734,11 +749,167 @@ def shape(U, duration, long_form=True):
                 cut(blks[0], on=False)
             if not done:
                 break
+    if long_form:
+        near_miss_share(U, duration)
     for r in _runs(U, lambda u: u["label"] == "S"):
-        if _dur(r) < MIN_SPAN:
+        if _dur(r) < MIN_SPAN and not grow_short(U, r):
             for u in r:
-                u.update(label="A", why="span < 2.5 s (P4)")
+                u.update(label="A", why=f"span < {MIN_SPAN:g} s (P4)")
     return U
+
+
+# ── Jake R14 D (2026-10-10): gate near-misses are fixed by code, never held ──
+
+def _takeable(u):
+    """An A-roll unit a screencast may take over: not the presenter's moment, not an unshowable beat."""
+    return u["label"] == "A" and not u["hard"] and not u.get("forced")
+
+
+def grow_short(U, r, limit=None):
+    """A screencast run shorter than MIN_SPAN that carries a beat (a cue or an action) is LENGTHENED over its
+    neighbouring free A-roll units (whole units = sentence/clause edges; next first, then previous) until it is
+    MIN_SPAN long — instead of the old 'span < 2.5 s → A-roll' that lost the beat ('too short to be on screen').
+    → True when the run now reaches MIN_SPAN (its units are relabelled), False = nothing changed."""
+    if not any(u.get("cues") or u.get("acts") for u in r):
+        return False
+    limit = limit or SPAN_MAX
+    a, b = r[0]["k"], r[-1]["k"]
+    seg = r[0].get("seg")
+    took = []
+    while U[b]["next_t0"] - U[a]["t0"] < MIN_SPAN:
+        nxt = U[b + 1] if b + 1 < len(U) else None
+        prv = U[a - 1] if a > 0 else None
+        if nxt is not None and _takeable(nxt):
+            b += 1
+            took.append(nxt)
+        elif prv is not None and _takeable(prv):
+            a -= 1
+            took.append(prv)
+        else:
+            break
+        if U[b]["next_t0"] - U[a]["t0"] > limit:
+            break
+    if U[b]["next_t0"] - U[a]["t0"] < MIN_SPAN:
+        return False
+    j0, j1 = a, b                                  # a run it would join on either side counts too
+    while j0 > 0 and U[j0 - 1]["label"] == "S":
+        j0 -= 1
+    while j1 + 1 < len(U) and U[j1 + 1]["label"] == "S":
+        j1 += 1
+    if U[j1]["next_t0"] - U[j0]["t0"] > limit:
+        return False
+    for u in took:
+        u.update(label="S", seg=seg, fill=True, grown="R14 D: a beat's span lengthened to the minimum")
+    for u in U[a:b + 1]:                       # a neighbour run joined on the way keeps its own seg
+        if u["label"] != "S":
+            u.update(label="S", seg=seg, fill=True)
+    return True
+
+
+def near_miss_share(U, duration, near=None):
+    """Jake R14 D: a screencast share within `near` (3 points) of the band is moved INTO the band by code: below it,
+    the free A-roll unit at the edge of a screencast run whose removal keeps the A-roll block a real beat (or joins
+    two runs within SPAN_MAX) becomes screencast — whole units, so every edge stays on a sentence/clause start;
+    above it, an edge unit without a beat goes back to A-roll. → the number of units changed."""
+    near = SHARE_NEAR if near is None else near
+    share = lambda: sum(_dur(r) for r in _runs(U, lambda u: u["label"] == "S")) / duration if duration else 0.0
+    n = 0
+    if SHARE[0] - near <= share() < SHARE[0]:
+        for _ in range(400):
+            if share() >= SHARE[0]:
+                break
+            best, best_c = None, 1e9
+            for r in _runs(U, lambda u: u["label"] == "A"):
+                k0, k1 = r[0]["k"], r[-1]["k"]
+                left = U[k0 - 1] if k0 > 0 and U[k0 - 1]["label"] == "S" else None
+                right = U[k1 + 1] if k1 + 1 < len(U) and U[k1 + 1]["label"] == "S" else None
+                for u, nb in ((r[0], left), (r[-1], right)):
+                    if nb is None or not _takeable(u):
+                        continue
+                    rest = _dur(r) - u["dur"]
+                    joins = len(r) == 1 and left is not None and right is not None
+                    if joins and _dur(_run_at(U, k0 - 1)) + u["dur"] + _dur(_run_at(U, k1 + 1)) > SPAN_MAX:
+                        continue
+                    if not joins and _dur(_run_at(U, nb["k"])) + u["dur"] > SPAN_MAX:
+                        continue
+                    if not joins and rest < AROLL_BEAT[0] - 2.0:
+                        continue                      # the A-roll beat that stays must still be a beat
+                    cost = abs(rest - BLOCK_AIM) + (0 if u["sentence_start"] or nb is left else 1.0)
+                    if cost < best_c:
+                        best, best_c = (u, nb), cost
+            if not best:
+                break
+            u, nb = best
+            u.update(label="S", seg=nb.get("seg"), fill=True, near_miss=True)
+            n += 1
+    elif SHARE[1] < share() <= SHARE[1] + near:
+        for _ in range(400):
+            if share() <= SHARE[1]:
+                break
+            best = None
+            for r in sorted(_runs(U, lambda u: u["label"] == "S"), key=_dur, reverse=True):
+                for u in (r[-1], r[0]):
+                    if u.get("cues") or u.get("acts") or _dur(r) - u["dur"] < MIN_SPAN or len(r) < 2:
+                        continue
+                    best = u
+                    break
+                if best:
+                    break
+            if not best:
+                break
+            best.update(label="A", pacing=True, near_miss=True)
+            n += 1
+    return n
+
+
+def cover_screen_refs(U, video, gap_max=None):
+    """Jake R14 D / R13 C8: a sentence that refers to the screen but stays on the presenter → the adjacent screencast
+    is EXTENDED over it (when the A-roll between is at most gap_max s), else the sentence gets its own span (grown to
+    MIN_SPAN over free neighbours). The presenter's moments and unshowable beats are never taken.
+    → [{t0, t1, how}] for the fixes made."""
+    from . import screenref
+    gap_max = AROLL_BEAT[1] if gap_max is None else gap_max
+    spans = [(r[0]["t0"], r[-1]["next_t0"]) for r in _runs(U, lambda u: u["label"] == "S")]
+    out = []
+    for f in screenref.uncovered(screenref.flag(video["words"]), spans):
+        mine = [u for u in U if u["t0"] < f["t1"] and f["t0"] < u["next_t0"] and u["label"] != "S"]
+        if not mine or any(u["hard"] or u.get("forced") for u in mine):
+            continue
+        k0, k1 = mine[0]["k"], mine[-1]["k"]
+        left = next((j for j in range(k0 - 1, -1, -1) if U[j]["label"] == "S"), None)
+        right = next((j for j in range(k1 + 1, len(U)) if U[j]["label"] == "S"), None)
+        gl = U[k0]["t0"] - U[left]["next_t0"] if left is not None else 1e9
+        gr = U[right]["t0"] - U[k1]["next_t0"] if right is not None else 1e9
+        side = left if gl <= gr else right
+        gap = min(gl, gr)
+        seg = U[side]["seg"] if side is not None else next((u.get("seg") for u in U if u.get("seg") is not None), None)
+        if seg is None:
+            continue
+        if side is not None and gap <= gap_max and all(_takeable(u) for u in (U[side + 1:k0] if side == left else U[k1 + 1:side])):
+            take = U[side + 1:k1 + 1] if side == left else U[k0:side]
+            how = "extended the adjacent screencast"
+        else:
+            take = U[k0:k1 + 1]
+            how = "added a span"
+        before = {u["k"]: (u["label"], u.get("seg")) for u in take}
+        for u in take:
+            u.update(label="S", seg=seg, fill=True, screen_ref=True)
+        if _dur(_run_at(U, k0)) > SPAN_MAX:          # never a span over the maximum to cover one sentence
+            for u in take:
+                lab, sg = before[u["k"]]
+                u.update(label=lab, seg=sg, screen_ref=False)
+            continue
+        if how == "added a span":
+            r = _run_at(U, k0)
+            if _dur(r) < MIN_SPAN:
+                for u in r:
+                    u["cues"] = u.get("cues", 0) or 1
+                if not grow_short(U, r):
+                    for u in take:
+                        u.update(label="A", screen_ref=False)
+                    continue
+        out.append({"t0": round(f["t0"], 2), "t1": round(f["t1"], 2), "how": how, "text": f.get("text", "")[:120]})
+    return out
 
 
 def hook_plate(U, video, facts):
@@ -951,6 +1122,10 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
     plate = hook_plate(U, video, facts)
     mo5, mo5_notes = hook_prompt_result(U, video, facts, site_url, used_s=(plate["t1"] - plate["t0"]) if plate else 0.0)
     shape(U, dur, long_form=dur >= LONG_STRUCTURE_S)
+    # R14 D: a sentence that refers to the screen and stayed on the presenter → extend / add a span (code, not a hold)
+    screen_fixes = cover_screen_refs(U, video) if segments and not facts.empty else []
+    if screen_fixes and dur >= LONG_STRUCTURE_S:
+        near_miss_share(U, dur)
     # beats whose word ended up on A-roll for pacing are reported (the cost function avoids it)
     dropped = []
     for b in ledger:
@@ -998,6 +1173,9 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
             "made_on_camera" if e["asset"] else "missing"
     stats = structure_stats(U, dur)
     return {"segments": out, "plates": [p for p in (plate, mo5) if p], "motion_notes": mo5_notes,
+            "auto_fixes": screen_fixes + [{"t0": round(u["t0"], 2), "how": "share near miss (R14 D)"}
+                                          for u in U if u.get("near_miss")]
+            + [{"t0": round(u["t0"], 2), "how": u["grown"]} for u in U if u.get("grown")],
             "beats": ledger, "objects": objects,
             "dropped": dropped, "aroll_actions": aroll_actions, "structure": stats, "sources": segments,
             "units": [{"t0": round(u["t0"], 2), "label": u["label"], "seg": u.get("seg"),

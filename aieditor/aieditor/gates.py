@@ -37,18 +37,19 @@ from pathlib import Path
 MAX_TAKES = 3              # 1 take + 2 retakes, then salvage (spec G4.4: "only after N failed retakes")
 SNAP_S = 0.6               # BASELINE §1d/§2d: a screen<->face cut within 0.6 s of a sentence start
 LEAD_S = 0.1               # ... the picture leads the sentence by ~0.1 s (CUT04 r3 0:22.75)
-MIN_PIECE_S = 2.5          # RULEBOOK §4 P4: no screencast piece shorter than this
+from . import planfit as _pf   # noqa: E402 — the structure numbers live in the skill's rules.json (Jake R14 P5)
+MIN_PIECE_S = _pf.MIN_SPAN     # RULEBOOK §4 P4: no screencast piece shorter than this (R14 P5: 3.0 s)
 GUARD_EVERY_S = 0.5        # the extended guard samples every 0.5 s (spec G4.2)
 IDLE_S = 3.0               # RULEBOOK §4 P1 / BASELINE §4: no still > 3 s (camera-still p50 0.77-1.4 s)
 
 # reference structure (REFERENCE-BASELINE §1a/§1b; refs r2-r5)
-SHARE_MIN, SHARE_FLOOR = 0.72, 0.68
+SHARE_MIN, SHARE_FLOOR = _pf.SHARE[0], round(_pf.SHARE[0] - 0.04, 3)   # R14 P5: 0.75 / 0.71 (refs 0.72 / 0.68)
 AROLL_P50 = (5.0, 6.5)
-SPAN_P50 = (10.0, 18.0)
-BOUNDS_PER_MIN = (3.0, 6.0)
+SPAN_P50 = _pf.SPAN_P50
+BOUNDS_PER_MIN = _pf.BOUNDS_PER_MIN
 LONG_FORM_S = 120.0        # the structure rules are for tutorials, not 20 s tests
 # coverage gate (RECOMMENDATION §4.3 / migration step 1; skill rules.json "structure"/"coverage")
-COVER_SHARE = (0.72, 0.76)
+COVER_SHARE = _pf.SHARE
 COVER_KEPT_MIN = 0.95
 
 # what a take may never contain (frame guard kinds)

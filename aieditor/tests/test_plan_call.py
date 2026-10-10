@@ -9,7 +9,7 @@ edit-01/overlays.json (tests/fixtures/p6/make_fixture.py).
       'Bakery Image Prompt' chat; the re-ask carries the errors; the corrected 2nd answer passes; three failing
       answers end in needs_primitive + held
   (b) the call's action enum = the proven ids of a fixture playbook (+ the two code primitives); unproven absent
-  (c) the checked plan keeps the G2 structure: span max <= 30 s, median 10-18 s, share 72-76 %, 3-6
+  (c) the checked plan keeps the G2 structure: span max <= 36 s, median 12-21.5 s, share 75-80 % (R14 P5), 2.5-6
       boundaries/min, A-roll beats 5-7 s, a hook plate in 0-14.7 s, 671.4-688.5 s gets a segment or a why
   (d) overlays_fit on the failed job's 11 overlays: 7-9, <= 0.2/min mid-video, TX03 on the outro question
       (836-843 s), TX05 on 'notification bell' (859.19-859.81 s)
@@ -293,10 +293,11 @@ def test_structure(good):
     check(not errs, f"the corrected plan passes: {[e['msg'][:100] for e in errs]}")
     c = info["checked"]
     st = c["structure"]
-    check(st["span_max"] <= 30.0, f"span max {st['span_max']}")
-    check(10.0 <= st["span_p50"] <= 18.0, f"span median {st['span_p50']}")
-    check(0.72 <= st["share"] <= 0.76, f"share {st['share']}")
-    check(3.0 <= st["bounds_per_min"] <= 6.0, f"boundaries/min {st['bounds_per_min']}")
+    # Jake R14 P5: the bands are the skill's (spans x1.2, share 0.75-0.80) — planfit reads them from rules.json
+    check(st["span_max"] <= planfit.SPAN_MAX == 36.0, f"span max {st['span_max']}")
+    check(planfit.SPAN_P50[0] <= st["span_p50"] <= planfit.SPAN_P50[1], f"span median {st['span_p50']}")
+    check(planfit.SHARE[0] - planfit.SHARE_NEAR <= st["share"] <= planfit.SHARE[1], f"share {st['share']}")
+    check(planfit.BOUNDS_PER_MIN[0] <= st["bounds_per_min"] <= planfit.BOUNDS_PER_MIN[1], f"boundaries/min {st['bounds_per_min']}")
     check(5.0 <= st["aroll_p50"] <= 7.0, f"A-roll beats {st['aroll_p50']}")
     pl = c["plates"]
     check(len(pl) == 1 and pl[0]["t0"] < 1.0 and pl[0]["t1"] <= 14.7 and pl[0]["assets"], f"hook plate in 0-14.7 s: {pl}")

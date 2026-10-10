@@ -87,7 +87,7 @@ mv3 = camera.plan_moves({"capture": cap, "events": evs3, "end": 9}, 30.0, 0, 270
 pans = [m for m in mv3 if m[4] == "pan"]
 check("next target at the same zoom → a PAN, not out-and-in", len(pans) == 1 and not any(m[4] == "out" for m in mv3))
 check("...the pan keeps the zoom", abs(pans[0][2][0] - pans[0][3][0]) < 0.06 and pans[0][3][0] > 1.05)
-check("...26–56 f", 26 - 0.5 <= pans[0][1] * camera.REF_FPS / 30.0 <= 56 + 0.5)
+check("...26–56 f (x the R14 P5 pace)", 26 * P.get("pace", 1.0) - 0.5 <= pans[0][1] * camera.REF_FPS / 30.0 <= 56 * P.get("pace", 1.0) + 0.5)
 ease = camera.make_eases(P)["pan"]
 check("pan ease: eased in and out, monotonic", ease(0.1) < 0.1 and ease(0.9) > 0.9
       and all(ease(i / 20) <= ease((i + 1) / 20) + 1e-9 for i in range(20)))
