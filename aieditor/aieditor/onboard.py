@@ -807,7 +807,8 @@ def _row(aid, desc, status, why, **kw):
             "attempts": [why], "checks": [], "why": why, **kw}
 
 
-def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, window=None, look=None, verbatim=False):
+def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, window=None, look=None, verbatim=False,
+                  source_hint=None):
     """P3: one needed asset, made IN THE APP before recording, off camera, checked against its description; never
     silently dropped. Jake 2026-10-10: "it needs to generate images in the ChatGPT UI" — no image API here.
       live (ctx.producer set, preprod.make_ctx): the producer AGENT (aieditor/producer.py) — the learned / hint recipe
@@ -868,8 +869,13 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
     if (not made_from or (multi and len(made_from) < 2)) and not getattr(ctx, "_composing", False) and (not tool or on_source):
         # a linked single prior picture is not enough when the narration merges several (TEST v3 re-run 4: the 3-photo
         # merge was made as one edit of the bottle photo — the person and the stall were never made)
-        plan_in = source_inputs(ctx, " ".join(x for x in (str(desc), str(window or "")) if x),
+        plan_in = source_inputs(ctx, " ".join(x for x in (str(desc), str(window or "")) if x)
+                                + (f"\n(The picture shown just before is '{source_hint}' — use it ONLY if this picture is "
+                                   f"really made from it.)" if source_hint else ""),
                                 {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
+        if not (plan_in.get("needs_inputs") and plan_in.get("inputs")) and not plan_in.get("same_as") \
+                and source_hint and not plan_in.get("decided"):
+            made_from = (source_hint,)                    # no answer from the source step: the hint stands
         same = str(plan_in.get("same_as") or "")
         if same and same in ctx.asset_files and not tool:
             shutil.copyfile(ctx.asset_files[same], dst)
@@ -1311,7 +1317,7 @@ def source_inputs(ctx, desc, available, tool=None):
                     stage=f"preprod.onboard.{ctx.app}", purpose="P3 source pictures of a composite")
         ctx.budget.add(r.get("usd"))
         j = json.loads(r.get("text") or "{}")
-        return {**none, **j} if isinstance(j, dict) else none
+        return {**none, **j, "decided": True} if isinstance(j, dict) else none
     except Exception:  # noqa: BLE001 — treated as a plain picture
         return none
 
@@ -1692,12 +1698,14 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             note(r, "P3", "failed", asset=aid, why2=failed[aid])
             continue
         made_from = [m for m in pr.get("made_from") or [] if m in usable]
+        hint = None
         if not made_from and asset_kind(desc) == "app_generation":
-            prior = _prior_asset(answer, pr.get("word_id") or (r.get("word_ids") or [None])[0], pos, usable)
-            made_from = [prior] if prior else []
+            # the picture shown just before is only a HINT: the source step decides (re-run 5: the great-grandma restore
+            # was run on the hot-sauce photo because the nearest earlier picture was taken as its source)
+            hint = _prior_asset(answer, pr.get("word_id") or (r.get("word_ids") or [None])[0], pos, usable)
         wid0 = pr.get("word_id") or (r.get("word_ids") or [None])[0]
         row = produce_asset(ctx, aid, desc, made_from, sentence=r.get("sentence"),
-                            window=window_of(video, wid0) if wid0 is not None else r.get("sentence"))
+                            window=window_of(video, wid0) if wid0 is not None else r.get("sentence"), source_hint=hint)
         if row["status"] == "not_a_picture":            # a camera move / framing: the edit's job (D), not the app's
             note(r, "D", "not a picture — camera / framing in the edit (no generation)", asset=aid, why2=row.get("why"))
             continue

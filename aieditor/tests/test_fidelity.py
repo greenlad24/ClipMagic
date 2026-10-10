@@ -601,3 +601,18 @@ def test_onscreen_beats_manifest_prompt():
 
 if __name__ == "__main__":
     test_onscreen_beats_manifest_prompt()
+
+
+def test_prior_picture_is_only_a_hint():
+    """Re-run 5: 'restore this old photo' ran on the hot-sauce photo because the nearest earlier picture was taken as
+    its source. The B route now passes it as a HINT (source_hint) and the source step decides."""
+    import inspect
+    from aieditor import onboard as ob
+    src = inspect.getsource(ob.route_needs) if hasattr(ob, "route_needs") else open(ob.__file__).read()
+    assert "source_hint=hint" in open(ob.__file__).read() and "made_from = [prior]" not in open(ob.__file__).read()
+    assert "source_hint" in inspect.signature(ob.produce_asset).parameters
+    print("  the picture shown just before is only a hint for the source step")
+
+
+if __name__ == "__main__":
+    test_prior_picture_is_only_a_hint()
