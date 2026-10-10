@@ -88,6 +88,12 @@ for txt in ("Yes, it is.", '{"yes": "no"}', "[]", ""):
 
 
 # ── the tiers, with a fake model ──
+# Jake 2026-10-09: every judge tier runs Opus 5.5. The tier LOGIC (escalation) is tested with stand-in names,
+# so a tier is still identifiable in the log; the real constants must all be Opus.
+check("every judge tier is Opus 5.5", judges.HAIKU == judges.SONNET == judges.OPUS == "claude-opus-5-5")
+judges.HAIKU, judges.SONNET, judges.OPUS = "tier1-first-look", "tier2-second-look", "tier3-confirm"
+
+
 def fake(answers):
     log = []
 
@@ -137,8 +143,8 @@ mods = {(n.module or "") if isinstance(n, ast.ImportFrom) else a.name for n in a
 check("judges.py never talks HTTP itself (llm.py is the only API caller)",
       not mods & {"urllib", "urllib.request", "http", "http.client", "requests", "anthropic"})
 check("judges.py calls llm.messages", "llm.messages(" in src)
-check("the three tiers are Haiku, Sonnet, Opus", (judges.HAIKU, judges.SONNET, judges.OPUS)
-      == ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"))
+check("the three tiers all run Opus 5.5 in judges.py (Jake 2026-10-09)",
+      'HAIKU = SONNET = OPUS = "claude-opus-5-5"' in src)
 if judges._llm() is None:
     try:
         judges.TieredJudge(allow_spend=True).ask(judges.HAIKU, "q")

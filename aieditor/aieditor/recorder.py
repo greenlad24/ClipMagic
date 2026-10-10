@@ -48,7 +48,7 @@ HUMAN_PACE_S = (0.8, 2.0)               # off-camera actions at human pace (no b
 ACCOUNT = os.environ.get("AIEDITOR_ACCOUNT", "Jake")
 REPAIR_BEAT_USD = 0.50                   # recommendation §3 agent 3
 REPAIR_VIDEO_USD = 3.00
-REPAIR_MODEL = "claude-sonnet-5-5"
+REPAIR_MODEL = "claude-opus-5-5"   # Jake 2026-10-09: every AI call on Opus 5.5
 REPAIR_TURNS = 8
 DROP_KINDS = ("challenge", "account", "error")
 MAX_TAKE_STEPS = 400                     # a compiled take never needs more actions (a runaway script = step exhaustion)

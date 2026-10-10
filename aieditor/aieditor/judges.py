@@ -29,7 +29,9 @@ from pathlib import Path
 
 from . import config
 
-HAIKU, SONNET, OPUS = "claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"
+# Jake 2026-10-09: "I want all of them to use Opus 5.5" — every judge tier runs Opus 5.5 (the tiers stay as
+# escalation steps: a first look, a second look on disagreement, a confirmation)
+HAIKU = SONNET = OPUS = "claude-opus-5-5"
 DIMS = ("D1", "D3", "D4")
 SPAN_S = 110                       # the gap review scored 8 spans of 110 s
 TOL = 10.0                         # +-10 points per span (recommendation §4)

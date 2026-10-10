@@ -109,7 +109,7 @@ def preprod_factory(root):
     def fake_transport(body, stream, timeout):
         fmt = (body.get("output_config") or {}).get("format", {}).get("schema", {})
         props = fmt.get("properties", {})
-        if body["model"] == config.PLAN_MODEL:
+        if "segments" in props:                   # the plan call (every call is Opus 5.5 — route by its schema)
             calls.append("plan")
             # R13/C8: "Now look at this…" refers to the screen, so the screencast starts on it
             ans = {"segments": [{"start_word": ws[0]["i"], "end_word": ws[-1]["i"], "app": "chatgpt", "session": "logged_in",

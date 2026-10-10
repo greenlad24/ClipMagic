@@ -35,8 +35,8 @@ TAKES_MODEL = "claude-opus-5-5"
 # check (vision) on Sonnet. Off-camera generations are spaced GEN_SPACING_S apart (ChatGPT's "Unusual
 # activity" block) and regenerated at most GEN_REGENS times when they miss what the narration names.
 PLAN_MODEL = "claude-opus-5-5"
-OVERLAY_MODEL = "claude-sonnet-5-5"
-VISION_MODEL = "claude-sonnet-5-5"
+OVERLAY_MODEL = "claude-opus-5-5"   # Jake 2026-10-09: "I want all of them to use Opus 5.5"
+VISION_MODEL = "claude-opus-5-5"
 PLAN_REASKS = 2
 GEN_REGENS = 9                 # Jake 2026-10-09 (decision 5): "try again until succeeding (up to 10 tries)" = 1 + 9 regenerations
 GEN_SPACING_S = float(os.environ.get("AIEDITOR_GEN_SPACING_S") or 45)

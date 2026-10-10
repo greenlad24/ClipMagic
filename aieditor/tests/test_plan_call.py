@@ -76,12 +76,20 @@ class Fake:
     def __init__(self):
         self.q, self.bodies = {}, []
 
-    def queue(self, model, *answers):
-        self.q.setdefault(model, []).extend(answers)
+    # answers are filed by WHICH call asks (every call is Opus 5.5 now — Jake 2026-10-09)
+    def queue(self, role, *answers):
+        self.q.setdefault(role, []).extend(answers)
+
+    @staticmethod
+    def role(body):
+        sysp = body.get("system") or ""
+        sysp = sysp if isinstance(sysp, str) else json.dumps(sysp)
+        return ("plan" if director.PLAN_SYSTEM[:60] in sysp else
+                "overlay" if director.OVERLAY_SYSTEM[:60] in sysp else "vision")
 
     def __call__(self, body, stream, timeout):
         self.bodies.append(body)
-        ans = self.q[body["model"]].pop(0)
+        ans = self.q[self.role(body)].pop(0)
         ans = ans(body) if callable(ans) else ans
         return {"content": [{"type": "thinking", "thinking": "", "signature": "sig"},
                             {"type": "text", "text": json.dumps(ans)}], "stop_reason": "end_turn",
@@ -89,6 +97,9 @@ class Fake:
 
     def models(self):
         return [b["model"] for b in self.bodies]
+
+    def roles(self):
+        return [self.role(b) for b in self.bodies]
 
 
 FAKE = Fake()
@@ -198,7 +209,7 @@ def test_failed_plan():
     good = corrected_answer(rec)
     # 1st answer fails, the re-ask carries the errors, the 2nd (corrected) answer passes
     FAKE.bodies.clear()
-    FAKE.queue(config.PLAN_MODEL, rec, good)
+    FAKE.queue("plan", rec, good)
     res = director.plan_and_check(VIDEO, SITES, FACTS, playbooks=PBS, rulebook="(digest)")
     check(res["calls"] == 2 and not res["attempts"][1]["errors"] and res["attempts"][0]["errors"], "fail → re-ask → pass")
     check(not res["held"] and not res["needs_primitive"], "a passing plan is not held")
@@ -209,7 +220,7 @@ def test_failed_plan():
           "the re-ask lists the errors")
     check(b2["messages"][0] == FAKE.bodies[0]["messages"][0], "the first turn is unchanged")
     # three failing answers → needs_primitive + held
-    FAKE.queue(config.PLAN_MODEL, rec, rec, rec)
+    FAKE.queue("plan", rec, rec, rec)
     res3 = director.plan_and_check(VIDEO, SITES, FACTS, playbooks=PBS, rulebook="(digest)")
     check(res3["calls"] == 3 and res3["held"] and len(res3["needs_primitive"]) >= len(named),
           f"3 failures → held: {res3['calls']} calls, {len(res3['needs_primitive'])} needs_primitive")
@@ -224,7 +235,7 @@ def test_enum():
     pb = fixture_pb(proven)
     apps = director.apps_for(SITES, {"chatgpt": pb})
     FAKE.bodies.clear()
-    FAKE.queue(config.PLAN_MODEL, {"segments": [], "aroll": [], "plates": [], "needs_primitive": []})
+    FAKE.queue("plan", {"segments": [], "aroll": [], "plates": [], "needs_primitive": []})
     director.plan_call(VIDEO, apps, FACTS, rulebook="(digest)")
     body = FAKE.bodies[-1]
     sch = body["output_config"]["format"]["schema"]
@@ -354,7 +365,7 @@ def test_content_first():
         Path(dst).write_bytes(b"\x89PNG fake")
         return 0.06
     FAKE.bodies.clear()
-    FAKE.queue(config.VISION_MODEL, *([{"matches": False, "missing_objects": ["napkin"]}] * (config.GEN_REGENS + 1)),
+    FAKE.queue("vision", *([{"matches": False, "missing_objects": ["napkin"]}] * (config.GEN_REGENS + 1)),
                {"matches": True, "missing_objects": []})
     try:
         preprod.gen_photo = fake_photo
@@ -368,7 +379,7 @@ def test_content_first():
     check(a["photo2"]["status"] == "ready" and len(a["photo2"]["checks"]) == 1, "a matching picture passes first time")
     gaps = [b - x for x, b in zip(res["generations_at"], res["generations_at"][1:])]
     check(len(gaps) == config.GEN_REGENS + 1 and all(g >= 45 - 1e-9 for g in gaps), f"generations spaced >= 45 s (fake clock): {gaps}")
-    check(len(FAKE.bodies) == config.GEN_REGENS + 2 and all(b["model"] == config.VISION_MODEL for b in FAKE.bodies), "one Sonnet vision call each")
+    check(len(FAKE.bodies) == config.GEN_REGENS + 2 and all(b["model"] == config.VISION_MODEL for b in FAKE.bodies), "one Opus 5.5 vision call each")
     img = FAKE.bodies[0]["messages"][0]["content"][0]
     check(img["type"] == "image" and "napkin" in FAKE.bodies[0]["messages"][0]["content"][1]["text"], "the check sees the picture")
     check(FAKE.bodies[0]["output_config"]["format"]["schema"] == preprod.GEN_CHECK_SCHEMA, "{matches, missing_objects}")
@@ -381,16 +392,17 @@ def test_call_count(good):
     q0 = next(w["i"] for w in WORDS if w["word"] == "What" and 836 < w["start"] < 837)
     q1 = next(w["i"] for w in WORDS if w["word"] == "first?" and 837 < w["start"] < 838)
     FAKE.bodies.clear()
-    FAKE.queue(config.PLAN_MODEL, good)
-    FAKE.queue(config.OVERLAY_MODEL, {"overlays": [
+    FAKE.queue("plan", good)
+    FAKE.queue("overlay", {"overlays": [
         {"template": "keyword", "start": 13, "end": 20, "line1": "Drew with a mouse", "line2": "in about 10 seconds",
          "text": None, "items": [], "label": None, "value": None, "prefix": None, "suffix": None, "why": "hook"},
         {"template": "question", "start": q0, "end": q1, "line1": "What are you editing first?", "line2": None,
          "text": None, "items": [], "label": None, "value": None, "prefix": None, "suffix": None, "why": "outro question"}]})
     plan, raw, meta = director.plan(VIDEO, SITES, False, None, facts=FACTS, playbooks=PBS, rulebook="(digest)")
     models = FAKE.models()
-    check(models == [config.PLAN_MODEL, config.OVERLAY_MODEL], f"1 Opus + 1 Sonnet per plan: {models}")
-    check(meta["calls"] == {config.PLAN_MODEL: 1, config.OVERLAY_MODEL: 1}, f"meta calls {meta['calls']}")
+    check(FAKE.roles() == ["plan", "overlay"] and set(models) == {"claude-opus-5-5"},
+          f"1 plan call + 1 overlay call, both Opus 5.5 (Jake: all calls on Opus): {models}")
+    check(meta["calls"] == {"plan": 1, "overlay": 1}, f"meta calls {meta['calls']}")
     check(not plan["held"] and plan["segments"] and plan["overlays"], "plan + overlays")
     check(any(e.get("technique") == "TX03" and e.get("why") == "outro question" for e in plan["overlays"]),
           f"the Sonnet question → a TX03 line on the A-roll: {plan['overlays']}")

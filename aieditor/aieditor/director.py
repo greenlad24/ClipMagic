@@ -260,7 +260,7 @@ def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, ru
                plan_check={"attempts": [{"answer": a["answer"], "errors": [e["msg"] for e in a["errors"]]}
                                         for a in res["attempts"]], "apps": res["apps"], "action_ids": res["action_ids"]})
     meta = {"usd": round(res["usd"] + r2["usd"], 4), "seconds": res["seconds"] + round(r2["seconds"]),
-            "calls": {PLAN_MODEL: res["calls"], OVERLAY_MODEL: 1}}
+            "calls": {"plan": res["calls"], "overlay": 1}, "models": {"plan": PLAN_MODEL, "overlay": OVERLAY_MODEL}}
     return out, raw, meta
 
 

@@ -431,15 +431,17 @@ def transport(usd_in_tokens):
 
 
 llm.set_context(job="p7-job", workflow="creative", stage="graphics")
-llm.TRANSPORT = transport(300_000)                    # Sonnet 5.5 $2/M in: $0.60 for one call
+llm.TRANSPORT = transport(300_000)                    # Opus 5.5 $4/M in: $1.20 for one call (cap $0.50/beat)
+from aieditor import config as _cfg
+COST = 300_000 * _cfg.API_PRICES[R.REPAIR_MODEL]["in"] / 1e6
 bud = R.RepairBudget(TMP / "budget.json")
 sc = B.compile_segment(SEG, WORDS, PBX, 0)
 pg = FakePage(TMP / "rp")
 rp = R.repair_beat(pg, PBX, sc, sc["beats"][2], "assertion failed", bud, call=llm.messages)
 check(not rp["ok"] and rp["capped"] == "beat" and len(sent) == 1, f"usage over $0.50 stops the repair of that beat: {rp}")
 rows = [r for r in apiledger.rows() if str(r.get("purpose", "")).startswith("beat repair")]
-check(rows and abs(rows[-1]["usd"] - 0.6) < 1e-6 and rows[-1]["job"] == "p7-job", f"charged to the API ledger: {rows}")
-check(abs(bud.spent("b3") - 0.6) < 1e-6 and json.loads((TMP / "budget.json").read_text())["video_usd"] == 0.6, "and to the repair budget")
+check(rows and abs(rows[-1]["usd"] - COST) < 1e-6 and rows[-1]["job"] == "p7-job", f"charged to the API ledger: {rows}")
+check(abs(bud.spent("b3") - COST) < 1e-6 and abs(json.loads((TMP / "budget.json").read_text())["video_usd"] - COST) < 1e-6, "and to the repair budget")
 again = R.repair_beat(pg, PBX, sc, sc["beats"][2], "assertion failed", bud, call=llm.messages)
 check(not again["ok"] and len(sent) == 1, "no further call for a beat over its cap")
 bud2 = R.RepairBudget(beat_cap=0.5, video_cap=3.0)
