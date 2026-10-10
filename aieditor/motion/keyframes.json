@@ -10496,8 +10496,11 @@
       0.2,
       1.0
      ],
-     "note": "tile -> pill with the file name wiping in left->right: c0 f118, c1 f128, c2 f142, c3 f154, c4 f166 (12 frames apart), ~14 frames each"
-    }
+     "note": "tile -> pill with the file name wiping in left->right: c0 f118, c1 f128, c2 f142, c3 f154, c4 f166 (12 frames apart), ~14 frames each",
+     "soft_edge_px": 40
+    },
+    "tile_land_scale": 0.8,
+    "upload_note": "re-measured 2026-10-10 (rectified f84-f166): a tile lands where its slot will be but LOWER by the rooms not yet opened (its row + rows below), i.e. over the text, at ~0.8 of the pill height (glass square ~60 px), then rises into the slot as each row opens; the pill (fill + border + name) then wipes open to the right behind a ~40 px soft edge (~14 frames)"
    },
    "working": {
     "anchor": "working",
@@ -10529,6 +10532,159 @@
     "composer_out_s": 0.3,
     "panel_from_dy": 140,
     "note": "NEW (MO05) — not in the reference: reuses the measured entrance easing + tilt language; the camera pans up / pulls back to frame the app's real result panel above the composer"
+   },
+   "cursor_click": {
+    "_src": "COPIED from prompt_menu.kf.json cursor.entry / cursor.send.end_offset_frac_of_button / out.hold_after_click_s (measured on motion3) so the two templates share one cursor language. Table rows: [t s relative to the click, dx px, dy px from the rest point (send centre + offset x button d), alpha]; the last row is the arrival = the click.",
+    "entry": {
+     "table": [
+      [
+       -0.4503,
+       328,
+       38,
+       0
+      ],
+      [
+       -0.417,
+       314,
+       38,
+       0.087
+      ],
+      [
+       -0.3837,
+       300,
+       39,
+       0.215
+      ],
+      [
+       -0.3503,
+       286,
+       39,
+       0.335
+      ],
+      [
+       -0.317,
+       272,
+       41,
+       0.47
+      ],
+      [
+       -0.2837,
+       257,
+       43,
+       0.636
+      ],
+      [
+       -0.2503,
+       241,
+       44,
+       0.756
+      ],
+      [
+       -0.217,
+       225,
+       46,
+       0.9
+      ],
+      [
+       -0.1837,
+       208,
+       46,
+       1
+      ],
+      [
+       -0.1503,
+       190,
+       46,
+       1
+      ],
+      [
+       -0.117,
+       172,
+       46,
+       1
+      ],
+      [
+       -0.0837,
+       153,
+       45,
+       1
+      ],
+      [
+       -0.0503,
+       134,
+       42,
+       1
+      ],
+      [
+       -0.017,
+       114,
+       39,
+       1
+      ],
+      [
+       0.0163,
+       95,
+       36,
+       1
+      ],
+      [
+       0.0497,
+       74,
+       30,
+       1
+      ],
+      [
+       0.083,
+       54,
+       24,
+       1
+      ],
+      [
+       0.1163,
+       33,
+       15,
+       1
+      ],
+      [
+       0.1497,
+       12,
+       6,
+       1
+      ],
+      [
+       0.183,
+       0,
+       0,
+       1
+      ]
+     ]
+    },
+    "end_offset_frac_of_button": [
+     0.116,
+     0.128
+    ],
+    "press_scale": 1.0,
+    "hold_after_click_s": 0.5,
+    "result_after_click_s": 0.35,
+    "fade_on_result_s": 0.2,
+    "default_on": [
+     "claude"
+    ],
+    "note": "end_on_click (Jake 2026-10-10, Claude look): no 'working' state / no messages above the card; the clip ends hold_after_click_s after the click (hard cut), or goes on to the result stage"
+   },
+   "message": {
+    "card_to_scale": 0.82,
+    "card_drop_px": 140,
+    "card_out_s": 0.3,
+    "view_from_scale": 0.94,
+    "reveal_at_s": 0.3,
+    "block_stagger_s": 0.06,
+    "block_fade_s": 0.2,
+    "scroll_after_s": 1.8,
+    "scroll_css_px_per_s": 70,
+    "artifact_at_s": 0.25,
+    "artifact_dur_s": 0.5,
+    "note": "MO05 in the kit's conversation view (Claude): NOT in the reference — uses the measured result ease [0.2,0.8,0.5,1] / 0.6 s + the tilt bump; reply blocks fade in top-down (stream-like), then the column scrolls; the artifact panel slides in from the right"
    }
   },
   "prompt_highlight": {
@@ -10984,7 +11140,9 @@
     "default_after_pick_s": 0.361,
     "hold_after_out_s": 0.667,
     "exit": "cut",
-    "_note": "the reference ends on a hard cut 0.667 s after the cursor starts toward the send button (it has just arrived)"
+    "_note": "the reference ends on a hard cut 0.667 s after the cursor starts toward the send button (it has just arrived)",
+    "hold_after_click_s": 0.5,
+    "_note_menu_false": "menu:false (composer only): the cursor's measured entry glide lands on the send button on 'out' (the click); the clip holds 0.5 s and cuts"
    },
    "reference_beats": {
     "in": 0.0,
@@ -10996,7 +11154,22 @@
     "pick": 4.122,
     "out": 4.483
    },
-   "reference_duration_s": 5.15
+   "reference_duration_s": 5.15,
+   "typing": {
+    "rate_cps": 71.0,
+    "ease": [
+     0.9,
+     0.9,
+     0.7,
+     0.9
+    ],
+    "caret_hide_after_s": 0.47,
+    "caret_blink": false,
+    "start_after_pan_s": 0.1,
+    "start_after_in_s": 0.3,
+    "out_after_typing_s": 0.3,
+    "_note": "motion3 has no typing; the typing for the 'prompt' parameter is the MEASURED typing of motion4 (prompt_card_3d.kf.json typing: 110 chars in 1.55 s, 71 cps, ease, caret solid, gone 0.47 s after the last char). It starts 0.1 s after the collapse pan settles (or on beat 'type'); 'out' waits until 0.3 s after the last char."
+   }
   },
   "tagline_build": {
    "id": "tagline_build",
@@ -13730,7 +13903,9 @@
      1.1448,
      1.1463,
      1.1487
-    ]
+    ],
+    "hold_s": 2.0,
+    "_hold_note": "Jake 2026-10-10: keep the push-in running 1 s longer at the same pace -> hold_s = measured 1.0 s (f30-f89) + 1.0 s; beyond the 60 measured frames the scale continues linearly at k_per_s (0.084/s). With wipe off (default) 'out' = the hard cut = push + hold_s."
    },
    "out": {
     "_note": "beat 'out' = the dock rail starts fading in at the right frame edge; the handles then fly (ease-in, accelerate) into the rail's tab, each landing as a spinner ring; hard cut to the next shot 0.628 s after 'out'",
@@ -13786,7 +13961,12 @@
     }
    },
    "grid_cut": "hard (1 frame) at push start",
-   "exit": "hard cut at duration (= out + cut_after_out_s)"
+   "exit": "wipe off (default): hard cut at push + hold_s (beat 'out'); wipe on: hard cut at out + cut_after_out_s",
+   "defaults": {
+    "dots": false,
+    "wipe": false,
+    "_note": "Jake 2026-10-10 review: remove the dots and the right black bar; the measured dot/rail motion is kept in this file for the optional params"
+   }
   },
   "verb_swap": {
    "_doc": "verb_swap MEASURED motion (motion1.mp4, 30 fps, frame 1 = t 0). Design-free: times in s relative to the beat named in 'rel', travel in em of the line's font size, easings = fitted cubic-bezier [x1,y1,x2,y2] (max error in brackets). Words POP (opacity 0->1 in one frame, no blur, no scale); motion is horizontal only.",
