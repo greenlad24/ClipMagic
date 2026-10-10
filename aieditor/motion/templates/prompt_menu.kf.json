@@ -326,7 +326,12 @@
   },
   "menu_opacity": {
    "hide_at_s": 0.145,
-   "_note": "no fade: still fully opaque at +0.128 s, gone at +0.161 s"
+   "_note": "no fade: still fully opaque at +0.128 s, gone at +0.161 s",
+   "kit_fade_s": [
+    0.08,
+    0.161
+   ],
+   "_kit_fade_note": "kits only (60 fps): linear fade +0.08 -> +0.161 s (gone exactly when the measured cut ends) instead of a one-frame cut \u2014 Jake round 3 'glitch'. DEVIATES from the 30 fps reference sample (opaque at +0.128 s; here 42 %): a fade starting at +0.10 s or later still read as a 1.5 px whole-frame reversal. The neutral reference keeps the cut."
   }
  },
  "out": {
@@ -373,6 +378,9 @@
    1
   ],
   "chip_dur": 0.25,
-  "_note": "NOT measured (no reference shows it): kit composers ease their text block to each new natural height (a wrapped line, a pill, an attachment tile) and fade/scale an attachment tile in \u2014 Jake round 3: 'not as smooth / glitches'. Positions are history-free per frame."
+  "_note": "NOT measured (no reference shows it): kit composers ease their text block to each new natural height (a wrapped line, a pill, an attachment tile) and fade/scale an attachment tile in \u2014 Jake round 3: 'not as smooth / glitches'. Positions are history-free per frame.",
+  "chip_delay_s": 0.15,
+  "_chip_delay_note": "round 3: an image/file tile lands at pick + 0.15 s (after the menu is gone) so the composer never grows over the collapsing menu; the pan targets the composer height WITH the tile. NOT measured.",
+  "_flip_note": "round 3: the composer box eases its height and the text block + its siblings (ChatGPT: + / text / tools; Claude: input / row) glide on the same curve (FLIP); single->multi-line switches on ANY overflow (sub-pixel included), never an ellipsis frame"
  }
 }

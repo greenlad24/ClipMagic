@@ -143,7 +143,7 @@
       const te = ts + typeDur;
       const out = B.out != null ? Math.max(Number(B.out), te) : te + TY.out_after_typing_s + 0.183;
       const dur = scene.duration != null ? scene.duration : out + K.out.hold_after_click_s;
-      return { tin, h: [], pick: Infinity, out, dur, ts, te, TY, noMenu: true };
+      return { tin, h: [], pick: Infinity, out, dur, ts, te, TY, noMenu: true, chipAt: Infinity };
     }
     const n = p.pick + 1;
     const tin = B.in != null ? B.in : 0;
@@ -172,7 +172,12 @@
     const outMin = Math.max(pick + K.collapse.composer_pan.dur, p.prompt ? te + TY.out_after_typing_s : 0);
     const out = B.out != null ? Math.max(Number(B.out), outMin) : Math.max(pick + K.out.default_after_pick_s, outMin);
     const dur = scene.duration != null ? scene.duration : out + K.out.hold_after_out_s;
-    return { tin, h, pick, out, dur, ts, te, TY };
+    // an attachment tile (image / file chip) lands once the menu is gone (real app: the file dialog closes after the
+    // menu), so the composer never grows over the collapsing menu — Jake round 3 'attach a file isn't smooth'
+    const GRk = K.kit_growth || {};
+    const ck = (p.chip && p.chip.kind) || "";
+    const chipAt = scene.kit && (ck === "image" || ck === "file") ? pick + (GRk.chip_delay_s != null ? GRk.chip_delay_s : 0) : pick;
+    return { tin, h, pick, out, dur, ts, te, TY, chipAt };
   }
 
   // ───────────────────────────── neutral look (the reference's own composer) ─────────────────────────────
@@ -264,8 +269,8 @@
       rowBand(i) { return { x: R.band_x, y: R.first_band_top + i * R.pitch, w: menuW - R.band_x - R.band_r_inset, h: R.band_h, pitch: R.pitch }; },
       sendCenter() { return { x: C.w - SD.cx_from_right, y: C.h - SD.cy_from_bottom, d: SD.d }; },
       menu, comp,
-      setState(hover, text, committed, typed, caret) {
-        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret;
+      setState(hover, text, committed, typed, caret, chipOn) {
+        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret + "|" + chipOn;
         if (key === lastKey) return;
         lastKey = key;
         if (typed || caret) {
@@ -430,9 +435,28 @@
       menu: menuWrap, comp: compWrap,
       textBlock() { return (KC.text_sel && compIn.querySelector(KC.text_sel)) || (compIn.querySelector(KC.prompt_sel || ".pm-none") || {}).parentElement || null; },
       compNatural() { const c = compIn.firstElementChild; return c ? c.offsetHeight : 0; },
+      // FLIP targets: the text block and its layout siblings (ChatGPT: + / text / tools; Claude: input / row)
+      fxEls() { const tb = api.textBlock(); return tb && tb.parentElement ? Array.from(tb.parentElement.children) : []; },
+      clearFx() {
+        const root = compIn.firstElementChild;
+        if (root) root.style.height = "";
+        api.fxEls().forEach((e) => { e.style.transform = ""; e.style.marginBottom = ""; });
+      },
+      snap() {
+        // natural geometry: root height + every target's position (the text block's = where its TEXT starts)
+        const root = compIn.firstElementChild, tb = api.textBlock();
+        if (!root) return { h: 0, r: [] };
+        const r = api.fxEls().map((e) => {
+          const o = offsetIn(e, root);
+          if (e !== tb) return [o.x, o.y];
+          const cs = getComputedStyle(e);
+          return [o.x + (parseFloat(cs.paddingLeft) || 0), o.y + (parseFloat(cs.paddingTop) || 0)];
+        });
+        return { h: root.offsetHeight, r };
+      },
       chipIn(u) { const c = compIn.querySelector("[data-pm-chip]"); if (c && p.chip && (p.chip.kind === "image" || p.chip.kind === "file")) { c.style.opacity = u; c.style.transform = `scale(${0.92 + 0.08 * u})`; c.style.transformOrigin = "0 100%"; } },
-      setState(hover, text, committed, typed, caret) {
-        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret;
+      setState(hover, text, committed, typed, caret, chipOn) {
+        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret + "|" + chipOn;
         if (key === lastKey) return;
         lastKey = key;
         rowEls.forEach((e, i) => e && e.classList.toggle(hoverCls, i === hover));
@@ -450,6 +474,8 @@
             prompt = "";
             const c = p.chip || {};
             state = `<div class="pm-indicator" style="position:absolute;${c.style || "left:52px;bottom:12px"};height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:8px;font:500 13px Inter,sans-serif;color:${c.color || "#5ea8ff"};background:${c.bg || "rgba(94,168,255,0.14)"}">${c.icon_html || ""}${esc(c.name || text)}</div>`;
+          } else if ((ck === "image" || ck === "file") && kit.chip && kit.chip.html && !chipOn) {
+            prompt = ""; // the file is still on its way (chipAt): the composer keeps its empty look
           } else if ((ck === "image" || ck === "file") && kit.chip && kit.chip.html) {
             const c = p.chip || {};
             chips = TR.fill(kit.chip.html, { name: c.name || text, kind: ck, icon_html: "", thumb_html: c.thumb_src ? `<img src="${c.thumb_src}" alt="">` : "" });
@@ -463,10 +489,27 @@
         if (chips) chips = chips.replace(/^\s*<([a-z0-9]+)/i, '<$1 data-pm-chip="1"');
         const modelLabel = KM.model && committed ? p.items[p.pick].label + (KM.label_suffix || "") : KC.model || kit.model_label || "";
         compIn.innerHTML = TR.fill(KC.html, { prompt, placeholder: placeholder || (prompt || chips ? "" : KC.placeholder || ""), chips_html: chips, state_html: state, caret_html: caret ? (KC.caret_html || caretCls || '<span class="pm-caret" style="display:inline-block;width:1.5px;height:1.05em;margin-left:1px;vertical-align:-0.15em;background:currentColor"></span>') : "", layout_class: "", model: modelLabel, model_label: KM.model && committed ? modelLabel : kit.model_label || KC.model || "" });
+        // the caret lives INSIDE the prompt element: where the kit makes the prompt a block (ChatGPT under an attachment
+        // tile) a caret after it would sit on a line of its own — the composer grew a line while typing and shrank again
+        // when the caret went (Jake round 3 'attach a file isn't smooth')
+        if (caret && KC.prompt_sel) {
+          const pe = compIn.querySelector(KC.prompt_sel);
+          const cEl = pe && pe.parentElement.querySelector(':scope > [class*="caret"]');
+          if (cEl) pe.appendChild(cEl);
+        }
         // single-line until the typed text no longer fits its field (measured on the real DOM — never an ellipsis)
         if (KC.multiline_over_px) {
           const te = compIn.querySelector(KC.text_sel || ".cg-text");
-          if (te && te.scrollWidth > te.clientWidth + 1 && compIn.firstElementChild) compIn.firstElementChild.classList.add("is-multiline");
+          // any overflow at all — sub-pixel included (scrollWidth rounds, and text-overflow:ellipsis would paint '…' for
+          // one frame: Jake round 3 'typing glitch')
+          let over = te && te.scrollWidth > te.clientWidth;
+          if (te && !over) {
+            const rg = document.createRange(); rg.selectNodeContents(te);
+            const cs = getComputedStyle(te), tr = te.getBoundingClientRect(), f = tr.width / (te.offsetWidth || 1);
+            const inner = tr.width - ((parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)) * f;
+            over = rg.getBoundingClientRect().width > inner - 0.25 * f;
+          }
+          if (over && compIn.firstElementChild) compIn.firstElementChild.classList.add("is-multiline");
         }
       },
     };
@@ -525,9 +568,9 @@
         typed = p.prompt.slice(0, Math.round(u * p.prompt.length));
         caret = tt < tl.te + (tl.TY.caret_hide_after_s || 0.47);
       }
-      return [p.menu ? hover : null, hover == null || !p.menu ? "" : p.items[hover].label, committed, typed, caret, tt];
+      return [p.menu ? hover : null, hover == null || !p.menu ? "" : p.items[hover].label, committed, typed, caret, tt >= tl.chipAt - 1e-6];
     };
-    const apply = (tt) => ui.setState(...stateAt(tt));
+    const apply = (tt) => { if (ui.clearFx) ui.clearFx(); ui.setState(...stateAt(tt)); };
     // Every frame is computed WITHOUT history (frames may be rendered in any order / in parallel chunks):
     // the centring uses the layout just before the click (menu) or at 'in' (composer only); the pan target uses the
     // composer's height right after the commit; later growth (typed lines, a tile) extends the composer downward.
@@ -538,44 +581,33 @@
     let compHFinal = P0.compH;
     if (!tl.noMenu && t >= tl.pick) {
       ui.frozen = P0.L;
-      apply(tl.pick + 1e-4);
+      apply(Math.max(tl.pick, tl.chipAt) + 1e-4);
       ui.layout();
       compHFinal = ui.geo.compH;
     }
     ui.frozen = !tl.noMenu && t >= tl.pick ? P0.L : null;
     // kits: the text block's height eases to each new natural height (a wrapped line, a pill, an attachment tile)
     const GR = K.kit_growth || { dur: 0.18, ease: [0.25, 0.1, 0.25, 1] };
-    if (ui.textBlock && GR.dur > 0) {
-      // natural composer geometry at tt (root height + the text block's offset; all reflows included)
-      const nat = (tt) => {
-        apply(Math.max(0, tt));
-        const e = ui.textBlock();
-        if (e) { e.style.marginBottom = ""; e.style.transform = ""; }
-        if (!e) return { h: ui.compNatural(), x: 0, y: 0 };
-        // where the TEXT starts (content box: offset + padding), not the block, so a padding change is followed too
-        const cs = getComputedStyle(e);
-        return { h: ui.compNatural(), x: e.offsetLeft + (parseFloat(cs.paddingLeft) || 0), y: e.offsetTop + (parseFloat(cs.paddingTop) || 0) };
-      };
-      const same = (u, v) => u.h === v.h && u.x === v.x && u.y === v.y;
+    if (ui.snap && GR.dur > 0) {
+      // natural geometry at tt (all reflows included), measured with no effects applied
+      const nat = (tt) => { apply(Math.max(0, tt)); return ui.snap(); };
+      const same = (u, v) => u.h === v.h && u.r.length === v.r.length && u.r.every((q, i) => Math.abs(q[0] - v.r[i][0]) < 0.01 && Math.abs(q[1] - v.r[i][1]) < 0.01);
       const b = nat(t), a = nat(t - GR.dur);
-      let disp = b.h, dx = 0, dy = 0;
+      let disp = b.h, d = null;
       if (!same(a, b)) {
         let lo = t - GR.dur, hi = t;
-        for (let i = 0; i < 7; i++) { const m = (lo + hi) / 2; if (same(nat(m), b)) hi = m; else lo = m; }
+        for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (same(nat(m), b)) hi = m; else lo = m; }
         const h0 = nat(lo), u = TR.ease(GR.ease)(TR.clamp((t - hi) / GR.dur, 0, 1));
         disp = h0.h + (b.h - h0.h) * u;
-        dx = (h0.x - b.x) * (1 - u); dy = (h0.y - b.y) * (1 - u);
+        if (h0.r.length === b.r.length) d = b.r.map((q, i) => [(h0.r[i][0] - q[0]) * (1 - u), (h0.r[i][1] - q[1]) * (1 - u)]);
       }
       apply(t);
-      const e = ui.textBlock();
-      if (e) {
-        // the composer box eases to its new height (the text row is shortened by a negative bottom margin) and the
-        // text block glides from where it was to its reflowed place (FLIP) — nothing pops, nothing overlaps
-        e.style.marginBottom = ""; e.style.transform = "";
-        if (disp !== b.h) e.style.marginBottom = (parseFloat(getComputedStyle(e).marginBottom) || 0) + (disp - b.h) + "px";
-        if (dx || dy) e.style.transform = `translate(${dx}px,${dy}px)`;
-      }
-      if (ui.chipIn) ui.chipIn(TR.ease(GR.ease)(TR.clamp((t - tl.pick) / (GR.chip_dur || 0.25), 0, 1)));
+      // FLIP: the composer box eases to its new height while the text block and its siblings (+ / tools / row)
+      // glide from where they were to their reflowed places on the SAME curve — nothing pops, nothing reverses
+      const root = ui.comp.firstElementChild && ui.comp.firstElementChild.firstElementChild;
+      if (root && disp !== b.h) root.style.height = disp + "px";
+      if (d) ui.fxEls().forEach((e, i) => { if (d[i] && (d[i][0] || d[i][1])) e.style.transform = `translate(${d[i][0]}px,${d[i][1]}px)`; });
+      if (ui.chipIn) ui.chipIn(TR.ease(GR.ease)(TR.clamp((t - tl.chipAt) / (GR.chip_dur || 0.25), 0, 1)));
     } else apply(t);
     const L = ui.layout();
     const g = ui.geo;
@@ -596,6 +628,14 @@
     const msc = TR.lerp(ms.from, ms.to, TR.prog(t, tl.pick + ms.start, ms.dur, ms.ease === "linear" ? null : ms.ease));
     ui.menu.style.transform = `scale(${msc})`;
     ui.menu.style.visibility = t >= tl.pick + CP.menu_opacity.hide_at_s ? "hidden" : "visible";
+    // kits (60 fps): the removal is spread over the measured bracket (opaque at +0.128 s, gone at +0.161 s) instead of a
+    // hard cut on one frame — Jake round 3 'glitch' on Create image / Deep research
+    const MF = CP.menu_opacity.kit_fade_s;
+    if (scene.kit && scene.kit.composer && MF) {
+      const fo = 1 - TR.clamp((t - tl.pick - MF[0]) / (MF[1] - MF[0]), 0, 1);
+      ui.menu.style.visibility = fo > 0 ? "visible" : "hidden";
+      ui.menu.style.opacity = fo;
+    }
 
     // cursor (screen space; not part of the panning group)
     const C = K.cursor;

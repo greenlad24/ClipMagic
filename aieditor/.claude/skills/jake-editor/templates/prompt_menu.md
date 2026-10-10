@@ -118,9 +118,11 @@ Kit looks (round 3, Jake: "glitch / jitter / not smooth"):
 - Each frame is computed from t alone, with no state carried from earlier frames.
 - Kits move at the render fps (no 30 fps hold; the neutral reference keeps it).
 - A kit composer only ever grows downward. Its box eases to each new height (0.18 s): a wrapped line, the single-line → multi-line switch, a pill, a tile.
-- The text glides from its old place to the reflowed one, so nothing pops or overlaps.
-- An attachment tile fades and scales in (0.25 s).
-- The single-line → multi-line switch is decided on the real DOM, so the text is never shown with an ellipsis.
+- The text block AND its siblings (ChatGPT: + / text / tools; Claude: input / button row) glide from their old places to the reflowed ones on the same curve as the box (FLIP), so nothing pops, overlaps or moves back.
+- An attachment tile lands 0.15 s after the pick (once the menu is gone, `kit_growth.chip_delay_s`), then fades and scales in (0.25 s). The composer never grows over the collapsing menu.
+- The single-line → multi-line switch is decided on the real DOM on ANY overflow (sub-pixel included), so the text is never shown with an ellipsis.
+- The typing caret sits inside the prompt element, so it never takes a line of its own (under a tile it used to add a line and drop it again).
+- Kits fade the menu out across the measured bracket (+0.128 → +0.161 s, `collapse.menu_opacity.kit_fade_s`) instead of cutting it on one frame. The neutral reference keeps the cut.
 
 The params these presets add (all optional; the defaults reproduce the reference):
 
