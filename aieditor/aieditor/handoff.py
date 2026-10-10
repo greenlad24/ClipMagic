@@ -131,7 +131,8 @@ def plan(d, req, edl, log=print, progress=None):
     if progress:
         progress("Claude is planning the edit (screencast slots + overlays)…", 0.2)
     p, raw, meta = director.plan(video, sites, bool(req.get("sponsored")), None, facts=planfit.Facts(),
-                                 rulebook=director.rulebook_digest(skill.rulebook_text()), handoff=True)
+                                 rulebook=director.rulebook_digest(skill.rulebook_text()), handoff=True,
+                                 cache=out / "plan-sections.json")
     usd += float(meta.get("usd") or 0)
     notes = [{"sentence": n.get("sentence"), "why": n.get("why"), "word_ids": n.get("word_ids") or []}
              for n in p.get("needs_primitive") or []]

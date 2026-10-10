@@ -13,7 +13,7 @@ stage reads (no human reads them):
                      image model and in-app generations, spaced config.GEN_SPACING_S apart; each generation is
                      checked by ONE Sonnet vision call against the objects the narration names and regenerated
                      at most config.GEN_REGENS times — after that it is needs_asset (the job is held)
-  plan.json          ONE Opus plan call (director.plan_call: the closed action list of each app's proven
+  plan.json          the sectioned Opus plan calls (director.plan_and_check: the closed action list of each app's proven
                      playbook actions) + the plan check (re-asked <= 2 times; what is still missing goes to
                      needs_primitive and the job is held) + ONE Sonnet overlay call (planfit.overlays_fit)
   shotlist.json      the checked plan in the shot shape set dressing / dry run / gate read (no model call)
@@ -1605,8 +1605,11 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         video = job_video(job, ranges)
         sites = job.sites or [{"url": app.site, "note": ""}]
         facts = planfit.Facts(readiness, assets)
+        # sectioned plan; each section's answer is kept in plan-sections.json as it arrives, so a rerun after a
+        # failure reuses them (never a second full plan)
         plan, raw, meta = director.plan(video, sites, bool(job.request.get("sponsored")), None, facts=facts,
-                                        rulebook=director.rulebook_digest(skill.rulebook_text()))
+                                        rulebook=director.rulebook_digest(skill.rulebook_text()),
+                                        cache=out / "plan-sections.json")
         costs["claude_usd"] = round(costs.get("claude_usd", 0) + meta["usd"], 4)
         jdump(costs, out / "costs.json")
         held = held_items(plan, assets)
@@ -1746,9 +1749,22 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
         except InterruptedError:
             raise
         except Exception as e:  # noqa: BLE001 — factory rule: route, don't fail
-            log(f"pre-production flow failed ({type(e).__name__}: {e}) — the plan runs on the Scout report only")
             g["flow"] = {"app": row["url"], "status": "failed", "error": f"{type(e).__name__}: {e}"[:400]}
             note += "; pre-production flow failed (see log)"
+            pp = out / "plan.json"
+            if pp.exists() and pp.stat().st_mtime >= edl_at:
+                log(f"pre-production flow failed ({type(e).__name__}: {e}) after the plan — the edit records "
+                    "pre-production's plan.json")
+                g["held"] = list((json.loads(pp.read_text()).get("held")) or [])
+            else:
+                # 2026-10-10: the graphics stage used to plan the whole video AGAIN here (and hit the API cap).
+                # No plan from pre-production → the job is held with the reason; a rerun reuses the section
+                # answers already paid for (preprod/plan-sections.json).
+                log(f"pre-production flow failed ({type(e).__name__}: {e}) before a plan was made — HELD "
+                    "(no second plan in the graphics stage)")
+                g["held"] = [{"reason": "plan_failed", "detail": f"pre-production failed before a plan was made: "
+                                                                 f"{type(e).__name__}: {e}"[:300]}]
+                note += "; HELD (plan_failed)"
     jdump(g, out / "gate.json")
     return {"note": note, "usd": usd}
 

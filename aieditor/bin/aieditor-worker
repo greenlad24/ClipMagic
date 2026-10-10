@@ -452,7 +452,7 @@ def run_preprod(job, req, info, fps):
     job.log(f"stage preprod done {note}")
     job.stage("preprod", "done", note)
     held = (jload(d / "preprod" / "gate.json") or {}).get("held") or []
-    for kind in ("needs_primitive", "needs_asset"):          # this run decides afresh
+    for kind in ("needs_primitive", "needs_asset", "plan_failed"):          # this run decides afresh
         longedit.clear_held(d, kind)
     if held:
         # the plan needs an action no playbook has proven, or an asset failed its generation check: held

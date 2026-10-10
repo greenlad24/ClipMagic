@@ -178,11 +178,24 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     plan_p = w / "direct.json"
     pre_plan = d / "preprod" / "plan.json"
     if not _fresh(plan_p, edl_at):
+        try:
+            pre_gate = json.loads((d / "preprod" / "gate.json").read_text())
+        except (OSError, ValueError):
+            pre_gate = {}
+        pre_tried = ((pre_gate.get("flow") or {}).get("status") == "failed"
+                     or _fresh(d / "preprod" / "plan-sections.json", edl_at))
         if k == 1 and _fresh(pre_plan, edl_at):
-            # pre-production already made THE plan (one Opus call + check + one Sonnet overlay call): reuse it
+            # pre-production already made THE plan (sectioned calls + check + the overlay call): reuse it
             pdoc = json.load(open(pre_plan))
             plan, raw, meta = pdoc["plan"], pdoc["raw"], {**pdoc.get("meta", {}), "usd": 0.0, "from": "preprod/plan.json"}
             sites = pdoc.get("sites") or sites
+        elif k == 1 and pre_tried:
+            # 2026-10-10: pre-production planned (or failed while planning) and left no plan.json — planning the
+            # whole video again here cost $2.53 more and hit the API cap. Never a second plan: held with the reason.
+            why = (pre_gate.get("flow") or {}).get("error") or "pre-production left no plan.json"
+            add_held(d, "plan_failed", f"no plan from pre-production ({why})"[:300])
+            log(f"edit {k}: no plan from pre-production ({why}) — held, not planned a second time")
+            return f"edit {k}: held — no plan from pre-production", usd
         else:
             progress("Claude is planning the edit (screencasts + graphics)…", 0.02)
             plan, raw, meta = director.plan(video, sites, sponsored, knowledge, facts=facts)
