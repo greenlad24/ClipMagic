@@ -320,6 +320,14 @@ class Producer:
         from . import onboard
         if route.get("no_prompt"):
             return ""                                  # the tool's click: no text at all
+        if self.cur.get("verbatim") and self.cur.get("prompt"):
+            # his on-screen prompt (+ the impressive paragraph): NO route may rewrite it (TEST v3 re-run 4: the planner
+            # swapped it for "a single-line prompt naming all objects"); a miss may only add its objects at the end
+            p = str(self.cur["prompt"]).strip()
+            miss = [m for m in (missing or route.get("missing") or []) if m]
+            if miss:
+                p = p.rstrip(". ") + ". It must clearly show " + ", ".join(miss) + "."
+            return " ".join(p.split())                 # one line: a newline in a composer can send early
         if route.get("prompt") is not None and route.get("prompt") != "" and (self.cur.get("verbatim") or not route.get("look_boost")):
             p = route["prompt"]
         elif route.get("look_boost") and not self.cur.get("verbatim"):
@@ -343,7 +351,7 @@ class Producer:
             p = p.rstrip(". ") + ". It must clearly show " + ", ".join(miss) + "."
         if route.get("clean_boost") and not self.cur.get("verbatim"):
             p = p.rstrip(". ") + ". " + CLEAN_ASK
-        return p.strip()
+        return " ".join(p.split())                     # one line: a newline in a composer can send early
 
     # ── one try ──
     def _start_url(self, route):

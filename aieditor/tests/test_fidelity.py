@@ -292,7 +292,7 @@ def test_look_wording():
     row = onboard.produce_asset(ctx, "canyon", "the app's picture of him at the Grand Canyon", sentence=said)
     # his words verbatim FIRST; an impressive result gets one added paragraph after them (Jake 2026-10-10)
     check(row["status"] == "ready" and world.sends[0]["prompt"] == onboard.verbatim_plus(said, "impressive")
-          and world.sends[0]["prompt"].startswith(said + "\n\n"), f"verbatim + paragraph: {world.sends[0]['prompt']}")
+          and world.sends[0]["prompt"].startswith(said + " "), f"verbatim + paragraph: {world.sends[0]['prompt']}")
     # a real photo: the new-photo prompt carries the real cues, never gloss
     tp.fresh_ledger()
     llm2 = llm_by_purpose({"person request": {"typed": "", "on_screen": False, "narrated": "", "as_words": "",
@@ -573,7 +573,7 @@ def test_verbatim_plus():
     from aieditor import onboard as ob
     w = "Turn this rough sketch into a realistic photo — a glass squat hot sauce bottle on a weathered wooden picnic table"
     out = ob.verbatim_plus(w, "impressive")
-    assert out.startswith(w + "\n\n") and "impressive" in out, out          # his words first, untouched; one paragraph
+    assert out.startswith(w + " ") and "impressive" in out and "\n" not in out, out          # his words first, untouched; one paragraph
     assert ob.verbatim_plus(w, "real") == w and ob.verbatim_plus(w, "faithful") == w
     print("  on-screen prompt: verbatim + one impressive paragraph off camera; real/faithful untouched")
 

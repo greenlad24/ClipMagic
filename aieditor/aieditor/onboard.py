@@ -864,8 +864,12 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
     # a picture MADE FROM other pictures (a merge of three photos, an edit of a reference, a tool on a photo, a new shot
     # of the video's hero product) is made for real: its source pictures first (reusing one the video already has),
     # then the app's own edit / tool on them — never a single invented "merge" (TEST v3)
-    if not made_from and not getattr(ctx, "_composing", False) and (not tool or on_source):
-        plan_in = source_inputs(ctx, desc, {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
+    multi = _multi_source(" ".join(str(x or "") for x in (desc, sentence, window)))
+    if (not made_from or (multi and len(made_from) < 2)) and not getattr(ctx, "_composing", False) and (not tool or on_source):
+        # a linked single prior picture is not enough when the narration merges several (TEST v3 re-run 4: the 3-photo
+        # merge was made as one edit of the bottle photo — the person and the stall were never made)
+        plan_in = source_inputs(ctx, " ".join(x for x in (str(desc), str(window or "")) if x),
+                                {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
         same = str(plan_in.get("same_as") or "")
         if same and same in ctx.asset_files and not tool:
             shutil.copyfile(ctx.asset_files[same], dst)
@@ -1015,7 +1019,7 @@ def verbatim_plus(words, look):
     ONE added paragraph that lifts the result. His words are never edited, reordered or trimmed."""
     w = str(words or "").strip()
     if look == "impressive" and w:
-        return f"{w}\n\n{IMPRESSIVE_PARAGRAPH}"
+        return f"{w} {IMPRESSIVE_PARAGRAPH}"            # one line: a newline typed in a composer can send early
     return w
 
 
@@ -1273,6 +1277,15 @@ INPUTS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
                                                                       "required": ["id", "desc"],
                                                                       "properties": {"id": {"type": "string"},
                                                                                      "desc": {"type": "string"}}}}}}
+
+
+_MULTI_RX = re.compile(r"\b(?:two|three|four|several|multiple|both|these)\s+(?:\w+\s+){0,2}(?:photos|images|pictures|sources|"
+                       r"shots)\b|\bmerge\b|\bcombine\b|\bblend\b", re.I)
+
+
+def _multi_source(text):
+    """Does the narration make ONE picture out of several (a merge, three photos)? Generic wording, any app."""
+    return bool(_MULTI_RX.search(str(text or "")))
 
 
 def source_inputs(ctx, desc, available, tool=None):
