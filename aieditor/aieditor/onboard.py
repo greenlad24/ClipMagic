@@ -930,7 +930,10 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
                 final = with_look(typed or prompt or req["as_words"], look)
             style, subject = "", final or req["as_words"]
         row = prod.produce(aid, desc, dst, inputs, prompt=final, subject=subject, style=style,
-                           objects=[req["expect"]] if req.get("expect") else None, tool=tool,
+                           # his on-screen prompt IS what the picture must show — not an internal object list
+                           # (re-run 5: "does not match (label, window)" — words his prompt never says)
+                           objects=([req.get("typed") or prompt] if on_screen and (req.get("typed") or prompt)
+                                    else [req["expect"]] if req.get("expect") else None), tool=tool,
                            tool_params=req.get("params") or {}, source=src, look=look, verbatim=on_screen,
                            as_words=with_look(req["as_words"], look) if not on_screen else req["as_words"])
         row["made_from"] = list(made_from)
