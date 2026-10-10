@@ -750,7 +750,8 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     f_st, fd, out_dur, total = compose_long._end_fade(vdur, end_fade, fps)
 
     # 2 the slots (the plan's screencast segments, with compose's transition flags) and the A-roll blocks
-    esegs, n_planned, n_added = editor_segments(plan_.get("segments") or [], video["words"], vdur)
+    esegs, n_planned, n_added = editor_segments([x for x in plan_.get("segments") or [] if float(x["t0"]) < vdur - 0.5],
+                                                video["words"], vdur)
     slots = slots_of(esegs, vdur, fps)
     log(f"hand-off slots: {n_planned} planned segment(s) + {n_added} screen-reference sentence(s) → {len(slots)} slot(s)")
     blocks, t = [], 0.0
