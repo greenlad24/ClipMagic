@@ -27,6 +27,7 @@ contact sheets, plus Whisper word timings of all four refs (`/opt/aieditor-work/
 - **Text overlays and graphics** (10): [TX01](#tx01) Lower-centre title (per-word/char build), [TX02](#tx02) "Link in the description", [TX03](#tx03) Question / key-phrase lower line, [TX04](#tx04) Tool logo lower third, [TX05](#tx05) Subscribe button (+ cursor click, bell), [TX06](#tx06) Social icons (TikTok, Instagram), [TX07](#tx07) Full-screen logo / concept card, [TX08](#tx08) Mint card row (concept list), [TX09](#tx09) B-roll plate (AI clips on a plate), [TX10](#tx10) Full-screen screenshot (comments) with bubble
 - **Highlights / annotations** (2): [HL01](#hl01) Marker wipe on read text, [HL02](#hl02) Orange label box
 - **A-roll** (2): [AR01](#ar01) Base framing + slow push-in, [AR02](#ar02) A-roll camera move for outro graphics
+- **Motion templates** (7, switched off until approved): [MO01](#mo01) verb_swap, [MO02](#mo02) tagline_build, [MO03](#mo03) prompt_menu, [MO04](#mo04) prompt_card_3d, [MO05](#mo05) prompt → result (hook), [MO06](#mo06) prompt_highlight, [MO07](#mo07) long_prompt_scroll
 - [Pacing](#pacing)
 - [The rules that matter most](#the-rules-that-matter-most)
 - [Corrections to earlier specs](#corrections-to-earlier-specs)
@@ -234,6 +235,26 @@ contact sheets, plus Whisper word timings of all four refs (`/opt/aieditor-work/
 - Motion events: 17–25 (moves + cuts + dissolves); camera moves 4.7–6.6 (≥ 15 f) per screencast minute.
 - Timing vs words: moves START ≈ 0.8 s before the named word (r3, 16 moves: −0.8…+1.35 s) and land on or just after it. Screencast ↔ A-roll cuts: 72–98 % within 0.6 s of a sentence start, picture ~0.1 s ahead.
 - Jake's targets (SYSTEM.md §0): static hold p90 ≤ 6.5 s, max ≤ 9 s, 12–30 motion events / min.
+
+## Motion templates (MO) — Jake's motion-design clips, 2026-10-09 (SWITCHED OFF until Jake approves the previews)
+
+Source clips: `/opt/aieditor-work/reference/motion-2026-10-09/motion1-6`. Specs: `reference-specs/<id>.md|json`; renderer
+`motion/templates/<id>.js` (+ `.kf.json` measured keyframes, `.style.json` look); usage instructions (when / when not /
+timing / limits / placement / frequency / params / worked example / QA): `templates/<id>.md`; hard limits: rules.json
+`motion_templates` (code: aieditor/motiontemplates.py). All are full-frame HOOK graphics (RULEBOOK §13 X4–X6): first 40 s,
+≤ 2 per video, ≥ 4 s apart, they count as hook plates; every prompt box is the REAL app's UI kit (`ui-kits/<app>/`) or the
+logged neutral box, never another app's UI.
+
+| ID | Template | What it looks like | WHEN (trigger) | HOW (measured) |
+|---|---|---|---|---|
+| <a id="mo01"></a>**MO01** | verb_swap | One line on white, "Grok Bot can now ⟨search·read·analyze⟩ X"; the verb hard-switches text + colour on its word while the line re-centres. | He lists 2–4 things a tool can DO in one breath ("it can search, read and analyze…"). | Words pop in 1 f; line drift 1.202 em→0 over 0.75 s (0,0.9,0.7,1); swap re-centre 0.16–0.22 s starting 0.04–0.07 s before the word; Inter 400 0.0915 H; verbs #1b86f5 / #f05c03 / #0fe473. Timing 0 f off on the reference. |
+| <a id="mo02"></a>**MO02** | tagline_build | "Every agent. One inbox." builds word by word on a light grid inside a selection box with 4 blue handles fed by flying dots; push-in; a dark rail fades in at the right and the handles fly into it as spinner rings. | A 2–8 word tagline he says as a punchline. | Words scale 0.94→1 over 0.117 s, stagger ≈ 0.128 s; box = ink + (0.533/0.457/0.717/0.652) cap heights; push +6 % in 0.27 s then +8.4 %/s; dots #0887FF; Inter 650, cap 0.0852 H; 0 f timing error, dots median 1 px. |
+| <a id="mo03"></a>**MO03** | prompt_menu | A composer with its menu ("/" skills / "+" tools): a cursor hovers down the rows, the placeholder previews each, it picks one; the menu collapses into the composer. | He names a menu item / skill he picks ("type a forward slash and pick /newbg"). | Linear hover hops 0.18–0.24 s, highlight + preview switch 0.11 s after each hop starts; pick 0.472 s after the last hover; collapse = group pans up 191.5 px linear 0.267 s, menu 1→0.88 in 0.16 s, cut at +0.145 s; cursor ≤ 2.2 px on all 309 frames. |
+| <a id="mo04"></a>**MO04** | prompt_card_3d | A tilted frosted prompt card on soft grey: the prompt types in, file chips fly in and stack, the state turns "Working", the camera eases and the tilt changes. | He describes typing a prompt with attached files. | See `reference-specs/prompt_card_3d.md`. |
+| <a id="mo05"></a>**MO05** | prompt_result | MO04, then the app's REAL result in the app's own result view (kit). | HOOK only: "you just type one sentence in plain English and it…". | The result is generated off camera by pre-production (spaced, up to 10 tries); no kit or no real result → the line stays a screencast. |
+| <a id="mo06"></a>**MO06** | prompt_highlight | The app's composer (Claude dark in the clip): camera pushes in while a prompt types; yellow marker sweeps the key phrases as he says them; highlights accumulate, never merge. | He reads out / explains the parts of a prompt ("the key part is…"). | Push 1→1.5486 about (931,617) over 0.742 s (0.609,0.091,0.417,0.887) landing on the first sweep; typing 30.6 chars/s; sweep 0.0256 s/em (0.10–0.495 s per line piece), ease (0.45,0.126,0.347,1); marker #D9FD28, text #041000, box +0.2 em / 1.4 em tall, pad 0.27/0.35 em, radius 0.175 em; ≤ 1.5 px, ≤ 2 f. |
+| <a id="mo07"></a>**MO07** | long_prompt_scroll | A long structured prompt in the app's message view: strong zoom-in until the serif text fills the frame, then a slow readable scroll; marker highlights accumulate on the phrases he calls out. | He walks through a long / structured prompt or document and calls out parts (too long for MO06). | See `reference-specs/long_prompt_scroll.md`. |
+
 
 ## Corrections to earlier specs
 
