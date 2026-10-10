@@ -21,9 +21,11 @@ fills every one of them off camera, for THIS video, before anything is recorded:
              THIS video's playbook copy (job/preprod/playbook-<app>.json — never the shared skill playbook) and proven
              3/3 from fresh sessions with playbook.replay. The recorder only ever plays proven steps.
   group B  an ASSET never produced (his phone photo, a blurry photo, great-grandma's photo + the colorized result…)
-           → P3: produced before recording — an input photo by the image API, an in-app result by the app itself;
-             each checked by a vision call against the description; <= 10 tries, >= 45 s apart; a failed producer is
-             re-routed to the other one; never silently dropped.
+           → P3: produced before recording IN THE APP (Jake 2026-10-10: no image API) by the producer agent
+             (aieditor/producer.py): the learned / hint recipe first, then it diagnoses each failed try and picks the
+             next route itself; every picture vision-checked; the route that works is learned into this video's
+             playbook; <= 10 tries / 12 min per asset, >= 45 s apart, <= 35 generations per app per 24 h (genledger:
+             the job WAITS at the cap); never silently dropped.
   group C  a FEATURE the app does not have (an 'Updated' badge, '/newbg', '/add_object', Sketch on the toolbar…)
            → P4: absence VERIFIED in the live app ("/" and "+" menus, the toolbar, page text); then shown WORKING with
              an approved motion template (prompt_highlight / long_prompt_scroll) in the app's own UI kit (this video's
@@ -455,6 +457,9 @@ class Explorer:
         if feedback:
             log.append(f"previous proposal failed its replays: {feedback}")
         for turn in range(1, self.max_turns + 1):
+            check = getattr(self.ctx, "check_cancel", None)
+            if check:
+                check()
             dyn = [{"type": "text", "text": "LOG:\n" + "\n".join(log[-12:]) + f"\nTURN {turn}/{self.max_turns}. "
                     f"CURRENT: {json.dumps({k: obs.get(k) for k in ('url', 'ok', 'error', 'refused', 'found', 'counts')}, default=str)[:3000]}"}]
             if obs.get("items"):
@@ -686,50 +691,106 @@ def asset_kind(desc):
 
 
 def produce_asset(ctx, aid, desc, made_from=(), prompt=None):
-    """P3: one needed asset, produced and checked before recording; each try spaced (>= 45 s), <= 10 tries per
-    producer; a failed producer is re-routed to the other one (photo ↔ in-app); never silently dropped.
+    """P3: one needed asset, made IN THE APP before recording, off camera, checked against its description; never
+    silently dropped. Jake 2026-10-10: "it needs to generate images in the ChatGPT UI" — no image API here.
+      live (ctx.producer set, preprod.make_ctx): the producer AGENT (aieditor/producer.py) — the learned / hint recipe
+        first, then it diagnoses every failed try and picks the next route itself; a route that works is learned into
+        THIS video's playbook. Raises genledger.QuotaWait at the daily cap / a wall (the job waits, never holds).
+      no producer (tests, a hand run): the app adapter's own in-app call (ctx.in_app), spaced, <= max tries, checked.
+    An asset an earlier run of this job already produced and checked (assets/<id>.produced.json) is reused: a job
+    that waited for the daily cap does not pay for it twice.
     → assets.json row {id, kind, desc, status ready|needs_asset, file, source, attempts, checks}."""
-    tries = int(onboarding_rules().get("max_tries_per_asset", 10))
-    first = "app_generation" if made_from and ctx.in_app is not None else asset_kind(desc)   # an edit of an input: the app
-    order = [first, "photo" if first == "app_generation" else "app_generation"]
-    row = {"id": aid, "kind": first, "desc": desc, "status": "needs_asset", "file": None, "source": None,
-           "attempts": [], "checks": [], "prompt": prompt or desc, "made_from": list(made_from), "for": "R14 P3"}
     dst = Path(ctx.out) / "assets" / f"{aid}.png"
     dst.parent.mkdir(parents=True, exist_ok=True)
-    for kind in order:
-        if kind == "app_generation" and ctx.in_app is None:
-            row["attempts"].append("in-app producer: no app session")
-            continue
-        p = prompt or desc
-        for k in range(tries):
-            ctx.spacer.wait()
-            try:
-                if kind == "photo":
-                    from . import preprod
-                    usd = ctx.image_api(preprod.PHONE_STYLE + p, dst, "medium")
-                    src = {"type": "generated", "api": "segmind gpt-image-2", "prompt": p, "usd": usd, "attempt": k + 1}
-                else:
-                    r = ctx.in_app({"id": aid, "prompt": p, "desc": desc, "made_from": list(made_from)}, dst,
-                                   [ctx.asset_files.get(m) for m in made_from if ctx.asset_files.get(m)])
-                    if not r:
-                        raise RuntimeError("the app made no image")
-                    src = {"type": "in-app generation (off camera)", "prompt": p, "attempt": k + 1,
-                           **(r if isinstance(r, dict) else {})}
-            except Exception as e:  # noqa: BLE001 — retried (the next try), then re-routed
-                row["attempts"].append(f"{kind} try {k + 1}: {e}"[:240])
-                continue
-            res = ctx.check({"id": aid, "desc": desc}, dst, [desc])
-            row["checks"].append({"producer": kind, "try": k + 1, "matches": res.get("matches"),
-                                  "missing": res.get("missing_objects")})
-            ctx.budget.add(res.get("usd"))
-            if res.get("matches"):
-                row.update(status="ready", kind=kind, file=str(dst), source=src)
-                ctx.asset_files[aid] = str(dst)
-                return row
-            p = (prompt or desc).rstrip(". ") + ". It must clearly show " + ", ".join(res.get("missing_objects") or [desc]) + "."
-        row["attempts"].append(f"{kind}: {tries} tries did not pass the check — re-routed")
-    row["why"] = f"every producer failed ({'; '.join(row['attempts'][-2:])})"[:400]
+    side = dst.with_suffix(".produced.json")
+    try:
+        old = json.loads(side.read_text())
+        if old.get("desc") == desc and old.get("status") == "ready" and Path(old.get("file") or "").exists():
+            ctx.asset_files[aid] = old["file"]
+            ctx.log(f"{aid}: already made and checked by an earlier run of this job — reused")
+            return old
+    except (OSError, ValueError):
+        pass
+    inputs = [ctx.asset_files.get(m) for m in made_from if ctx.asset_files.get(m)]
+    from . import preprod
+    new_photo = not made_from and not prompt
+    if getattr(ctx, "producer", None) is not None:
+        style = preprod.PHONE_STYLE if new_photo and asset_kind(desc) == "photo" else ""
+        subject = image_prompt(ctx, desc) if new_photo else desc
+        row = ctx.producer.produce(aid, desc, dst, inputs, prompt=prompt, subject=subject, style=style)
+        row["made_from"] = list(made_from)
+    else:
+        row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo)
+    if row.get("status") == "ready":
+        ctx.asset_files[aid] = row["file"]
+        side.write_text(json.dumps(row, indent=1, ensure_ascii=False))
     return row
+
+
+def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo):
+    """The simple path without the agent: the adapter's in-app call, spaced, up to max_tries_per_asset, checked."""
+    from . import preprod
+    tries = int(onboarding_rules().get("max_tries_per_asset", 10))
+    base = prompt or ("Create an image: " + preprod.PHONE_STYLE + image_prompt(ctx, desc) if new_photo else desc)
+    row = {"id": aid, "kind": "app_generation", "desc": desc, "status": "needs_asset", "file": None, "source": None,
+           "attempts": [], "checks": [], "prompt": base, "made_from": list(made_from), "for": "R14 P3"}
+    if ctx.in_app is None:
+        row["attempts"].append("in-app producer: no app session")
+        row["why"] = "no app session to make it in (no image API: Jake 2026-10-10)"
+        return row
+    p = base
+    for k in range(tries):
+        ctx.spacer.wait()
+        try:
+            r = ctx.in_app({"id": aid, "prompt": p, "desc": desc, "made_from": list(made_from)}, dst, inputs)
+            if not r:
+                raise RuntimeError("the app made no image")
+            src = {"type": "in-app generation (off camera)", "prompt": p, "attempt": k + 1, **(r if isinstance(r, dict) else {})}
+        except Exception as e:  # noqa: BLE001 — the next try
+            row["attempts"].append(f"in-app try {k + 1}: {e}"[:240])
+            continue
+        res = ctx.check({"id": aid, "desc": desc}, dst, [desc])
+        row["checks"].append({"producer": "app_generation", "try": k + 1, "matches": res.get("matches"),
+                              "missing": res.get("missing_objects")})
+        ctx.budget.add(res.get("usd"))
+        if res.get("matches"):
+            row.update(status="ready", file=str(dst), source=src)
+            return row
+        p = base.rstrip(". ") + ". It must clearly show " + ", ".join(res.get("missing_objects") or [desc]) + "."
+    row["attempts"].append(f"in-app: {tries} tries did not pass the check")
+    row["why"] = f"every try failed ({'; '.join(row['attempts'][-2:])})"[:400]
+    return row
+
+
+IMAGE_SYSTEM = """A video narration describes a picture he shows (a photo he brings, a result). Rewrite it as ONE image
+prompt that describes only what is VISIBLE in the picture: the subject, the setting, the light, the style. Drop fillers
+("uh"), what he does with it ("I drag it into the chat"), and anything about the video. Answer with the JSON only."""
+IMAGE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["prompt"],
+                "properties": {"prompt": {"type": "string"}}}
+
+
+def image_prompt(ctx, desc):
+    """The narrated description of an asset → a clean, visible-only image prompt (one cheap call). Falls back to the
+    description with the obvious fillers stripped when there is no model."""
+    text = re.sub(r"^.*?:\s*", "", str(desc or ""), count=1) if ":" in str(desc or "")[:60] else str(desc or "")
+    text = re.sub(r"\b(?:uh|um|erm)\b,?\s*", "", text, flags=re.I).strip()
+    # what HE does with the picture is not in the picture ("I just drag it into a normal chat")
+    keep = [x for x in re.split(r"(?<=[.!?])\s+", text)
+            if x and not re.match(r"(?:and\s+)?(?:I|I'm|I'll|we|you|then|so)\b", x.strip(), re.I)
+            and not re.search(r"\b(?:drag|drop|upload|paste|chat|video|click|type)\w*\b", x, re.I)]
+    text = " ".join(keep).strip() or text
+    if getattr(ctx, "llm", None) is None:
+        return text
+    model = config.OVERLAY_MODEL if hasattr(config, "OVERLAY_MODEL") else config.VISION_MODEL
+    msgs = [{"role": "user", "content": f"Narration: {desc}"}]
+    try:
+        ctx.budget.need(llm.estimate(model, IMAGE_SYSTEM, msgs, 400))
+        r = ctx.llm(model, IMAGE_SYSTEM, None, 400, effort="low", msgs=msgs, schema=IMAGE_SCHEMA,
+                    stage=f"preprod.onboard.{ctx.app}", purpose="P3 image prompt from the narration")
+        ctx.budget.add(r.get("usd"))
+        return str(json.loads(r.get("text") or "{}").get("prompt") or text)
+    except Exception:  # noqa: BLE001 — the stripped description still works
+        return text
 
 
 PLAIN_SYSTEM = """A video narration names a feature an app does not have (e.g. a '/newbg rustic kitchen' command). Write
@@ -798,7 +859,8 @@ class Ctx:
 
     def __init__(self, out, app, site_url, pb, transport_factory=None, llm_call=None, image_api=None, in_app=None,
                  check=None, spacer=None, kit_capture=None, readiness=None, budget=None, image_chat=None,
-                 asset_files=None, log=None, kit_app=None, allowed_chats=()):
+                 asset_files=None, log=None, kit_app=None, allowed_chats=(), status=None, cancelled=None,
+                 producer=False):
         from . import preprod
         self.out, self.app, self.site_url, self.pb = Path(out), app, site_url, pb
         self.transport_factory = transport_factory
@@ -817,6 +879,17 @@ class Ctx:
         self.allowed_chats = set(allowed_chats or ())
         if image_chat:
             self.allowed_chats.add(image_chat)
+        self.status = status or (lambda m: None)
+        self.cancelled = cancelled or (lambda: False)
+        self.tally = (0, 1)                               # (assets ready, assets needed) for the status line
+        self.producer = None
+        if producer:
+            from . import producer as prod
+            self.producer = prod.Producer(self) if producer is True else producer
+
+    def check_cancel(self):
+        if self.cancelled():
+            raise InterruptedError("cancelled")
 
     def guarded(self, allow_generate=False):
         return Guarded(self.transport_factory(), self.pb, self.allowed_chats, allow_generate, self.spacer, self.log)
@@ -903,7 +976,10 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                      "route": route_, "status": status, **kw})
 
     # ── B (P3) first: the pictures the other routes act on ──
+    n_need = len(usable) + len(report["B"])
     for r in report["B"]:
+        ctx.check_cancel()
+        ctx.tally = (len([a for a in usable if (by_asset.get(a) or {}).get("status") == "ready"]), max(1, n_need))
         pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
         aid = pr.get("asset_id")
         desc = pr.get("desc") or r.get("need")
@@ -991,11 +1067,13 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
 
 
     for r in report["C"]:
+        ctx.check_cancel()
         handle_c(r)
 
     # ── A (P2): onboard every missing action, once per distinct need ──
     seen = {}
     for r in pending_a:
+        ctx.check_cancel()
         pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
         need = pr.get("need") or r.get("need") or str(r.get("why"))
         key = re.sub(r"\W+", " ", need.lower()).strip()[:120]

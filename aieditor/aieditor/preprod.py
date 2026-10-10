@@ -30,6 +30,7 @@ the Scout profile is only ever COPIED (agentrec.Session).
 """
 import argparse
 import json
+import os
 import math
 import random
 import re
@@ -370,6 +371,19 @@ class ChatGPT:
             time.sleep(0.8)
         return removed
 
+    def image_mode(self, p):
+        """'+' → 'Create image' (the proven playbook actions open_plus_menu + plus_create_image): the composer then makes
+        a picture for any prompt — a plain chat may answer a picture request in text (TEST v3: four text replies to a
+        narrated photo description). Best effort: the 'Create an image:' prompt prefix still asks for one."""
+        try:
+            p.act(type="click", selector='button[aria-label="Add files and more"]')
+            p.wait(0.8)
+            p.act(type="click", selector="text=Create image")
+            p.wait(1.2)
+            return "Trending" in (p.text().get("text") or "")
+        except Exception:  # noqa: BLE001
+            return False
+
     def set_chat_mode(self, p):
         before = p.text().get("h1", [])
         h = self.click_label(p, "Chat", exact=True)
@@ -389,6 +403,8 @@ class ChatGPT:
             self.set_chat_mode(p)
             self.clear_composer(p)
             self.clear_attachments(p)
+            if not files:
+                self.image_mode(p)                        # a new picture: ChatGPT's own Create image composer (TEST v3)
             ups = []
             for f in files or []:
                 d = p.workdir / "upload" / Path(f).name
@@ -410,7 +426,7 @@ class ChatGPT:
             # polled here, not with the recorder's wait_for: ChatGPT now keeps an [aria-busy="true"] element on the page
             # at all times (measured live 2026-10-10: 1 before sending, 1 after the image finished), so wait_for's
             # "no aria-busy" condition never comes true
-            n1, calm = n0, 0
+            n1, calm, seen_busy = n0, 0, False
             while time.time() - tg < 240:
                 time.sleep(3)
                 n1 = p.send({"cmd": "count", "selector": self.IMAGE_SEL}).get("n", 0)
@@ -419,6 +435,9 @@ class ChatGPT:
                 calm = calm + 1 if (n1 > n0 and not busy) else 0
                 if calm >= 2:
                     break
+                seen_busy = seen_busy or bool(busy)
+                if n1 <= n0 and not seen_busy and time.time() - tg > 90:
+                    break                                        # answered in text, not an image: the next try (TEST v3)
             if n1 <= n0 or calm < 2:
                 return None
             time.sleep(4)                                        # the image finishes resolving
@@ -919,6 +938,10 @@ def build_assets(sl, out, elements_dir, budget, app=None, check=None, spacer=Non
                 png = rasterize(svg, adir / f"{a['id']}.png", 1024, 1024)
                 row.update(status="ready", file=str(png), source={"type": "programmatic doodle (preprod.doodle_svg)",
                                                                   "svg": str(svg), "doodle": a.get("doodle")})
+            elif k == "photo" and not os.environ.get("AIEDITOR_IMAGE_API"):
+                # Jake 2026-10-10: images are made in the ChatGPT UI, never an image API — the route step makes it
+                # (onboard.produce_asset: off camera, a fresh chat, a clean "Create an image:" prompt, checked)
+                row.update(status="pending_in_app", source={"type": "in-app generation (route step)"})
             elif k == "photo":
                 dst = adir / f"{a['id']}.png"
 
@@ -1169,6 +1192,11 @@ def dry_run(job, sl, assets, setd, app, out, max_gens=1):
                     note="generation cap reached — NOT sent")
                 app.clear_composer(p)
                 continue
+            from . import genledger                     # every generation counted (daily cap / wall / spacing)
+            w = genledger.gate(app_id(app))
+            if w:
+                time.sleep(w)
+            genledger.record(app_id(app), Path(out).parent.name, aid, None, "dry run")
             p.act(type="key", key="Enter")
             res["generation_log"].append({"what": f"produce {aid}", "at": time.strftime("%H:%M:%S")})
             res["generations_used"] = len(res["generation_log"])
@@ -1613,7 +1641,8 @@ def held_items(plan, assets):
     return []
 
 
-def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_budget=3.0, cancelled=None, say=None):
+def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_budget=3.0, cancelled=None, say=None,
+          progress=None):
     """readiness → assets (content first: manifest, spaced generations, generation check) → plan (ONE Opus plan
     call + plan check + ONE Sonnet overlay call; plan.json) → set dressing → dry run → gate (+ expect.json). Live browser work stays behind the adapter: app.probe(workdir) and app.dry_run(...)
     when the adapter has them (a test's fake), else the off-camera Probe / dry_run below."""
@@ -1696,7 +1725,8 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     if "route" in steps:
         pdoc = json.loads((out / "plan.json").read_text())
         if (pdoc.get("plan") or {}).get("answer") and not pdoc.get("routed"):
-            res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges))
+            res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
+                              progress=progress, cancelled=stop)
             costs["claude_usd"] = round(costs.get("claude_usd", 0) + res.get("usd", 0), 4)
             jdump(costs, out / "costs.json")
             jdump(assets, out / "assets.json")
@@ -1747,12 +1777,14 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     return g
 
 
-def make_ctx(job, out, app, readiness, assets, say=log):
+def make_ctx(job, out, app, readiness, assets, say=log, progress=None, cancelled=None):
     """The live onboarding context (onboard.Ctx): agent_rec sessions on a COPY of the app's Scout profile (dark),
-    the app's own generations (the adapter, spaced), the image API, the vision check, this video's playbook."""
-    from . import onboard, playbook as pbmod
+    the producer agent (aieditor/producer.py: assets made in the app's UI, no image API), the app's own generations
+    (the adapter, spaced + counted in the generation ledger), the vision check, this video's playbook."""
+    from . import genledger
+    from . import onboard
     site = app.site
-    pid = next((a for a in pbmod_apps() if any(h in site for h in (pbmod.load(a).get("hosts") or []))), None) or "chatgpt"
+    pid = app_id(app)
     pb = onboard.job_playbook(out, pid)
     sc = agentrec.scout_for(site) or {}
     n = {"k": 0}
@@ -1765,21 +1797,48 @@ def make_ctx(job, out, app, readiness, assets, say=log):
     files = {a["id"]: a["file"] for a in assets.get("assets", []) if a.get("file")}
     chats = [((a.get("source") or {}).get("chat_url")) for a in assets.get("assets", []) if (a.get("source") or {}).get("chat_url")]
     gen = getattr(app, "make_in_app", None)          # R14 P3/P4: the app's own off-camera generation (spaced by Ctx)
+
+    def in_app(a, dst, fs):
+        w = genledger.gate(pid)                       # counted like every generation (cap / wall / spacing)
+        if w:
+            time.sleep(w)
+        genledger.record(pid, Path(out).parent.name, a.get("id"), None, "adapter make_in_app")
+        return gen(a, dst, fs)
     return onboard.Ctx(out, pid, site, pb, transport_factory=transport, readiness=readiness,
-                       in_app=(lambda a, dst, fs: gen(a, dst, fs)) if callable(gen) else None,
+                       in_app=in_app if callable(gen) else None, producer=getattr(app, "use_producer", True),
+                       status=lambda m: _status(progress, m), cancelled=cancelled,
                        image_chat=chats[-1] if chats else None, asset_files=files, log=say, allowed_chats=chats,
                        kit_app=pid, kit_capture=lambda a, dst, url: onboard.capture_kit_live(a, dst, url, sc.get("profile")))
+
+
+def app_id(app):
+    """The playbook id of an adapter's app (its site host in a playbook's hosts)."""
+    from . import playbook as pbmod
+    site = getattr(app, "site", "") or ""
+    return next((a for a in pbmod_apps() if any(h in site for h in (pbmod.load(a).get("hosts") or []))), None) or "chatgpt"
+
+
+def _status(progress, msg):
+    """The job's status line (worker progress). A cancel the worker raises there ends the producer as a cancel."""
+    if not progress:
+        return
+    try:
+        progress(msg, None)
+    except Exception as e:  # noqa: BLE001
+        if type(e).__name__ == "Cancelled":
+            raise InterruptedError("cancelled") from e
+        raise
 
 
 def pbmod_apps():
     return skill.playbooks()
 
 
-def route_needs(job, out, app, readiness, assets, pdoc, say=log, ctx=None, video=None):
+def route_needs(job, out, app, readiness, assets, pdoc, say=log, ctx=None, video=None, progress=None, cancelled=None):
     """R14: plan.json's needs → filled (onboard.route). plan.json gets the routed plan ("routed": the report), the
     old one kept as "plan_before_route"; needs.json = every need with its group, route and outcome."""
     from . import onboard
-    ctx = ctx or make_ctx(job, out, app, readiness, assets, say)
+    ctx = ctx or make_ctx(job, out, app, readiness, assets, say, progress=progress, cancelled=cancelled)
     video = video or job_video(job, [job.whole()] if isinstance(job, EdlJob) else [])
     sites = pdoc.get("sites") or job.sites or [{"url": app.site}]
     res = onboard.route(ctx, pdoc, video, sites, assets, lambda a: planfit.Facts(readiness, a))
@@ -1815,7 +1874,7 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
     held       plan.json "held" (needs_primitive / needs_asset): the worker stops the job HELD after this stage
     A site that is not ready is dropped from the gate (its moments stay A-roll) — never a stop.
     The flow's files are reused while they are newer than edl.json (it costs Claude + images)."""
-    from . import sites as sites_mod
+    from . import genledger, sites as sites_mod
     d = Path(job_dir)
     out = d / "preprod"
     out.mkdir(exist_ok=True)
@@ -1862,7 +1921,7 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
                     progress("Pre-production: readiness, assets, plan, dry run…", 0.2)
                 job = EdlJob(d, req, video)
                 fg = _flow(job, out, [job.whole()], app, elements=(d / "elements") if (d / "elements").is_dir() else None,
-                           cancelled=cancelled, say=log) or {}
+                           cancelled=cancelled, say=log, progress=progress) or {}
                 jdump(fg, out / "flow-gate.json")
             costs = json.loads((out / "costs.json").read_text()) if (out / "costs.json").exists() else {}
             usd += float(costs.get("claude_usd", 0) or 0) + float(costs.get("image_api_usd", 0) or 0) if not fresh else 0.0
@@ -1882,13 +1941,14 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
                 # a plan whose needs were never routed (an interrupted run): route them now, never hold for them
                 log("pre-production: the plan's needs were not routed yet — routing (R14)")
                 fg = _flow(EdlJob(d, req, video), out, [EdlJob(d, req, video).whole()], app,
-                           steps=["route", "set_dressing", "dryrun", "gate"], cancelled=cancelled, say=log) or fg
+                           steps=["route", "set_dressing", "dryrun", "gate"], cancelled=cancelled, say=log,
+                           progress=progress) or fg
                 pdoc = json.loads((out / "plan.json").read_text())
                 g["held"] = list(pdoc.get("held") or [])
             if g["held"]:
                 note += f"; HELD ({', '.join(sorted({h['reason'] for h in g['held']}))})"
-        except InterruptedError:
-            raise
+        except (InterruptedError, genledger.QuotaWait):
+            raise                                        # cancelled / the app's generations wait (never a hold)
         except Exception as e:  # noqa: BLE001 — factory rule: route, don't fail
             g["flow"] = {"app": row["url"], "status": "failed", "error": f"{type(e).__name__}: {e}"[:400]}
             note += "; pre-production flow failed (see log)"
