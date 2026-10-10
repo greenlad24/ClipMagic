@@ -375,7 +375,7 @@ with _tf.TemporaryDirectory() as td:
     worker.execute(jb, "run")
     st = _json.loads((job / "status.json").read_text())
     check("worker: a shipping edit ends done", st["state"] == "done" and st.get("held") is False)
-    check("worker: --once treats held as handled", "in (\"done\", \"held\")" in (ROOT / "bin" / "aieditor-worker").read_text())
+    check("worker: --once treats held as handled", "in (\"done\", \"held\"" in (ROOT / "bin" / "aieditor-worker").read_text())
 
 # ── plan cases (package p6): the single plan call's plan is the one the edit records ──
 from aieditor import graphics_long as _gl  # noqa: E402

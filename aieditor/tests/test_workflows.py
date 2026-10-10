@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import os  # noqa: E402
 # never the live API ledger / caps: preprod_factory's fake Claude calls are priced and logged like real ones
 os.environ.setdefault("AIEDITOR_API_LEDGER", str(Path(tempfile.mkdtemp(prefix="wf-ledger-")) / "api.jsonl"))
+os.environ["AIEDITOR_GEN_LEDGER"] = str(Path(tempfile.mkdtemp(prefix="wf-gen-")) / "generations.jsonl")
 from aieditor import edl, events  # noqa: E402
 
 N = 0
@@ -136,6 +137,8 @@ def preprod_factory(root):
             pass
 
     class Fake(preprod.ChatGPT):
+        use_producer = False                 # no live browser: the adapter's fake make_in_app (test_producer covers the agent)
+
         def probe(self, workdir):
             return P()
 

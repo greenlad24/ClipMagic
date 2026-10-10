@@ -272,42 +272,47 @@ def test_budget():
 
 # ─────────────────────────── (5) P3 assets ───────────────────────────
 def test_assets():
+    """Jake 2026-10-10: assets are made IN THE APP (no image API). The simple path (no producer agent): spaced,
+    retried, checked; a genuine failure is named. The agent itself is covered by tests/test_producer.py."""
     fails = {"n": 0}
+    prompts = []
 
-    def flaky(prompt, dst, q):
+    def flaky(a, dst, files):
         fails["n"] += 1
+        prompts.append(a["prompt"])
         if fails["n"] <= 2:
-            raise RuntimeError("HTTP 500")
-        Path(dst).write_bytes(PNG)
-        return 0.06
-    clk = FakeClock()
-    ctx = make_ctx(TMP / "job5" / "preprod", scripted_llm([]), image_api=flaky, clock=clk)
-    row = onboard.produce_asset(ctx, "blurry_photo", "a blurry phone photo of a hot sauce bottle")
-    check(row["status"] == "ready" and row["kind"] == "photo" and len(row["attempts"]) == 2, f"retried: {row['attempts']}")
-    check(len(clk.slept) >= 2 and min(clk.slept) >= 45 - 1e-9, "spaced >= 45 s")
-    # the image API never passes the check → re-routed to the app itself
-    made = []
-
-    def in_app(a, dst, files):
-        made.append(a["id"])
+            raise RuntimeError("no image")
         Path(dst).write_bytes(PNG)
         return {"chat_url": "https://chatgpt.com/c/job-gen"}
+    clk = FakeClock()
+    ctx = make_ctx(TMP / "job5" / "preprod", scripted_llm([]), in_app=flaky, clock=clk)
+    ctx.llm = None
+    row = onboard.produce_asset(ctx, "blurry_photo", "the photo: a blurry phone photo of a hot sauce bottle, uh, on a desk")
+    check(row["status"] == "ready" and row["kind"] == "app_generation" and len(row["attempts"]) == 2, f"retried: {row['attempts']}")
+    check(len(clk.slept) >= 2 and min(clk.slept) >= 45 - 1e-9, "spaced >= 45 s")
+    check(prompts[0].startswith("Create an image: ") and " uh" not in prompts[0] and "the photo:" not in prompts[0],
+          f"a clean image request, never the raw narration (TEST v3): {prompts[0][:120]}")
+    again = onboard.produce_asset(ctx, "blurry_photo", "the photo: a blurry phone photo of a hot sauce bottle, uh, on a desk")
+    check(again["status"] == "ready" and fails["n"] == 3, "an asset made and checked by an earlier run is reused (no new try)")
     checks = {"n": 0}
+
+    def ok_app(a, dst, files):
+        Path(dst).write_bytes(PNG)
+        return {"chat_url": "https://chatgpt.com/c/job-gen"}
 
     def picky(a, f, objs):
         checks["n"] += 1
-        return {"matches": checks["n"] > 10, "missing_objects": [] if checks["n"] > 10 else ["the bottle"], "usd": 0.02}
-    ctx2 = make_ctx(TMP / "job6" / "preprod", scripted_llm([]), in_app=in_app, check_fn=picky)
+        return {"matches": False, "missing_objects": ["the bottle"], "usd": 0.02}
+    ctx2 = make_ctx(TMP / "job6" / "preprod", scripted_llm([]), in_app=ok_app, check_fn=picky)
+    ctx2.llm = None
     row2 = onboard.produce_asset(ctx2, "desk_photo", "a phone photo of the bottle on a desk")
-    check(row2["status"] == "ready" and row2["kind"] == "app_generation" and made and
-          any("re-routed" in x for x in row2["attempts"]), f"10 failed tries → re-routed to the app: {row2['attempts'][-1:]}")
-    # every producer fails → needs_asset with the reason (the route holds it — never silently dropped)
-    ctx3 = make_ctx(TMP / "job7" / "preprod", scripted_llm([]), check_fn=lambda a, f, o: {"matches": False,
-                                                                                        "missing_objects": ["x"], "usd": 0})
+    check(row2["status"] == "needs_asset" and checks["n"] == 10 and "every try failed" in row2["why"],
+          f"10 checked tries, then a named failure: {row2.get('why')}")
+    ctx3 = make_ctx(TMP / "job7" / "preprod", scripted_llm([]))
     row3 = onboard.produce_asset(ctx3, "face_photo", "a photo with a face")
-    check(row3["status"] == "needs_asset" and "every producer failed" in row3["why"], "a genuine failure is named")
+    check(row3["status"] == "needs_asset" and "no app session" in row3["why"], "no app session: named, never an image API")
     check(onboard.asset_kind("the colorized result") == "app_generation" and onboard.asset_kind("his phone photo") == "photo",
-          "inputs by the image API, results by the app")
+          "inputs vs results still told apart (the phone style is only for an input photo)")
 
 
 # ─────────────────────────── (6) P4 ───────────────────────────

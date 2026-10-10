@@ -396,11 +396,19 @@ def test_content_first():
     FAKE.bodies.clear()
     FAKE.queue("vision", *([{"matches": False, "missing_objects": ["napkin"]}] * (config.GEN_REGENS + 1)),
                {"matches": True, "missing_objects": []})
+    # Jake 2026-10-10: without AIEDITOR_IMAGE_API a photo is made in the app by the route step (pending_in_app)
+    os.environ.pop("AIEDITOR_IMAGE_API", None)
+    (TMP / "assets-ui").mkdir()
+    ui = preprod.build_assets(sl, TMP / "assets-ui", None, 3.0, spacer=preprod.Spacer(45, clock, clock.sleep))
+    check(all(x["status"] == "pending_in_app" for x in ui["assets"]) and ui["image_api_usd"] == 0,
+          "no image API by default: every photo is pending_in_app (made in the app's UI)")
     try:
+        os.environ["AIEDITOR_IMAGE_API"] = "1"          # the opt-in image API path still works
         preprod.gen_photo = fake_photo
         res = preprod.build_assets(sl, out, None, 3.0, spacer=preprod.Spacer(45, clock, clock.sleep))
     finally:
         preprod.gen_photo = saved
+        os.environ.pop("AIEDITOR_IMAGE_API", None)
     a = {x["id"]: x for x in res["assets"]}
     check(a["photo"]["status"] == "needs_asset" and len(a["photo"]["checks"]) == config.GEN_REGENS + 1, f"napkin missing on all {config.GEN_REGENS + 1} tries → needs_asset: {a['photo']}")
     check(len(prompts) == config.GEN_REGENS + 2 and "napkin" in prompts[1] and "It must clearly show napkin" in prompts[2],
