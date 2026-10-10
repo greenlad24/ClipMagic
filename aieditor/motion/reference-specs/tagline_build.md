@@ -82,3 +82,12 @@ Flight speeds peak at about 50 px/frame at the start of each leg and ease out in
 - Font: Inter 650 is a substitute for the SF-Pro-like original. Ink area and width match within 0.3 %, but glyph shapes differ.
 - The f0 vertical motion-blur streaks on dots G and H (24×54 px) are not reproduced; they are drawn as plain circles.
 - The radial-light gradient is approximate (within about 2 levels of 255).
+
+## Revision 2026-10-10 (Jake's preview review)
+"remove the dots and the right black bar that appears. keep the zooming for 1 more second at the same pace. the animations are correct"
+
+- **`dots` and `wipe` now default to false.** The feeder dots, corner handles and dock rail with its rings are no longer drawn. Their measured motion stays in the kf, so they can still be turned on as optional params.
+- **The push-in runs 2.0 s** (kf `push.hold_s`): the measured 1.0 s from f30 to f89, plus 1.0 s at the same pace.
+  - The extra second continues the linear creep of +8.4 %/s, giving ×1.149 at 1.0 s and ×1.233 at 2.0 s. The cap is still 1.3.
+- **The exit is a hard cut at `out`**, which defaults to push + 2.0 s. With the reference staggers the plate is now **2.5 s** (it was 1.5 s).
+- Everything else is unchanged: word pops, staggers, grid cut and push curve.

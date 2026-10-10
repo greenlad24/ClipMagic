@@ -1,8 +1,9 @@
 # tagline_build: usage (DRAFT)
 
-**What it is.** A short tagline builds up word by word in big black type on a light-grey grid. Blue dots fly in from around the frame and merge into the 4 corner handles of a selection box around the text. The grid then cuts away and the text slowly pushes in. On the exit, a dark "dock" rail fades in at the right edge, and the 4 handles accelerate into it, where each lands as a spinner ring. Then there is a hard cut.
+**What it is.** A short tagline builds up word by word in big black type on a light-grey grid. The grid then cuts away and the text slowly pushes in for 2.0 s, then there is a hard cut.
 
-- Full-frame plate, 1.5 s in the reference.
+- Full-frame plate, 2.5 s with the reference timing.
+- **Jake 2026-10-10:** the blue dots / selection handles and the dark right rail are removed (params `dots` / `wipe`, default **false**). The push-in runs 1 s longer at the same pace.
 - Spec: `motion/reference-specs/tagline_build.md`.
 
 ## 1. When to use
@@ -20,7 +21,6 @@ Use it for a punchy two-part claim or tagline (often parallel, "X. Y.") said fas
 - A number or stat line. Use a data or keyword template.
 - Outside the hook (zone = hook, first 40 s). Not twice in one video.
 - When the narrator is mid-demo and the screen is the evidence.
-- The "inbox / dock" exit implies "everything goes into one place". If the line is negative ("Stop doing X"), set `wipe: false`.
 
 ## 3. Timing anchors
 - **start** = the first word of the tagline. Its id is beat `word_0`, and the plate cuts in on it.
@@ -28,11 +28,10 @@ Use it for a punchy two-part claim or tagline (often parallel, "X. Y.") said fas
   - Words you leave unanchored fall back to the measured stagger 0.133 / 0.117 / 0.133 s.
   - Anchor every content word. Filler words in the narration ("the", "it's") are skipped, not shown.
 - The push-in starts automatically 0.117 s after the last word, and no earlier than 0.5 s after word_0. Keep at least 0.12 s between the last word and `out`.
-- **out** = the word right after the tagline ends (the next breath or "but/so"). The rail fades in on it (0.133 s), and the 4 handles land in the dock between out+0.43 s and out+0.53 s.
-  - If `out` is missing: out = push + 0.372 s.
-- **end / duration** = out + 0.628 s, then a hard cut (the measured exit).
-  - If you give `end`, it wins: out = end − 0.628 s when `out` is unset.
-- Duration: min 1.4 s, max 4.0 s. Between the last word and `out`, hold at most about 2 s. The push creeps on, but a longer hold looks static.
+- **out** = the hard cut. Anchor it on a word 1.5–3 s after the last word; if `out` is missing, out = push + 2.0 s.
+  - The push is +6 % in 0.27 s, then a creep of +8.4 %/s (×1.23 at 2.0 s). It is capped at ×1.3.
+  - If you give `end`, it wins: out = end when `out` is unset.
+- Duration: min 1.6 s, max 4.5 s. The default with the reference staggers is 2.5 s.
 
 ## 4. Content limits
 - 2 to 8 words, one line, at most about 40 characters.
@@ -42,10 +41,9 @@ Use it for a punchy two-part claim or tagline (often parallel, "X. Y.") said fas
 
 ## 5. Placement
 - Full-frame plate. The text is centred, with its ink centre at (963, 543). The box and dots span roughly x 170–1760, and the feeders start from y 120 to 960.
-- **Facecam bubble.** Several things pass under or touch the bubble disc (centre (1701.9, 253.7), r 179.3 px):
-  - the TR handle (≈ (1610–1730, 420)) touches its lower edge;
-  - feeders R2 and G run along y 120 and y 240 at x 1380–1740, right through it.
-  - So **turn the bubble off for the plate's duration**. If the bubble must stay on, use `dots: false`.
+- **Facecam bubble.** By default (dots off) the text stays inside y 480–630, clear of the bubble disc (centre (1701.9, 253.7), r 179.3 px).
+  - Still, it is a full-frame plate, so turn the bubble off during it.
+  - Only if `dots: true`: the top-right handle and feeders R2 and G cross the disc.
 - With `backdrop: false` the text, dots and rail are drawn on transparency over another plate. They must sit on a light background, because the text is #141413.
 
 ## 6. Frequency and spacing
@@ -59,8 +57,8 @@ Use it for a punchy two-part claim or tagline (often parallel, "X. Y.") said fas
 |---|---|---|---|---|
 | words | string | — (required) | 2–8 words, ≤ 40 chars | the tagline; split on spaces, one word per beat |
 | backdrop | bool | true | — | grey radial plus the 120 px grid; false = transparent |
-| dots | bool | true | — | the feeder dots and corner handles |
-| wipe | bool | true | — | the dock-rail exit; false = handles stay, hard cut at end |
+| dots | bool | false | — | (removed by Jake 2026-10-10) the feeder dots and corner handles |
+| wipe | bool | false | — | (removed by Jake 2026-10-10) the dark dock-rail exit; off = hard cut at `out` |
 
 Beats: `word_0` … `word_{n-1}`, `out`.
 
@@ -71,34 +69,35 @@ Narration (job gpt2-10091958-9e9a, words.json):
 35 same 11.10  36 bottle, 11.32  37 the 11.70  38 same 12.24  39 spot, 12.40  40 but 12.90  41 now 13.36
 ```
 
-The overlay (plate from "same"@11.10; rail on "but"@12.90; cut at 12.90 + 0.628 = 13.53, about word 41):
+The overlay (plate from "same"@11.10; push from 12.52; hard cut on "now"@13.36):
 
 ```json
 {"template": "tagline_build", "start": 35, "end": 41,
- "fields": {"words": "Same bottle. Same spot.", "backdrop": true, "dots": true, "wipe": true},
- "beats": {"word_0": 35, "word_1": 36, "word_2": 38, "word_3": 39, "out": 40}}
+ "fields": {"words": "Same bottle. Same spot."},
+ "beats": {"word_0": 35, "word_1": 36, "word_2": 38, "word_3": 39, "out": 41}}
 ```
 
 Resulting timeline:
 - Words pop at +0.00, +0.22, +1.14 and +1.30 s.
 - The push starts at +1.42 s.
-- `out` is at +1.80 s; the plate runs 2.43 s in total (within 1.4–4.0).
+- The cut is at +2.26 s, which is 0.84 s of push. Use a later `out` word to show more of the push.
 
 ## 9. QA checks
 - Every word pops on its spoken word: within 1 frame of the word onset, with no fade.
-- The text is one line and is not clipped. With the push (up to ×1.3), the right handle stays left of the rail (x < 1860).
+- The text is one line and is not clipped at the end of the push (ink × scale < 1840 px wide).
 - On the frame after the last word + 0.117 s, the grid is gone (hard cut) and the push has begun.
-- On `out`, the rail fades in. All 4 handles land as rings before the cut, and the cut is at out + 0.628 s.
-- The bubble is off for the plate, or dots are false.
+- No dots and no right rail (unless explicitly enabled); hard cut on `out`.
+- The bubble is off for the plate.
 - Hook zone only, ≤ 1 per video, and inside the G7 budget.
 
 ```json
 {"id": "tagline_build",
  "params": {"words": {"type": "string", "default": null, "min": 2, "max": 8},
             "backdrop": {"type": "bool", "default": true},
-            "dots": {"type": "bool", "default": true},
-            "wipe": {"type": "bool", "default": true}},
+            "dots": {"type": "bool", "default": false},
+            "wipe": {"type": "bool", "default": false}},
  "beats": ["word_0", "word_1", "word_2", "word_3", "word_4", "word_5", "word_6", "word_7", "out"],
- "duration_s": [1.4, 4.0],
+ "duration_s": [1.6, 4.5],
+ "_duration_note": "2026-10-10: push-in extended +1.0 s (hold 2.0 s after push start); default duration with reference staggers = 2.5 s; dots/wipe default false",
  "zone": "hook"}
 ```

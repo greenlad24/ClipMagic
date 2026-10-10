@@ -1,5 +1,5 @@
 {
- "_doc": "verb_swap look (swappable; the motion is in verb_swap.kf.json). Measured from motion1.mp4 (1920x1080, 30 fps). Sizes as fraction of frame height + px@1080.",
+ "_doc": "verb_swap look (swappable; the motion is in verb_swap.kf.json). Measured from motion1.mp4 (1920x1080, 30 fps). Sizes as fraction of frame height + px@1080. 2026-10-10: Jake -> Roboto family (the house motion font); default weight 500 chosen from 400/500/600/700 renders.",
  "background": "#ffffff",
  "text_colour": "#000000",
  "verb_colours": [
@@ -7,12 +7,12 @@
   "#f05c03",
   "#0fe473"
  ],
- "font_family": "Inter",
- "font_file": "Inter.ttf",
- "font_weight": 400,
- "font_size_frac": 0.0915,
- "font_size_px_1080": 98.8,
- "tracking_em": 0.034,
+ "font_family": "Roboto",
+ "font_file": "Roboto.ttf",
+ "font_weight": 500,
+ "font_size_frac": 0.0948,
+ "font_size_px_1080": 102.4,
+ "tracking_em": 0,
  "word_space_em": 0.235,
  "baseline_y_frac": 0.5315,
  "baseline_y_px_1080": 574,
@@ -56,5 +56,55 @@
    "read": 977.0,
    "analyze": 966.5
   }
+ },
+ "weight_fits": {
+  "_doc": "Roboto variable (wght 100-900). Per weight, size re-fitted at tracking 0 (house) so cap height (74 px) and the line box match the reference. ink_mass_vs_ref = total ink of the final line / the reference's (SF Pro Regular).",
+  "400": {
+   "font_size_frac": 0.0951,
+   "px_1080": 102.7,
+   "ink_mass_vs_ref": 1.0,
+   "line_width_err_px": [
+    -6,
+    0,
+    6
+   ]
+  },
+  "500": {
+   "font_size_frac": 0.0948,
+   "px_1080": 102.4,
+   "ink_mass_vs_ref": 1.23,
+   "line_width_err_px": [
+    -3,
+    2,
+    10
+   ]
+  },
+  "600": {
+   "font_size_frac": 0.0944,
+   "px_1080": 102.0,
+   "ink_mass_vs_ref": 1.32,
+   "line_width_err_px": [
+    -5,
+    0,
+    9
+   ]
+  },
+  "700": {
+   "font_size_frac": 0.0941,
+   "px_1080": 101.6,
+   "ink_mass_vs_ref": 1.41,
+   "line_width_err_px": [
+    -7,
+    0,
+    8
+   ]
+  }
+ },
+ "previous": {
+  "font_family": "Inter",
+  "font_weight": 400,
+  "font_size_frac": 0.0915,
+  "tracking_em": 0.034,
+  "word_space_em": 0.235
  }
 }

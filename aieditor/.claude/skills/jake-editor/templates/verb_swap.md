@@ -1,7 +1,7 @@
 # verb_swap — usage (DRAFT)
 
 A single line of large text on flat white, for example "ChatGPT can now ⟨sketch|erase|cut out⟩ your photos". The line builds word by word. Then one slot word, the "verb", swaps 2–4 times. Each verb has its own colour, and the line re-centres as the verb's width changes.
-Motion: `motion/templates/verb_swap.kf.json`. Look: `verb_swap.style.json`. Spec: `motion/reference-specs/verb_swap.md`.
+Motion: `motion/templates/verb_swap.kf.json`. Look: `verb_swap.style.json` (Roboto 500, tracking 0, black on white; changed from Inter on 2026-10-10 per Jake). Spec: `motion/reference-specs/verb_swap.md`.
 
 ## 1. When to use
 Use it when the narration lists **2–4 parallel capabilities, actions or features in one breath**, each of which is one or two words. Real examples from tutorial narration (job 131, ChatGPT Images 2.5):
@@ -33,7 +33,7 @@ Use it when the narration lists **2–4 parallel capabilities, actions or featur
 | prefix | 1–6 words, ≤ 32 chars |
 | verbs | 2–4 items, each 1–2 words and ≤ 14 chars |
 | suffix | 0–3 words, ≤ 18 chars |
-| widest full line (prefix + longest verb + suffix) | ≤ 40 chars to keep the measured 98.8 px size. Up to 60 chars is allowed: the font auto-shrinks to fit 88 % of the frame width |
+| widest full line (prefix + longest verb + suffix) | ≤ 35 chars (about 48 px per char) to keep the measured 102.4 px size (Roboto 500). Up to 60 chars is allowed: the font auto-shrinks to fit 88 % of the frame width |
 
 Keep the case as spoken: sentence case, no trailing punctuation. Verb colours default to the measured blue #1b86f5, orange #f05c03 and green #0fe473, then cycle. A verb may set its own `colour`.
 
@@ -83,7 +83,7 @@ On-screen line: "Today you'll learn ⟨sketching | comment pins | cutouts⟩". T
 ## 9. QA checks
 - Each verb's text change lands on its spoken word, within ±1 frame. The prefix words pop on their words.
 - At rest, consecutive verb states differ in line ink centre by ≤ 20 px, and no frame shows overlapping words. Touching is expected only on the 1–2 swap frames, as in the reference.
-- No word is clipped: line width ≤ 0.88 W, and the font shrinks only if the content exceeds 40 chars.
+- No word is clipped: line width ≤ 0.88 W, and the font shrinks only if the content exceeds about 35 chars.
 - The verb colours are distinct from each other and from black text. A custom colour needs ≥ 3:1 contrast on white.
 - The line is fully off at `out` / the overlay end, with no half-faded frame.
 - The plate's total screen time stays within the plate budget, and the plate is in the first 40 s.

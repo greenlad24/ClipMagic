@@ -6,8 +6,9 @@
  * Reference: /opt/aieditor-work/reference/motion-2026-10-09/motion2.mp4 (spec: reference-specs/tagline_build.md).
  *
  * Motion = scene.kf (tagline_build.kf.json, measured), look = scene.style (tagline_build.style.json).
- * params: words (string or [string], 2-8 words, one line), backdrop true, dots true, wipe true
- * beats:  word_0 .. word_{n-1} (each word pops on its spoken word), out (rail fades in, handles fly into it)
+ * params: words (string or [string], 2-8 words, one line), backdrop true, dots false, wipe false
+ *         (Jake 2026-10-10: dots/handles and the dock rail removed by default; the push-in runs 2.0 s then hard cut)
+ * beats:  word_0 .. word_{n-1} (each word pops on its spoken word), out (wipe off: the hard cut; wipe on: rail fades in)
  */
 (function () {
   "use strict";
@@ -30,7 +31,7 @@
   }
 
   function normParams(scene) {
-    const p = Object.assign({ backdrop: true, dots: true, wipe: true }, scene.params || {});
+    const p = Object.assign({ backdrop: true, dots: false, wipe: false }, scene.params || {}); // Jake 2026-10-10: dots + rail off by default
     let w = p.words == null ? "Every agent. One inbox." : p.words;
     if (Array.isArray(w)) w = w.join(" ");
     p.words = String(w).trim().split(/\s+/).filter(Boolean).slice(0, 8);
@@ -39,7 +40,7 @@
   }
 
   // when everything happens (seconds from the clip's first frame)
-  function timeline(scene, n) {
+  function timeline(scene, n, wipe) {
     const K = scene.kf, b = scene.beats || {};
     const st = K.words.stagger_s;
     const tw = [];
@@ -49,11 +50,14 @@
       else tw.push(i ? tw[i - 1] + (st[(i - 1) % st.length] != null ? st[(i - 1) % st.length] : K.words.default_stagger_s) : 0);
     }
     const push = Math.max(tw[n - 1] + K.push.after_last_word_s, tw[0] + K.push.min_after_word0_s);
-    let out = b.out != null && isFinite(b.out) ? Math.max(Number(b.out), push) : push + K.out.default_after_push_s;
-    let end = out + K.out.cut_after_out_s;
+    // wipe off (default): 'out' = the hard cut, after the push-in has run hold_s (measured 1.0 s + Jake's +1.0 s)
+    const after = wipe ? K.out.default_after_push_s : K.push.hold_s;
+    const cut = wipe ? K.out.cut_after_out_s : 0;
+    let out = b.out != null && isFinite(b.out) ? Math.max(Number(b.out), push) : push + after;
+    let end = out + cut;
     if (scene.duration != null && isFinite(scene.duration)) {
       end = Number(scene.duration);
-      if (b.out == null) out = Math.max(push, end - K.out.cut_after_out_s);
+      if (b.out == null) out = Math.max(push, end - cut);
     }
     return { tw, push, out, end };
   }
@@ -139,7 +143,7 @@
     const S = scene.style, K = scene.kf;
     const p = normParams(scene);
     const state = { scene, S, K, p, root };
-    state.tl = timeline(scene, p.words.length);
+    state.tl = timeline(scene, p.words.length, p.wipe);
     root.style.overflow = "hidden";
     if (p.backdrop) {
       const B = S.backdrop;
@@ -210,7 +214,7 @@
     const live = t >= tl.tw[0] - 1e-6 && t < tl.end - 1e-4;
     state.root.style.visibility = live ? "visible" : "hidden";
     if (!live) return;
-    if (state.grid) state.grid.style.visibility = t < tl.push ? "visible" : "hidden";
+    if (state.grid) state.grid.style.visibility = t < tl.push - 1e-4 ? "visible" : "hidden";
     // words
     const W = K.words;
     state.wordEls.forEach((e, i) => {

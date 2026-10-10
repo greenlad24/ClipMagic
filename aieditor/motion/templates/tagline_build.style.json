@@ -1,5 +1,6 @@
 {
  "id": "tagline_build",
+ "_revision": "2026-10-10: dots + rail are off by default (params dots/wipe); dot_color/rail/ring kept for the optional params",
  "_note": "Swappable LOOK for tagline_build (the motion lives in tagline_build.kf.json). px at 1080p; frac_h = px / 1080.",
  "fonts": { "Inter": "Inter.ttf" },
  "font_family": "Inter, sans-serif",

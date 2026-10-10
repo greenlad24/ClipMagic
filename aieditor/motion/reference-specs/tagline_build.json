@@ -2778,7 +2778,9 @@
     1.1448,
     1.1463,
     1.1487
-   ]
+   ],
+   "hold_s": 2.0,
+   "_hold_note": "Jake 2026-10-10: keep the push-in running 1 s longer at the same pace -> hold_s = measured 1.0 s (f30-f89) + 1.0 s; beyond the 60 measured frames the scale continues linearly at k_per_s (0.084/s). With wipe off (default) 'out' = the hard cut = push + hold_s."
   },
   "out": {
    "_note": "beat 'out' = the dock rail starts fading in at the right frame edge; the handles then fly (ease-in, accelerate) into the rail's tab, each landing as a spinner ring; hard cut to the next shot 0.628 s after 'out'",
@@ -2834,7 +2836,12 @@
    }
   },
   "grid_cut": "hard (1 frame) at push start",
-  "exit": "hard cut at duration (= out + cut_after_out_s)"
+  "exit": "wipe off (default): hard cut at push + hold_s (beat 'out'); wipe on: hard cut at out + cut_after_out_s",
+  "defaults": {
+   "dots": false,
+   "wipe": false,
+   "_note": "Jake 2026-10-10 review: remove the dots and the right black bar; the measured dot/rail motion is kept in this file for the optional params"
+  }
  },
  "style": {
   "id": "tagline_build",
@@ -3623,5 +3630,12 @@
   "text_edge_max_px_after_f15": 3,
   "rail_alpha_max": 0.016,
   "timing_err_frames": 0
+ },
+ "revision_2026_10_10": {
+  "dots_default": false,
+  "wipe_default": false,
+  "push_hold_s": 2.0,
+  "default_duration_s_reference_beats": 2.5,
+  "exit": "hard cut at out = push + 2.0 s"
  }
 }

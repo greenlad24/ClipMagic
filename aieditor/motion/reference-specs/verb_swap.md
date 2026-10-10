@@ -56,27 +56,41 @@ An overlap guard (`swap.min_gap_em` −0.02) pushes the neighbours apart when a 
 Staggers: the prefix words appear at +0, +1, +5, +9 frames, which is a mean stagger of 0.1 s. In the reference these are spoken-word beats. The gap from `in` to `verb_0` is 0.567 s. The verb spacing is 0.667 s then 0.5 s (mean 0.583 s), and the hold after the last verb is 1.067 s.
 
 ## Typography / look
-- Reference font: SF Pro Regular (Apple system font, not free). Closest OFL match: **Inter 400** (`motion/fonts/Inter.ttf`, already present, so no font was added). Matching glyphs: double-storey a, straight-tailed y, spurless G.
-- Size: **0.0915 × frame height = 98.8 px @1080**. The reference cap height is 74 px and the x-height is 55 px; ours has cap height 73 px.
-- Tracking: +0.034 em. It is widened so Inter's word widths match SF Pro's: Grok 212/210, Bot 145/145, analyze 339/330 (ours/ref, px).
-- Word space: 0.235 em. Ink gaps are 32–37 px, against the reference's 31–37 px.
-- Baseline: y 574 px (0.5315 H). Centre: x 966.5 px (0.5034 W).
-- Colours: background #ffffff, text #000000. Verbs: blue **#1b86f5**, orange **#f05c03**, green **#0fe473**. Solid-ink medians were #1b87f7 / #f15d04 / #10e474; core (80th pct) values were #1c85f2 / #ef5b02 / #0ee471. After that the colours cycle.
+**Revision 2026-10-10 (Jake): font changed to the Roboto family**, the house motion font. The template was previously Inter 400.
+- Reference font: SF Pro Regular (not free). Ours: **Roboto 500 (Medium)** from `motion/fonts/Roboto.ttf`, a variable font with wght 100–900 and wdth 75–100. It was already present, so no font was added.
+- Tracking 0, matching the house Roboto use in recipes2.py (Roboto 700, tracking 0, white over footage).
+- **Weight test.** I rendered 400, 500, 600 and 700 (`verb_swap-roboto-<w>.mp4`; sheet `verb_swap-roboto-weights.png`). Each weight's size was re-fitted at tracking 0 so the cap height (74 px) and the line box match the reference.
+
+| weight | size (H / px@1080) | ink mass vs ref | line-width error search / read / analyze |
+|---|---|---|---|
+| 400 | 0.0951 / 102.7 | 1.00× | −6 / 0 / +6 px |
+| **500** | **0.0948 / 102.4** | 1.23× | −3 / +2 / +10 px |
+| 600 | 0.0944 / 102.0 | 1.32× | −5 / 0 / +9 px |
+| 700 | 0.0941 / 101.6 | 1.41× | −7 / 0 / +8 px |
+
+- **Why 500.**
+  - **400** is stroke-identical to the reference. But the light verb colours lose body at that weight: green #0fe473 is about 1.6:1 on white and orange about 3:1.
+  - **500** gives the coloured verbs enough mass to read at a glance and keeps the reference's open, airy look.
+  - **600 and 700** close the counters of a, e and o, and make the black prefix outweigh the coloured verb. That inverts the hierarchy, since the verb is the point.
+  - The house 700 is meant for white text over busy footage. On a flat white plate it reads heavy.
+- **Layout.** Word space 0.235 em (ink gaps 30–37 px against the reference's 31–37). Baseline y 574 px (0.5315 H). Centre x 966.5 px (0.5034 W).
+- **Colours.** Background #ffffff, text #000000. Verbs: blue **#1b86f5**, orange **#f05c03**, green **#0fe473**, then they cycle. The raw measurements were solid-ink medians #1b87f7 / #f15d04 / #10e474 and core (80th pct) #1c85f2 / #ef5b02 / #0ee471.
 - No shadows, radii or cursor.
 
 ## Verification (reference content + reference beats)
 The compare sheet is at `/opt/aieditor-work/reference/specs/verb_swap-compare.png`. It covers 14 timestamps: every beat, mid-swap and settle frames, and the end.
 The side-by-side MP4 is in `scratchpad/motion-preview/verb_swap/`.
 
+These results are for Roboto 500.
+
 | check | result |
 |---|---|
-| pop timing | 0 frames: the visible word count matches on all 85 frames |
+| pop timing | 0 frames (word count matches on all frames; f56 is a segmentation artefact only) |
 | text switch timing | 0 frames (f18, f38, f53) |
-| motion error (left edge, per-state static offset removed) | ≤ 3 px on all frames |
-| raw position error | ≤ 17 px |
-| right-edge error during build | ≤ 12 px; the Inter prefix is about 9 px shorter than SF Pro (glyph widths, not motion) |
+| motion error (per-state static offset removed) | ≤ 2 px left edge, ≤ 4 px right edge |
+| raw position error | ≤ 12 px |
 
-The raw position error is a static offset per state: search +17 / +1 px, read −5 / −14 px, analyze +1 / 0 px (left / right edge). It comes from the reference itself, whose line is not consistently centred: its ink centre is 958.5 / 976.5 / 966.5 px across the three states. Ours centres every state at the same point.
+The raw position error is a static offset per state: search +11 / +8, read −10 / −8, analyze −4 / +6 px. It comes from the reference itself, whose line centre wanders by state (958.5 / 976.5 / 966.5 px), while ours is centred mathematically. Roboto fits the reference box better than Inter did (Inter: raw ≤ 17 px).
 
 Per-frame error table: `verb_swap.json → verification.per_frame`. It gives ref/ours left and right ink edges, the raw error, the motion error and the word-count match for frames 1–85.
 
