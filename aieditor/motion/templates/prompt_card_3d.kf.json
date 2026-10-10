@@ -1,0 +1,268 @@
+{
+ "_src": "MEASURED from /opt/aieditor-work/reference/motion-2026-10-09/motion4.mp4 (1920x1080, 30 fps, 232 f, 7.72 s) on 2026-10-09: card plane tracked per frame (ECC homography on the composer footer, f60 = canonical), each homography fitted to a CSS 3D pose (perspective 1000 px, origin = card centre 957,555); curves fitted as cubic-bezier (max error given). Times in seconds; 'at' = offset from the beat it hangs off. Travel in card px at the resting scale (card = 1034 px wide).",
+ "fps": 30,
+ "ref": {
+  "duration": 7.7,
+  "beats": {
+   "in": 0.0,
+   "type": 0.767,
+   "chip_0": 2.767,
+   "chip_1": 3.3,
+   "chip_2": 3.5,
+   "chip_3": 3.9,
+   "chip_4": 4.3,
+   "working": 5.933,
+   "out": 7.167
+  },
+  "typing_end": 2.267,
+  "chip_gaps_s": [
+   0.533,
+   0.2,
+   0.4,
+   0.4
+  ],
+  "chip_gap_default_s": 0.4
+ },
+ "camera": {
+  "perspective_px": 1000,
+  "perspective_note": "the per-frame fit error is flat for 450-1700 px (5.9-7.0 px max); 1000 chosen",
+  "origin": [
+   957,
+   555
+  ],
+  "rest": {
+   "s": 1.0,
+   "tx": 6.0,
+   "ty": 3.0,
+   "rx": 0.0,
+   "ry": 0.6,
+   "rz": 0.55
+  },
+  "rest_note": "settled pose f40-f60: s 0.997-1.003, rz 0.51-0.56 deg, ry 0.4-0.8 deg, rx noisy +-3 deg around 0 (footer-only track)",
+  "entrance": {
+   "at": 0.033,
+   "dur": 0.5,
+   "ease": [
+    0.2,
+    0.8,
+    0.5,
+    1.0
+   ],
+   "max_err": 0.015,
+   "from": {
+    "s": 3.0,
+    "tx": -150,
+    "ty": -60,
+    "rx": 30,
+    "ry": -10,
+    "rz": 12
+   },
+   "note": "whip-in from a close, tilted view: send-button displacement decays 481 px (f3) -> 22 px (f13), ~0.74x per frame; start pose extrapolated (f1-f8 are motion-blurred, f1-f2 hold the previous shot)",
+   "blur_px": 6
+  },
+  "push": {
+   "s_to": 1.327,
+   "dur": 1.6,
+   "ease": [
+    0.5,
+    0.3,
+    0.1,
+    0.6
+   ],
+   "max_err": 0.037,
+   "anchor": "chip_0",
+   "at": -0.6,
+   "note": "push-in 1.0 -> 1.327 from f64 (t 2.10) to f112, peak f125; with no chips it starts at typing end - 0.17 s"
+  },
+  "pull": {
+   "s_to": 0.989,
+   "dur": 2.4,
+   "ease": [
+    0.5,
+    0.1,
+    0.1,
+    0.9
+   ],
+   "max_err": 0.02,
+   "anchor": "working",
+   "at": -1.767,
+   "note": "pull back 1.327 -> 0.989 from f126 (t 4.17) to f198"
+  },
+  "center_on_card": {
+   "k": 0.95,
+   "note": "the camera keeps the growing card centred: ty += s * dH / 2 with the card-growth easing (measured +30 px at row 1, +56 row 2, +34 row 3 (s falling), +53 working)"
+  },
+  "exit": {
+   "anchor": "out",
+   "at": 0.0,
+   "dur": 0.533,
+   "ds": 2.0,
+   "ease": [
+    1.0,
+    0.0,
+    0.6,
+    0.6
+   ],
+   "max_err": 0.002,
+   "focus": "card centre",
+   "blur_px_per_ds": 6,
+   "blur_max_px": 14,
+   "note": "accelerating push-through: s 0.989 (f216) -> 1.352 (f226) -> ~3.0 at the cut (f232); zoom-blurred from f225"
+  }
+ },
+ "placeholder": {
+  "anchor": "type",
+  "at": -0.283,
+  "stagger_s": 0.033,
+  "fade_s": 0.133,
+  "note": "per-character fade-out left->right (f15-f28), overlapping the first typed chars"
+ },
+ "typing": {
+  "anchor": "type",
+  "rate_cps": 71.0,
+  "ease": [
+   0.9,
+   0.9,
+   0.7,
+   0.9
+  ],
+  "max_err": 0.015,
+  "rate_min_cps": 50.0,
+  "rate_max_cps": 142.0,
+  "finish_before_working_s": 0.25,
+  "note": "110 chars in 1.55 s (f23-f69): 2.56 chars/frame steady, last ~8 chars slower; no chunking; chars appear at full opacity"
+ },
+ "caret": {
+  "w_px": 2,
+  "h_px": 33,
+  "blink": false,
+  "hide_after_typing_s": 0.47,
+  "note": "visible f24-f83, no blink; gone 0.47 s after the last char"
+ },
+ "send_icon": {
+  "swap_after_type_s": 0.2,
+  "fade_s": 0.1,
+  "note": "mic -> arrow once the prompt has text (neutral composer only)"
+ },
+ "chips": {
+  "flight": {
+   "dur": 0.3,
+   "ease": [
+    0.55,
+    0.0,
+    0.25,
+    1.0
+   ],
+   "fade_in_s": 0.0,
+   "from": [
+    {
+     "dx": -878,
+     "dy": -27,
+     "s": 3.7,
+     "rx": 0,
+     "ry": 22,
+     "rz": -6
+    },
+    {
+     "dx": 702,
+     "dy": 580,
+     "s": 3.9,
+     "rx": -18,
+     "ry": -14,
+     "rz": 5
+    },
+    {
+     "dx": -621,
+     "dy": 526,
+     "s": 3.7,
+     "rx": -16,
+     "ry": 18,
+     "rz": -5
+    },
+    {
+     "dx": 162,
+     "dy": -702,
+     "s": 3.7,
+     "rx": 20,
+     "ry": -6,
+     "rz": 4
+    },
+    {
+     "dx": -837,
+     "dy": 270,
+     "s": 3.5,
+     "rx": -8,
+     "ry": 20,
+     "rz": -4
+    },
+    {
+     "dx": 756,
+     "dy": -513,
+     "s": 3.7,
+     "rx": 16,
+     "ry": -16,
+     "rz": 5
+    }
+   ],
+   "note": "each file flies in from beside / below the card as an icon tile, large (x2.2-2.6, near the camera) and tilted, and lands in 8-9 frames (c0 f84->f92, c1 f100->f108, c2 f106->f114, c3 f118->f126, c4 f130->f138); chip beats = first visible frame",
+   "ease_note": "hand-fitted to the tile path (c3 holds big at the top f118-f122 then lands f126; c1 crosses fast): ease-in-out; not a least-squares fit (tiles are motion-blurred and occluded)"
+  },
+  "tile_px": 75,
+  "grow": {
+   "dur": 0.35,
+   "ease": [
+    0.2,
+    0.1,
+    0.0,
+    0.8
+   ],
+   "max_err": 0.032,
+   "after_last_land_s": -0.13,
+   "min_spacing_s": 0.717,
+   "note": "the card grows one chip row at a time: +70 px (row 1, f105-f111), +95 (row 2, f127-f137), +97 (row 3, f148-f157); a row grows when its last chip lands, rows >= 0.72 s apart"
+  },
+  "expand": {
+   "after_grow_s": 0.433,
+   "min_spacing_s": 0.4,
+   "dur": 0.467,
+   "ease": [
+    0.4,
+    0.0,
+    0.2,
+    1.0
+   ],
+   "note": "tile -> pill with the file name wiping in left->right: c0 f118, c1 f128, c2 f142, c3 f154, c4 f166 (12 frames apart), ~14 frames each"
+  }
+ },
+ "working": {
+  "anchor": "working",
+  "grow_dur": 0.3,
+  "grow_ease": [
+   0.2,
+   0.1,
+   0.0,
+   0.8
+  ],
+  "text_out_s": 0.17,
+  "bubble_in_s": 0.27,
+  "bubble_from_scale": 1.15,
+  "label_in_s": 0.2,
+  "label_at": 0.1,
+  "spinner_period_s": 1.0,
+  "note": "f179-f189: card +98 px; the typed prompt moves into a right-aligned bubble (30 -> 26 px type) with an avatar, then 'Working' + a dot spinner fade in"
+ },
+ "result": {
+  "anchor": "result",
+  "dur": 0.6,
+  "ease": [
+   0.2,
+   0.8,
+   0.5,
+   1.0
+  ],
+  "tilt_rx": 9,
+  "composer_out_s": 0.3,
+  "panel_from_dy": 140,
+  "note": "NEW (MO05) \u2014 not in the reference: reuses the measured entrance easing + tilt language; the camera pans up / pulls back to frame the app's real result panel above the composer"
+ }
+}

@@ -1,0 +1,106 @@
+{
+ "_note": "prompt_card_3d LOOK (swappable). Px are CARD px at the reference's resting scale (the 3D plane at s = 1 == frame f60 of motion4.mp4, 1920x1080). The neutral composer is written in the UI-kit format so the JS has ONE code path (kit or neutral).",
+ "fonts": {
+  "Inter": "Inter.ttf"
+ },
+ "frame_h": 1080,
+ "backdrop": {
+  "plate": "data:image/png;base64,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",
+  "plate_note": "the reference's static grey plate with soft light streaks, 96x54 PNG from motion4 f60 (card hole inpainted), scaled with smoothing; it does NOT move (measured: 0 px shift f12..f222)",
+  "color": "#d3d0d4",
+  "kit_mix": {
+   "opacity": 0.1,
+   "blend": "soft-light"
+  }
+ },
+ "card": {
+  "w": 1034,
+  "min_h": 270,
+  "radius": 40,
+  "radius_frac_h": 0.037,
+  "fill": "linear-gradient(98deg, rgba(250,248,250,0.06) 0%, rgba(250,247,247,0.10) 35%, rgba(255,250,248,0.50) 80%, rgba(255,251,249,0.62) 100%)",
+  "rim_top": "rgba(30,24,22,0.85)",
+  "rim_left": "rgba(45,40,40,0.35)",
+  "rim_px": 2.6,
+  "rim_mask": "linear-gradient(90deg, #000 0%, rgba(0,0,0,0.75) 30%, rgba(0,0,0,0.25) 60%, transparent 85%)",
+  "inner_highlight": "inset 0 -2px 1px rgba(255,255,255,0.85), inset -2px 0 1px rgba(255,255,255,0.6)",
+  "shadow": "0 34px 70px rgba(70,62,70,0.16), 0 10px 22px rgba(70,62,70,0.10)",
+  "tile_bg": "rgba(255,255,255,0.62)",
+  "tile_border": "rgba(255,255,255,0.95)",
+  "tile_bg_dark": "rgba(255,255,255,0.16)"
+ },
+ "type": {
+  "family": "Inter",
+  "weight": 400,
+  "size_px": 30,
+  "size_frac_h": 0.0278,
+  "line_px": 39,
+  "tracking_em": 0.029,
+  "color": "#2e2b2e",
+  "placeholder_color": "#3a373a",
+  "wrap_px": 860,
+  "footer_px": 29,
+  "footer_color": "#3b383b",
+  "model_color": "#8d898c",
+  "chip_px": 26,
+  "bubble_px": 26,
+  "working_px": 31,
+  "working_color": "#7a777a"
+ },
+ "colors": {
+  "send": "#5a3f2b",
+  "send_hi": "#6e5038",
+  "text": "#2e2b2e",
+  "muted": "#8d898c",
+  "bubble_bg": "rgba(40,30,35,0.065)"
+ },
+ "neutral": {
+  "app": "neutral",
+  "theme": "light",
+  "model": "Pro",
+  "composer": {
+   "width": 1034,
+   "height": 270,
+   "placeholder": "Ask anything…",
+   "prompt_sel": ".nb-prompt",
+   "send_sel": ".nb-send",
+   "text_sel": ".nb-text",
+   "caret_html": "<span class=\"nb-caret\"></span>",
+   "css": "\n.nb-card{position:relative;box-sizing:border-box;width:1034px;padding:43px 36px 34px 44px;font-family:Inter,sans-serif;color:#2e2b2e;-webkit-font-smoothing:antialiased}\n.nb-card.has-chips{padding-top:25px}\n.nb-chips{display:grid;grid-template-columns:408px 408px;column-gap:21px;row-gap:18px;margin:0 0 10px 0}\n.nb-chips:empty{display:none}\n.nb-text{position:relative;margin-left:1px;width:860px;min-height:78px;font-size:30px;line-height:39px;letter-spacing:0.029em;font-weight:400;white-space:pre-wrap;word-wrap:break-word}\n.nb-ph{color:#3a373a}\n.nb-prompt:not(:empty)~.nb-ph{display:none}\n.nb-state:empty{display:none}\n.nb-foot{display:flex;align-items:center;height:71px;margin:46px 0 0 -12px}\n.nb-btn{box-sizing:border-box;width:71px;height:71px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#4a474a;border:1.5px solid rgba(255,255,255,.75);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.06);margin-right:11px}\n.nb-pill{box-sizing:border-box;height:67px;display:flex;align-items:center;gap:19px;padding:0 27px 0 22px;border-radius:34px;border:1.5px solid rgba(255,255,255,.75);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.06);color:#3b383b;font-size:29px;letter-spacing:0.02em}\n.nb-pill svg{color:#3b383b}\n.nb-sp{flex:1}\n.nb-model{display:flex;align-items:center;gap:12px;color:#8d898c;font-size:29px;letter-spacing:0.02em;margin-right:40px}\n.nb-model svg{color:#8d898c}\n.nb-send{position:relative;width:68px;height:68px;border-radius:50%;background:radial-gradient(circle at 40% 30%,#6e5038 0%,#5a3f2b 60%,#4d3524 100%);box-shadow:0 3px 6px rgba(60,40,25,.35),inset 0 1px 1px rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center}\n.nb-send>span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}\n.nb-caret{display:inline-block;width:2px;height:33px;margin-left:1px;vertical-align:-7px;background:#2e2b2e}\n",
+   "html": "<div class=\"nb-card {{layout_class}}\"><div class=\"nb-chips\">{{chips_html}}</div><div class=\"nb-text\"><span class=\"nb-prompt\">{{prompt}}</span>{{caret_html}}<span class=\"nb-ph\">{{placeholder}}</span></div><div class=\"nb-state\">{{state_html}}</div><div class=\"nb-foot\"><span class=\"nb-btn\"><svg viewBox=\"0 0 24 24\" width=\"34\" height=\"34\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 4v16M4 12h16\"/></svg></span><span class=\"nb-btn\"><svg viewBox=\"0 0 24 24\" width=\"30\" height=\"30\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9.5 3.5l6 3.5-3 5.2-6-3.5z\"/><path d=\"M14.5 11.8l3 1.7-3.4 6-6-3.5 1.5-2.6\"/></svg></span><span class=\"nb-pill\"><svg viewBox=\"0 0 24 24\" width=\"30\" height=\"30\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2M5.3 5.3l2.2 2.2M16.5 16.5l2.2 2.2M5.3 18.7l2.2-2.2M16.5 7.5l2.2-2.2\"/><path d=\"M10 10l9.5 9.5\" stroke-width=\"2\"/></svg><span>Create</span></span><span class=\"nb-sp\"></span><span class=\"nb-model\">{{model}}<svg viewBox=\"0 0 24 24\" width=\"24\" height=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 9l6 6 6-6\"/></svg></span><span class=\"nb-send\"><span class=\"nb-mic\"><svg viewBox=\"0 0 24 24\" width=\"26\" height=\"26\" fill=\"#fff\"><rect x=\"9\" y=\"3\" width=\"6\" height=\"12\" rx=\"3\"/><path d=\"M6 11.5a6 6 0 0 0 12 0\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.6\" stroke-linecap=\"round\"/><path d=\"M12 17.5V21M9 21h6\" stroke=\"#fff\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg></span><span class=\"nb-arrow\"><svg viewBox=\"0 0 24 24\" width=\"30\" height=\"30\" fill=\"none\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 19V5M5.5 11.5L12 5l6.5 6.5\"/></svg></span></span></div></div>"
+  },
+  "chip": {
+   "css": "\n.nb-chip{position:relative;box-sizing:border-box;width:408px;height:75px;display:flex;align-items:center;gap:16px;padding:0 0 0 21px;border-radius:18px;background:rgba(255,255,255,.10);border:1.5px solid rgba(255,255,255,.72);box-shadow:inset 0 0 0 1px rgba(0,0,0,.035),0 2px 6px rgba(0,0,0,.04)}\n.nb-chip-ic{flex:none;width:34px;height:44px}\n.nb-chip-name{font-size:26px;line-height:26px;letter-spacing:0.012em;color:#2e2b2e;white-space:pre-line;max-width:332px}\n",
+   "html": "<span class=\"nb-chip nb-chip--{{kind}}\"><span class=\"nb-chip-ic\">{{icon_html}}</span><span class=\"nb-chip-name\">{{name}}</span></span>",
+   "icons": {
+    "doc": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"25\" font-family=\"Inter\" font-weight=\"700\" font-size=\"15\" fill=\"#2b7cd3\" text-anchor=\"middle\">W</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">DOC</text></svg>",
+    "pdf": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><path d=\"M16 11c-1.3 0-1 3 .6 6.5 1.3 2.8 3.5 5.4 6.3 6.3 1.8.6 2.4-.6 1.1-1.3-2.6-1.4-8.8-.3-12.3 1.9-1.9 1.2-1.4 2.6.3 1.7 2.3-1.3 4.3-6 5-9.8.4-2.3.1-5.3-1-5.3z\" fill=\"none\" stroke=\"#e0242f\" stroke-width=\"1.7\" stroke-linejoin=\"round\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">PDF</text></svg>",
+    "xlsx": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><text x=\"16\" y=\"25\" font-family=\"Inter\" font-weight=\"700\" font-size=\"15\" fill=\"#2fbf5b\" text-anchor=\"middle\">X</text><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">XLS</text></svg>",
+    "image": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><rect x=\"8\" y=\"12\" width=\"17\" height=\"13\" rx=\"2\" fill=\"none\" stroke=\"#7a5af8\" stroke-width=\"1.7\"/><circle cx=\"13\" cy=\"16.5\" r=\"1.6\" fill=\"#7a5af8\"/><path d=\"M9 24l5-5 4 4 2.5-2.5L24 24\" fill=\"none\" stroke=\"#7a5af8\" stroke-width=\"1.6\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">IMG</text></svg>",
+    "other": "<svg viewBox=\"0 0 34 44\" width=\"34\" height=\"44\"><path d=\"M2 3a3 3 0 0 1 3-3h17l10 10v31a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z\" fill=\"#fff\" stroke=\"rgba(0,0,0,.08)\"/><path d=\"M22 0v7a3 3 0 0 0 3 3h7\" fill=\"#eceaea\"/><path d=\"M9 15h15M9 19h15M9 23h10\" stroke=\"#888\" stroke-width=\"1.7\" stroke-linecap=\"round\"/><text x=\"16\" y=\"38\" font-family=\"Inter\" font-size=\"5.2\" fill=\"#555\" text-anchor=\"middle\" letter-spacing=\".3\">FILE</text></svg>"
+   }
+  },
+  "working": {
+   "css": "\n.nb-thread{display:flex;flex-direction:column;margin-top:17px}\n.nb-user{display:flex;justify-content:flex-end;align-items:flex-start;gap:10px;margin-right:-10px}\n.nb-bubble{box-sizing:border-box;max-width:744px;padding:14px 12px 13px 20px;border-radius:16px;background:rgba(40,30,35,.065);font-size:26px;line-height:34px;letter-spacing:0.03em;color:#3d3a3d;text-align:right;white-space:pre-wrap}\n.nb-av{flex:none;margin-top:6px}\n.nb-working{display:flex;align-items:center;gap:18px;height:40px;margin:25px 0 5px 6px;color:#7a777a;font-size:31px;letter-spacing:0.02em}\n",
+   "html": "<div class=\"nb-working\"><span class=\"nb-spin\"><svg viewBox=\"0 0 24 24\" width=\"32\" height=\"32\" fill=\"#4a474a\"><circle cx=\"12.00\" cy=\"4.00\" r=\"2\" opacity=\"1\"/><circle cx=\"18.93\" cy=\"8.00\" r=\"2\" opacity=\"0.85\"/><circle cx=\"18.93\" cy=\"16.00\" r=\"2\" opacity=\"0.7\"/><circle cx=\"12.00\" cy=\"20.00\" r=\"2\" opacity=\"0.55\"/><circle cx=\"5.07\" cy=\"16.00\" r=\"2\" opacity=\"0.4\"/><circle cx=\"5.07\" cy=\"8.00\" r=\"2\" opacity=\"0.25\"/></svg></span><span class=\"nb-wtext\">{{text}}</span></div>"
+  },
+  "bubble": {
+   "html": "<div class=\"nb-user\"><div class=\"nb-bubble\">{{text}}</div><span class=\"nb-av\"><svg viewBox=\"0 0 24 24\" width=\"38\" height=\"38\"><circle cx=\"12\" cy=\"12\" r=\"11\" fill=\"#8f8a8d\"/><circle cx=\"12\" cy=\"9.3\" r=\"3.9\" fill=\"#ece9ea\"/><path d=\"M4.8 19.2c1.6-3 4.2-4.3 7.2-4.3s5.6 1.3 7.2 4.3\" fill=\"#ece9ea\"/></svg></span></div>"
+  },
+  "result": {
+   "image": {
+    "css": "\n.nb-result{box-sizing:border-box;width:1034px;padding:34px;font-family:Inter,sans-serif;color:#2e2b2e;-webkit-font-smoothing:antialiased}\n.nb-result img{display:block;width:100%;height:auto;border-radius:24px}\n.nb-rtext{font-size:28px;line-height:40px;letter-spacing:0.02em;white-space:pre-line}\n",
+    "html": "<div class=\"nb-result\"><img src=\"{{src}}\" alt=\"{{alt}}\"></div>"
+   },
+   "text": {
+    "css": "\n.nb-result{box-sizing:border-box;width:1034px;padding:34px;font-family:Inter,sans-serif;color:#2e2b2e;-webkit-font-smoothing:antialiased}\n.nb-result img{display:block;width:100%;height:auto;border-radius:24px}\n.nb-rtext{font-size:28px;line-height:40px;letter-spacing:0.02em;white-space:pre-line}\n",
+    "html": "<div class=\"nb-result\"><div class=\"nb-rtext\">{{text_html}}</div></div>"
+   }
+  }
+ },
+ "result_panel": {
+  "gap_px": 40,
+  "max_h_frac": 0.84,
+  "neutral_bg": "card"
+ }
+}
