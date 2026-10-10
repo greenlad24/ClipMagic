@@ -145,6 +145,10 @@ def preprod_factory(root):
                     + [{"id": "at_sketch", "label": "@Sketch", "status": "not_found", "note": "no @ picker"}]
                     + [dict(c) for c in self.STATIC_CHECKS])
 
+        def make_in_app(self, asset, dst, files, p=None):          # R14 P3: the app's off-camera generation (fake)
+            Path(dst).write_bytes(b"\x89PNG")
+            return {"chat_url": "https://chatgpt.com/c/job-made"}
+
         def dry_run(self, job, sl, assets, setd, out, max_gens):
             return {"generations_used": 0, "actions": [], "produced": {},
                     "set_dressing": [{"shot": x["shot"], "ok": True, "steps": []} for x in setd["segments"]]}
@@ -171,8 +175,9 @@ def preprod_factory(root):
     check(calls and calls.count("plan") == 1 and calls.count("overlays") == 1,
           f"one plan + one overlay call: {calls} {pdoc['plan'].get('plan_check')}")
     first_plan = calls.index("plan")
-    check(all(c == "gencheck" for c in calls[:first_plan]) and calls[first_plan + 1:] == ["overlays"],
-          f"order: assets (generation checks) → plan call → overlay call: {calls}")
+    check(all(c == "gencheck" for c in calls[:first_plan]) and calls[first_plan + 1] == "overlays"
+          and all(c == "gencheck" for c in calls[first_plan + 2:]),
+          f"order: assets (generation checks) → plan call → overlay call → R14 route (P3 checks only): {calls}")
     pdoc = json.loads((out / "plan.json").read_text())
     check(pdoc["order"] == ["assets", "plan_call", "plan_check", "overlay_plan"] and not pdoc["held"], f"plan.json: {pdoc['held']}")
     sl = json.loads((out / "shotlist.json").read_text())

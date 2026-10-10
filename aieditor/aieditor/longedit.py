@@ -209,12 +209,14 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     # re-validate the cached answer every run: a fixed rule reaches existing jobs, and a trim
     # only ever shortens a segment, so its recording stays valid
     plan = director.validate(doc["raw"], video, doc.get("sites", sites), facts)
-    for key in ("needs_primitive", "held", "schema_plan", "plan_check"):     # the plan call's verdict rides along
+    for key in ("needs_primitive", "held", "schema_plan", "plan_check", "routing"):     # the plan call's verdict rides along
         if key in doc["plan"]:
             plan[key] = doc["plan"][key]
-    for n in plan.get("needs_primitive") or []:
-        # the plan check left something no proven action can show: held, never recorded as A-roll filler
-        add_held(d, "needs_primitive", str(n.get("why") or n.get("sentence"))[:300])
+    if not doc["plan"].get("routing"):
+        for n in plan.get("needs_primitive") or []:
+            # a plan made without pre-production's routing (a non-factory run): what no proven action can show is held
+            add_held(d, "needs_primitive", str(n.get("why") or n.get("sentence"))[:300])
+    # (Jake R14: a ROUTED plan never holds for needs_primitive — pre-production filled them or named the genuine failure)
     if plan != doc["plan"]:
         old = [(x.get("start"), x.get("url"), x.get("session")) for x in doc["plan"].get("segments", [])]
         if old != [(x.get("start"), x.get("url"), x.get("session")) for x in plan["segments"]]:
@@ -244,6 +246,13 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             playbooks[app] = playbook.load(app)
         except playbook.PlaybookError as e:
             log(f"edit {k}: playbook {app} refused ({e}) — its screencasts are held")
+    # Jake R14 P2: THIS video's playbook (job/preprod/playbook-<app>.json: the shared one + what pre-production
+    # onboarded and proved for this video) — the recorder only plays steps proven for this video
+    for jp in sorted((d / "preprod").glob("playbook-*.json")):
+        try:
+            playbooks[jp.stem[len("playbook-"):]] = playbook.load(jp)
+        except playbook.PlaybookError as e:
+            log(f"edit {k}: this video's playbook {jp.name} refused ({e}) — the shared one is used")
     sched = recorder.schema_segments(plan, video["words"], playbooks, allow_intent=recorder.intent_ledger_allowed())
     us_proxy = usroute.route_for_job()
     todo = []

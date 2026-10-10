@@ -42,7 +42,7 @@ from pathlib import Path
 
 from . import agentrec, config, director, llm, planfit, skill, takes
 
-ALL_STEPS = ["readiness", "assets", "plan", "set_dressing", "dryrun", "gate"]
+ALL_STEPS = ["readiness", "assets", "plan", "route", "set_dressing", "dryrun", "gate"]
 DARK_LUM = 60                                  # mean screen luminance (0-255) below this = dark theme
 STOP = {"the", "and", "a", "an", "of", "to", "it", "is", "in", "on", "at", "for", "with", "this", "that", "you", "i",
         "your", "my", "me", "be", "are", "was", "but", "not"}
@@ -378,6 +378,59 @@ class ChatGPT:
         ok = bool(h) and "What should we work on?" not in after
         return ok, {"toggle": h, "h1_before": before, "h1_after": after}
 
+    def make_in_app(self, asset, dst, files, p=None):
+        """R14 P3/P4: ONE in-app generation, off camera, in a FRESH chat (never an existing one): the input files
+        uploaded, the prompt pasted whole, sent, the new image grabbed to dst. The caller spaces the calls (>= 45 s) and
+        checks the picture. → {"chat_url", "generation_s"} | None."""
+        own = p is None
+        p = p or Probe(Path(self.workdir) / "gen", self.site, dark=True)
+        try:
+            p.send({"cmd": "open", "url": self.home, "settle": 5})
+            self.set_chat_mode(p)
+            self.clear_composer(p)
+            self.clear_attachments(p)
+            ups = []
+            for f in files or []:
+                d = p.workdir / "upload" / Path(f).name
+                shutil.copyfile(f, d)
+                ups.append(f"/w/upload/{d.name}")
+            if ups:
+                k0 = len(_image_hits(p, 20)[0])
+                p.act(type="upload", files=ups, s=3)
+                t_up = time.time()
+                while len(_image_hits(p, 20)[0]) <= k0 and time.time() - t_up < 20:
+                    time.sleep(1.5)
+            want = (asset.get("prompt") or "").strip()
+            p.act(type="type", selector=self.COMPOSER_SEL, text=want, paste=True, clear=True)
+            if p.text().get("draft", "").strip() != want:
+                return None
+            n0 = p.send({"cmd": "count", "selector": self.IMAGE_SEL}).get("n", 0)
+            tg = time.time()
+            p.act(type="key", key="Enter")
+            # polled here, not with the recorder's wait_for: ChatGPT now keeps an [aria-busy="true"] element on the page
+            # at all times (measured live 2026-10-10: 1 before sending, 1 after the image finished), so wait_for's
+            # "no aria-busy" condition never comes true
+            n1, calm = n0, 0
+            while time.time() - tg < 240:
+                time.sleep(3)
+                n1 = p.send({"cmd": "count", "selector": self.IMAGE_SEL}).get("n", 0)
+                tail = p.text().get("text", "")[-1500:]
+                busy = re.search(r"Creating image|Sketching|Setting the scene|\b\d{1,3}\s?%", tail)
+                calm = calm + 1 if (n1 > n0 and not busy) else 0
+                if calm >= 2:
+                    break
+            if n1 <= n0 or calm < 2:
+                return None
+            time.sleep(4)                                        # the image finishes resolving
+            g = p.send({"cmd": "grab", "selector": self.IMAGE_SEL, "nth": n1 - 1, "out": f"/w/{asset['id']}.png"})
+            if not g.get("ok"):
+                return None
+            shutil.copyfile(p.workdir / f"{asset['id']}.png", dst)
+            return {"chat_url": p.text().get("url"), "generation_s": round(time.time() - tg, 1), "image_index": n1 - 1}
+        finally:
+            if own:
+                p.close()
+
     def readiness(self, p, out):
         checks, ev = [], {}
 
@@ -499,6 +552,7 @@ class ChatGPT:
 
 
 APPS = {"chatgpt.com": ChatGPT}
+ChatGPT.workdir = "/tmp"
 
 
 def features_of(app, checks):
@@ -1269,7 +1323,7 @@ REQUIRED_GLOBAL = ("logged_in", "plan", "theme_dark", "chat_mode")
 
 
 def gate(sl, readiness, assets, setd, dry, ranges, app_warnings=None):
-    checks, failing, remedies, overrides = [], [], [], {}
+    checks, failing, remedies, overrides, asset_holds = [], [], [], {}, []
     rc = {c["id"]: c for c in readiness.get("checks", [])}
     for cid in REQUIRED_GLOBAL:
         c = rc.get(cid, {"status": "missing"})
@@ -1299,6 +1353,10 @@ def gate(sl, readiness, assets, setd, dry, ranges, app_warnings=None):
         ok = not bad
         checks.append({"check": f"shot:{sid}", "kind": sh["kind"], "ok": ok, "problems": bad,
                        "withheld_submits": [a["id"] for a in dry_by.get(sid, []) if a.get("submit") == "withheld"]})
+        if not ok and any(b.startswith("asset ") for b in bad):
+            # Jake R14 P3: an asset the shot shows was retried and re-routed (onboard.produce_asset: both producers,
+            # up to 10 tries each) and still failed — never silently dropped to A-roll: the job holds with the reason
+            asset_holds.append({"reason": "asset_failed", "detail": f"shot {sid}: " + "; ".join(b for b in bad if b.startswith("asset "))})
         if not ok:
             # automatic remedies already tried in the run (retry, regenerate, alternative path) failed:
             # the shot falls back to A-roll so the factory keeps going
@@ -1326,7 +1384,7 @@ def gate(sl, readiness, assets, setd, dry, ranges, app_warnings=None):
     return {"go": go, "status": ("go" if go and not overrides else "go_with_fallbacks" if go else "no_go"),
             "next_stage": "record", "ranges": [{"src": r["src"], "src_fmt": r["src_fmt"], "out": r["out"]} for r in ranges],
             "shots": len(sl["shots"]), "screencast_shots": n_sc, "failing": failing, "remedies": remedies,
-            "shot_overrides": overrides, "warnings": warnings, "checks": checks,
+            "shot_overrides": overrides, "warnings": warnings, "checks": checks, "held": asset_holds,
             "generations_used_in_dry_run": dry.get("generations_used"),
             "files": {k: f"{k}.json" for k in ("shotlist", "assets", "readiness", "set_dressing", "dryrun")}}
 
@@ -1403,7 +1461,17 @@ def plan_to_shots(plan, assets, pbs=None):
             act = SHOT_ACTION.get(pa.get("kind"), "read")
             target = (f"image:{aid}" if aid else pa.get("label") or (b["subject"][3:] if str(b.get("subject", "")).startswith("ui:")
                                                                       else None))
+            arow = next((x for x in assets.get("assets", []) if x.get("id") == aid), None) if aid else None
+            # R14 P1: what this beat NEEDS — the action (in this video's playbook? proven for this video?), the asset
+            # (exists / must be produced), the result (made live, or off camera and revealed with a K2 cut)
+            bneeds = {"action": {"id": b["action"], "in_playbook": bool(pa), "proven": bool(pa.get("proven")),
+                                 "proven_for_video": bool((pa.get("video_proof") or {}).get("ok"))},
+                      "asset": ({"id": aid, "status": (arow or {}).get("status", "must be produced"),
+                                 "producer": (arow or {}).get("kind")} if aid else None),
+                      "result": ("live" if b.get("live") else "off_camera (K2 cut to the real result)")
+                      if pa.get("generates") or pa.get("kind") == "reveal" else None}
             beats.append({"id": b.get("id"), "word_id": b["word_id"], "word": b.get("cue"), "t_word": b["t_word"],
+                          "needs": bneeds,
                           "t_src": b["t_word"], "action": act, "playbook_action": b["action"], "target": target,
                           "text": b.get("typed_text"), "what": b.get("body"), "clause_start": b.get("clause_start"),
                           "subject": b.get("subject"), "technique_id": None,
@@ -1416,7 +1484,14 @@ def plan_to_shots(plan, assets, pbs=None):
                       "out": [seg["t0"], seg["t1"]], "words": seg.get("intent", "")[:400],
                       "opens_on": f"chat_result:{first}" if first else "fresh_chat", "beats": beats, "needs": needs,
                       "session": (seg.get("session") or {}).get("kind") or "app", "app": seg.get("app")})
-    return {"shots": shots, "assets": assets.get("assets", []), "from": "plan.json (single plan call, checked)"}
+    for e in plan.get("p4_motion") or []:
+        # R14 P4: a feature verified absent → an approved motion template in the app's UI with the REAL result
+        shots.append({"id": f"M{len(shots):02d}", "kind": "motion", "src": [e["t0"], e["t1"]], "out": [e["t0"], e["t1"]],
+                      "template": e["template"], "words": e.get("why", ""), "beats": [],
+                      "needs": [x for x in [(e.get("p4") or {}).get("result_asset")] if x],
+                      "feature": (e.get("p4") or {}).get("feature"), "verified": (e.get("p4") or {}).get("verified")})
+    return {"shots": shots, "assets": assets.get("assets", []), "from": "plan.json (single plan call, checked)",
+            "rule": "Jake R14 P1: every beat says what it needs (action / asset / result)"}
 
 
 def ensure_objects(sl, job):
@@ -1532,14 +1607,10 @@ def job_video(job, ranges):
 
 
 def held_items(plan, assets):
-    """Why the job cannot be recorded honestly: open needs_primitive rows, assets the check refused."""
-    out = []
-    for n in plan.get("needs_primitive") or []:
-        out.append({"reason": "needs_primitive", "detail": str(n.get("why") or n.get("sentence"))[:300]})
-    for a in assets.get("assets", []):
-        if a.get("status") == "needs_asset":
-            out.append({"reason": "needs_asset", "detail": f"{a['id']}: {a.get('why', '')}"[:300]})
-    return out
+    """Jake R14: needs_primitive no longer holds a video — the plan's needs are ROUTED (route step: P2/P3/P4/D) and
+    a job holds only when a route genuinely fails (plan.json "held", written by route_needs). Before routing nothing
+    is held here; the assets step's misses are retried and re-routed by P3, never a hold by themselves."""
+    return []
 
 
 def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_budget=3.0, cancelled=None, say=None):
@@ -1620,8 +1691,21 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
             + (f" — HELD: {', '.join(h['reason'] for h in held)}" if held else ""))
     if not (out / "plan.json").exists():
         return None
+    # 3b. R14: every NEED of the plan filled for THIS video — P2 onboarding into job/preprod/playbook-<app>.json, P3
+    # assets before recording, P4 a verified-missing feature as motion graphics with a real result, D fixed by code
+    if "route" in steps:
+        pdoc = json.loads((out / "plan.json").read_text())
+        if (pdoc.get("plan") or {}).get("answer") and not pdoc.get("routed"):
+            res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges))
+            costs["claude_usd"] = round(costs.get("claude_usd", 0) + res.get("usd", 0), 4)
+            jdump(costs, out / "costs.json")
+            jdump(assets, out / "assets.json")
     pdoc = json.loads((out / "plan.json").read_text())
-    sl = plan_to_shots(pdoc["plan"], assets)
+    pbs = None
+    if pdoc.get("routed") and (out / f"playbook-{pdoc['routed'].get('app')}.json").exists():
+        from . import playbook as pbmod
+        pbs = {pdoc["routed"]["app"]: pbmod.load(out / f"playbook-{pdoc['routed']['app']}.json")}
+    sl = plan_to_shots(pdoc["plan"], assets, pbs)
     jdump(sl, out / "shotlist.json")
     check()
 
@@ -1663,9 +1747,59 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     return g
 
 
+def make_ctx(job, out, app, readiness, assets, say=log):
+    """The live onboarding context (onboard.Ctx): agent_rec sessions on a COPY of the app's Scout profile (dark),
+    the app's own generations (the adapter, spaced), the image API, the vision check, this video's playbook."""
+    from . import onboard, playbook as pbmod
+    site = app.site
+    pid = next((a for a in pbmod_apps() if any(h in site for h in (pbmod.load(a).get("hosts") or []))), None) or "chatgpt"
+    pb = onboard.job_playbook(out, pid)
+    sc = agentrec.scout_for(site) or {}
+    n = {"k": 0}
+
+    def transport():
+        n["k"] += 1
+        return onboard.LiveTransport(out / "onboard" / f"s{n['k']:03d}", sc.get("profile"), dark=True)
+
+    app.workdir = str(out / "onboard")
+    files = {a["id"]: a["file"] for a in assets.get("assets", []) if a.get("file")}
+    chats = [((a.get("source") or {}).get("chat_url")) for a in assets.get("assets", []) if (a.get("source") or {}).get("chat_url")]
+    gen = getattr(app, "make_in_app", None)          # R14 P3/P4: the app's own off-camera generation (spaced by Ctx)
+    return onboard.Ctx(out, pid, site, pb, transport_factory=transport, readiness=readiness,
+                       in_app=(lambda a, dst, fs: gen(a, dst, fs)) if callable(gen) else None,
+                       image_chat=chats[-1] if chats else None, asset_files=files, log=say, allowed_chats=chats,
+                       kit_app=pid, kit_capture=lambda a, dst, url: onboard.capture_kit_live(a, dst, url, sc.get("profile")))
+
+
+def pbmod_apps():
+    return skill.playbooks()
+
+
+def route_needs(job, out, app, readiness, assets, pdoc, say=log, ctx=None, video=None):
+    """R14: plan.json's needs → filled (onboard.route). plan.json gets the routed plan ("routed": the report), the
+    old one kept as "plan_before_route"; needs.json = every need with its group, route and outcome."""
+    from . import onboard
+    ctx = ctx or make_ctx(job, out, app, readiness, assets, say)
+    video = video or job_video(job, [job.whole()] if isinstance(job, EdlJob) else [])
+    sites = pdoc.get("sites") or job.sites or [{"url": app.site}]
+    res = onboard.route(ctx, pdoc, video, sites, assets, lambda a: planfit.Facts(readiness, a))
+    pdoc = {**pdoc, "plan_before_route": pdoc["plan"], "plan": res["plan"], "raw": res["raw"],
+            "held": res["held"], "routed": {"app": ctx.app, "report": res["report"], "usd": res["usd"],
+                                             "playbook": f"playbook-{ctx.app}.json", "warnings": res["warnings"][:60]}}
+    jdump(pdoc, out / "plan.json")
+    jdump({"rule": "Jake R14 (2026-10-10): needs_primitive never ends a job — A → P2 onboarding, B → P3 assets, "
+                   "C → P4 motion graphics (verified absent, real result), D → code", "groups": res["report"],
+           "needs": res["needs"], "held": res["held"], "warnings": res["warnings"], "p4": res["p4"],
+           "budget": {"app": ctx.app, "spent_usd": ctx.budget.spent, "cap_usd": ctx.budget.cap}}, out / "needs.json")
+    say(f"route: {res['report']} → " + ", ".join(f"{n['route']} {n['status']}" for n in res["needs"][:12])
+        + (f" — HELD: {', '.join(h['reason'] for h in res['held'])}" if res["held"] else " — nothing held")
+        + f"; onboarding ${ctx.budget.spent:.2f} of ${ctx.budget.cap:.2f}")
+    return res
+
+
 DARK_APPS = {"chatgpt"}                        # RULEBOOK S7: ChatGPT is recorded in dark theme
 FACTORY_FILES = ("readiness.json", "assets.json", "plan.json", "shotlist.json", "set_dressing.json", "dryrun.json",
-                 "expect.json")
+                 "expect.json", "needs.json")
 
 
 def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, adapter=None, **_):
@@ -1743,7 +1877,14 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
                 g["status"] = "go" if rows else "aroll_only"
             note += f"; pre-production {fg.get('status') or 'done'}"
             pdoc = json.loads((out / "plan.json").read_text()) if (out / "plan.json").exists() else {}
-            g["held"] = list(pdoc.get("held") or [])
+            g["held"] = (list(pdoc.get("held") or []) if pdoc.get("routed") else []) + list(fg.get("held") or [])
+            if pdoc and not pdoc.get("routed") and (pdoc.get("plan") or {}).get("needs_primitive"):
+                # a plan whose needs were never routed (an interrupted run): route them now, never hold for them
+                log("pre-production: the plan's needs were not routed yet — routing (R14)")
+                fg = _flow(EdlJob(d, req, video), out, [EdlJob(d, req, video).whole()], app,
+                           steps=["route", "set_dressing", "dryrun", "gate"], cancelled=cancelled, say=log) or fg
+                pdoc = json.loads((out / "plan.json").read_text())
+                g["held"] = list(pdoc.get("held") or [])
             if g["held"]:
                 note += f"; HELD ({', '.join(sorted({h['reason'] for h in g['held']}))})"
         except InterruptedError:
