@@ -58,8 +58,8 @@
     },
     "claude": {
      "params": {
+      "menu_source": "slash_menu",
       "trigger": "/",
-      "menu_title": "Skills",
       "items": [
        {
         "label": "skill-creator",
@@ -79,10 +79,12 @@
        }
       ],
       "pick": 2,
+      "chip": {
+       "kind": "skill"
+      },
       "prompt": "turn these notes into a 5-slide deck for Grandma's Regret hot sauce"
      },
-     "verified": false,
-     "note": "Claude's '/' menu was NOT captured (no claude.ai login): the menu is drawn from the kit tokens and the rows are Anthropic's public skill names; how a picked skill shows in the composer is undocumented → shown as '/pptx' text"
+     "verified": "kit v2: '/' opens the same menu component; skills listed by name; the picked skill's blue pill look is undocumented (verify)"
     }
    }
   },
@@ -116,38 +118,21 @@
     },
     "claude": {
      "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 5,
       "trigger": "",
-      "menu_title": "",
-      "items": [
-       {
-        "label": "Add files or photos",
-        "icon": "none"
-       },
-       {
-        "label": "Research",
-        "icon": "none"
-       },
-       {
-        "label": "Web search",
-        "icon": "none"
-       },
-       {
-        "label": "Connectors",
-        "icon": "none"
-       },
-       {
-        "label": "Skills",
-        "icon": "none"
-       }
-      ],
-      "pick": 2,
       "chip": {
-       "kind": "none"
+       "kind": "indicator",
+       "name": "research"
       },
       "prompt": "What's new in ChatGPT Images 2.5 for product photos?"
      },
-     "verified": false,
-     "note": "rows from Anthropic's help pages (unverified order/look); the documented effect (a checkmark in the menu row) closes with the menu, so the composer only shows the typed question"
+     "beats": {
+      "pick": 3.4
+     },
+     "verified": "kit v2",
+     "note": "the new Claude experience has NO web-search toggle (help 10684626; kit legacy_items) — this variation shows Research (Claude searches the web in Research) with a web-news question; same file name kept"
     }
    }
   },
@@ -169,39 +154,20 @@
     },
     "claude": {
      "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 5,
       "trigger": "",
-      "menu_title": "",
-      "items": [
-       {
-        "label": "Add files or photos",
-        "icon": "none"
-       },
-       {
-        "label": "Research",
-        "icon": "none"
-       },
-       {
-        "label": "Web search",
-        "icon": "none"
-       },
-       {
-        "label": "Connectors",
-        "icon": "none"
-       },
-       {
-        "label": "Skills",
-        "icon": "none"
-       }
-      ],
-      "pick": 1,
       "chip": {
        "kind": "indicator",
-       "name": "Research"
+       "name": "research"
       },
       "prompt": "Compare product photo tools for small shops: price, daily limits and how well they keep a label readable"
      },
-     "verified": false,
-     "note": "'Research' per Anthropic's help ('a blue indicator will appear on the bottom of the chat window'): the indicator's exact look is NOT captured — drawn as a small blue 'Research' tag; verify against live"
+     "beats": {
+      "pick": 3.4
+     },
+     "verified": "kit v2 (public screenshots + help pages + Jake's clips 5/6): rows/indicator verify against live"
     }
    }
   },

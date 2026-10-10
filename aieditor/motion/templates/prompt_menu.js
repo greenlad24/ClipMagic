@@ -108,7 +108,9 @@
       return { model: true, css: mp.css, html: String(mp.html).replace("{{rows_html}}", "{{items_html}}"), item_html: mp.row_html, hover_class: mp.hover_class || "cg-hover",
         anchor: mp.anchor || "below", gap: mp.gap != null ? mp.gap : 4, align: "model",
         items: (mp.models || []).map((m) => ({ label: m.label, sub: m.sub || "", checked: !!m.checked })),
-        vars: { mode: mp.mode || "", chevron_html: mp.chevron_html || CHEV_SVG }, check_html: mp.check_html || CHECK_SVG };
+        vars: { mode: mp.mode || "", chevron_html: mp.chevron_html || CHEV_SVG }, check_html: mp.check_html || CHECK_SVG,
+        // Claude shows '<model> <effort>' (e.g. "Opus 5.5 High"); ChatGPT just the model
+        label_suffix: mp.effort_levels && mp.mode ? " " + mp.mode : "" };
     }
     return kit.menu && kit.menu.html ? kit.menu : null;
   }
@@ -120,11 +122,11 @@
     p.prompt = String(p.prompt || "");
     if (p.items === "kit") {
       const src = kitSource(scene.kit, p.menu_source) || {};
-      p.items = (src.items || []).map((x) => ({ label: x.label, desc: x.desc, sub: x.sub, checked: x.checked }));
+      p.items = (src.items || []).map((x) => ({ label: x.label, desc: x.desc, sub: x.sub, checked: x.checked, sep_before: x.sep_before }));
     }
     let items = p.items && p.items.length ? p.items : [{ label: "Messaging House Skill", icon: "mic" }, { label: "Task Filing Skill", icon: "cabinet" },
       { label: "Research and Insights PMM Review", icon: "search" }, { label: "GTM Plan Skill", icon: "rocket" }, { label: "Email Draft Skill", icon: "mail" }];
-    items = items.map((it) => (typeof it === "string" ? { label: it } : { label: String(it.label || ""), icon: it.icon, desc: it.desc, sub: it.sub, checked: it.checked }));
+    items = items.map((it) => (typeof it === "string" ? { label: it } : { label: String(it.label || ""), icon: it.icon, desc: it.desc, sub: it.sub, checked: it.checked, sep_before: it.sep_before }));
     p.items = items;
     p.pick = Math.max(0, Math.min(items.length - 1, Number(p.pick) || 0));
     return p;
@@ -323,7 +325,7 @@
     const cls = "kit-" + String(kit.app || "app").replace(/[^a-z0-9_-]/gi, "");
     const scope = (css) => String(css || "").replace(/(^|\})\s*([^{}@]+)\{/g, (m, a, sel) =>
       `${a} ${sel.split(",").map((s) => (s.trim().startsWith(":root") ? `.${cls}` : `.${cls} ${s.trim()}`)).join(",")}{`);
-    TR.addCss(scope(KC.css) + "\n" + (KM ? scope(KM.css) : "") + "\n" + (kit.chip && kit.chip.css ? scope(kit.chip.css) : "") + "\n" + (kit.greeting && kit.greeting.css ? scope(kit.greeting.css) : ""));
+    TR.addCss(scope(KC.css) + "\n" + (KM ? scope(KM.css) : "") + "\n" + (kit.chip && kit.chip.css ? scope(kit.chip.css) : "") + "\n" + (kit.greeting && kit.greeting.css ? scope(kit.greeting.css) : "") + "\n" + (kit.indicators && kit.indicators.css ? scope(kit.indicators.css) : ""));
     const KW = num(KC.width, S.composer.w), KH = num(KC.height, 100);
     const k = S.composer.w / KW;
     const tokens = kit.tokens || {};
@@ -350,10 +352,10 @@
       const h = TR.fill(KM ? KM.item_html : `<div style="display:flex;gap:12px;align-items:center;padding:8px 14px">{{icon_html}}<span>{{label}}</span></div>`,
         { icon_html: `<span class="pm-ic" style="display:inline-flex;width:1.25em;height:1.25em;align-items:center;justify-content:center">${iconHtml(it.icon, i, kitItems, it.label)}</span>`, label: it.label, desc: it.desc != null ? it.desc : (kitHit(it.label) || {}).desc || "",
           sub: it.sub || "", check_html: `<span class="pm-check" style="display:inline-flex;opacity:${it.checked ? 1 : 0}">${KM.check_html || CHECK_SVG}</span>` });
-      return `<div data-pm-row="${i}" style="display:contents">${h}</div>`;
+      return (it.sep_before && KM.sep_html ? KM.sep_html : "") + `<div data-pm-row="${i}" style="display:contents">${h}</div>`;
     }).join("");
     menuIn.innerHTML = TR.fill(KM ? KM.html : `<div style="background:#fff;border-radius:16px;padding:8px;min-width:360px">{{items_html}}</div>`,
-      Object.assign({ items_html: itemsHtml, title: p.menu_title }, KM.vars || {}));
+      Object.assign({ items_html: itemsHtml, title: (scene.params || {}).menu_title != null ? p.menu_title : KM.title_default != null ? KM.title_default : p.menu_title }, KM.vars || {}));
     const rowEls = p.items.map((_, i) => {
       const w = menuIn.querySelector(`[data-pm-row="${i}"]`);
       return (w && w.firstElementChild) || w;
@@ -426,6 +428,9 @@
         return { x: S.composer.w - 60 * k, y: geo.compH - 40 * k, d: 40 * k };
       },
       menu: menuWrap, comp: compWrap,
+      textBlock() { return (KC.text_sel && compIn.querySelector(KC.text_sel)) || (compIn.querySelector(KC.prompt_sel || ".pm-none") || {}).parentElement || null; },
+      compNatural() { const c = compIn.firstElementChild; return c ? c.offsetHeight : 0; },
+      chipIn(u) { const c = compIn.querySelector("[data-pm-chip]"); if (c && p.chip && (p.chip.kind === "image" || p.chip.kind === "file")) { c.style.opacity = u; c.style.transform = `scale(${0.92 + 0.08 * u})`; c.style.transformOrigin = "0 100%"; } },
       setState(hover, text, committed, typed, caret) {
         const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret;
         if (key === lastKey) return;
@@ -438,7 +443,10 @@
         if (text && !committed && p.preview === true) { prompt = ""; placeholder = p.placeholder_prefix + text; }
         if (text && committed) {
           if (ck === "none") prompt = "";
-          else if (ck === "indicator") {
+          else if (ck === "indicator" && kit.indicators && kit.indicators[String((p.chip || {}).name || text).toLowerCase()] && kit.indicators[String((p.chip || {}).name || text).toLowerCase()].html) {
+            prompt = "";
+            state = kit.indicators[String((p.chip || {}).name || text).toLowerCase()].html; // the kit's own indicator
+          } else if (ck === "indicator") {
             prompt = "";
             const c = p.chip || {};
             state = `<div class="pm-indicator" style="position:absolute;${c.style || "left:52px;bottom:12px"};height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:8px;font:500 13px Inter,sans-serif;color:${c.color || "#5ea8ff"};background:${c.bg || "rgba(94,168,255,0.14)"}">${c.icon_html || ""}${esc(c.name || text)}</div>`;
@@ -452,7 +460,14 @@
         if (!/\{\{\s*placeholder/.test(KC.html) && placeholder) { prompt = p.trigger; placeholder = ""; }
         if (!p.menu) prompt = "";
         if (typed || caret) { prompt = (prompt && committed ? prompt + " " : "") + (typed || ""); placeholder = ""; }
-        compIn.innerHTML = TR.fill(KC.html, { prompt, placeholder: placeholder || (prompt || chips ? "" : KC.placeholder || ""), chips_html: chips, state_html: state, caret_html: caret ? (KC.caret_html || caretCls || '<span class="pm-caret" style="display:inline-block;width:1.5px;height:1.05em;margin-left:1px;vertical-align:-0.15em;background:currentColor"></span>') : "", layout_class: (KC.multiline_over_px && TR.measure(prompt, `${num(KC.font_size, 16)}px Inter`).width > num(KC.multiline_over_px, 1e9)) ? "is-multiline" : "", model: KC.model || kit.model_label || "", model_label: kit.model_label || KC.model || "" });
+        if (chips) chips = chips.replace(/^\s*<([a-z0-9]+)/i, '<$1 data-pm-chip="1"');
+        const modelLabel = KM.model && committed ? p.items[p.pick].label + (KM.label_suffix || "") : KC.model || kit.model_label || "";
+        compIn.innerHTML = TR.fill(KC.html, { prompt, placeholder: placeholder || (prompt || chips ? "" : KC.placeholder || ""), chips_html: chips, state_html: state, caret_html: caret ? (KC.caret_html || caretCls || '<span class="pm-caret" style="display:inline-block;width:1.5px;height:1.05em;margin-left:1px;vertical-align:-0.15em;background:currentColor"></span>') : "", layout_class: "", model: modelLabel, model_label: KM.model && committed ? modelLabel : kit.model_label || KC.model || "" });
+        // single-line until the typed text no longer fits its field (measured on the real DOM — never an ellipsis)
+        if (KC.multiline_over_px) {
+          const te = compIn.querySelector(KC.text_sel || ".cg-text");
+          if (te && te.scrollWidth > te.clientWidth + 1 && compIn.firstElementChild) compIn.firstElementChild.classList.add("is-multiline");
+        }
       },
     };
     return api;
@@ -478,6 +493,7 @@
   function quant(t, scene) {
     const K = scene.kf;
     if (!K.quantize_fps || !(scene.fps > K.quantize_fps + 1e-6)) return t;
+    if (scene.kit && K.quantize_kits === false) return t; // real-app looks move smoothly at the render fps
     const q = K.quantize_fps, ph = K.quantize_phase_s || 0;
     return Math.max(0, Math.floor((t - ph) * q + 1e-3) / q + ph);
   }
@@ -496,42 +512,90 @@
     const t = quant(tRaw, scene);
     const visible = tRaw >= tl.tin - 1e-6 && tRaw < tl.dur + 1e-6;
     st.stage.style.opacity = visible ? 1 : 0;
+    const CP = K.collapse;
+    // ── composer state at any time (pure function of t) ──
+    const stateAt = (tt) => {
+      let hover = null;
+      for (let i = 0; i < tl.h.length; i++) if (tt >= tl.h[i] - 1e-6) hover = i;
+      const committed = tt >= tl.pick + CP.text_commit_s - 1e-6;
+      if (committed) hover = p.pick;
+      let typed = "", caret = false;
+      if (p.prompt && tt >= tl.ts - 1e-6) {
+        const u = tl.te > tl.ts ? TR.ease(tl.TY.ease)(TR.clamp((tt - tl.ts) / (tl.te - tl.ts), 0, 1)) : 1;
+        typed = p.prompt.slice(0, Math.round(u * p.prompt.length));
+        caret = tt < tl.te + (tl.TY.caret_hide_after_s || 0.47);
+      }
+      return [p.menu ? hover : null, hover == null || !p.menu ? "" : p.items[hover].label, committed, typed, caret, tt];
+    };
+    const apply = (tt) => ui.setState(...stateAt(tt));
+    // Every frame is computed WITHOUT history (frames may be rendered in any order / in parallel chunks):
+    // the centring uses the layout just before the click (menu) or at 'in' (composer only); the pan target uses the
+    // composer's height right after the commit; later growth (typed lines, a tile) extends the composer downward.
+    ui.frozen = null;
+    apply(tl.noMenu ? tl.tin : Math.min(t, tl.pick - 1e-4));
+    const L0 = ui.layout();
+    const P0 = { L: Object.assign({}, L0), compH: ui.geo.compH, menuH: ui.geo.menuH };
+    let compHFinal = P0.compH;
+    if (!tl.noMenu && t >= tl.pick) {
+      ui.frozen = P0.L;
+      apply(tl.pick + 1e-4);
+      ui.layout();
+      compHFinal = ui.geo.compH;
+    }
+    ui.frozen = !tl.noMenu && t >= tl.pick ? P0.L : null;
+    // kits: the text block's height eases to each new natural height (a wrapped line, a pill, an attachment tile)
+    const GR = K.kit_growth || { dur: 0.18, ease: [0.25, 0.1, 0.25, 1] };
+    if (ui.textBlock && GR.dur > 0) {
+      // natural composer geometry at tt (root height + the text block's offset; all reflows included)
+      const nat = (tt) => {
+        apply(Math.max(0, tt));
+        const e = ui.textBlock();
+        if (e) { e.style.marginBottom = ""; e.style.transform = ""; }
+        if (!e) return { h: ui.compNatural(), x: 0, y: 0 };
+        // where the TEXT starts (content box: offset + padding), not the block, so a padding change is followed too
+        const cs = getComputedStyle(e);
+        return { h: ui.compNatural(), x: e.offsetLeft + (parseFloat(cs.paddingLeft) || 0), y: e.offsetTop + (parseFloat(cs.paddingTop) || 0) };
+      };
+      const same = (u, v) => u.h === v.h && u.x === v.x && u.y === v.y;
+      const b = nat(t), a = nat(t - GR.dur);
+      let disp = b.h, dx = 0, dy = 0;
+      if (!same(a, b)) {
+        let lo = t - GR.dur, hi = t;
+        for (let i = 0; i < 7; i++) { const m = (lo + hi) / 2; if (same(nat(m), b)) hi = m; else lo = m; }
+        const h0 = nat(lo), u = TR.ease(GR.ease)(TR.clamp((t - hi) / GR.dur, 0, 1));
+        disp = h0.h + (b.h - h0.h) * u;
+        dx = (h0.x - b.x) * (1 - u); dy = (h0.y - b.y) * (1 - u);
+      }
+      apply(t);
+      const e = ui.textBlock();
+      if (e) {
+        // the composer box eases to its new height (the text row is shortened by a negative bottom margin) and the
+        // text block glides from where it was to its reflowed place (FLIP) — nothing pops, nothing overlaps
+        e.style.marginBottom = ""; e.style.transform = "";
+        if (disp !== b.h) e.style.marginBottom = (parseFloat(getComputedStyle(e).marginBottom) || 0) + (disp - b.h) + "px";
+        if (dx || dy) e.style.transform = `translate(${dx}px,${dy}px)`;
+      }
+      if (ui.chipIn) ui.chipIn(TR.ease(GR.ease)(TR.clamp((t - tl.pick) / (GR.chip_dur || 0.25), 0, 1)));
+    } else apply(t);
     const L = ui.layout();
     const g = ui.geo;
-    const CP = K.collapse;
-    // the layout before the click (the composer may change size when the pick commits — kits): centring + pan start
-    // are computed from it so nothing jumps on the click
-    if (!st.pre || t < tl.pick) st.pre = { L: Object.assign({}, L), compH: g.compH, menuH: g.menuH };
-    if ("frozen" in ui || ui.geo) ui.frozen = t >= tl.pick ? st.pre.L : null;
-    const P0 = st.pre;
     // group scale (only shrinks when the menu is very tall) + centring
     const groupH = Math.max(P0.L.compY + P0.compH, P0.L.menuY + (P0.L.menuH || P0.menuH) * (scene.kit && scene.kit.composer ? 1 : 0));
     const s = Math.min(1, (S.layout.max_group_h_frac * st.H) / groupH);
     const gx = st.W / 2 - (s * g.compW) / 2 + S.layout.center_dx;
     const gy0 = st.H / 2 - (s * groupH) / 2 + S.layout.center_dy;
     // collapse
-    const compCy0 = gy0 + s * (P0.L.compY + P0.compH / 2);
-    const compCy1 = st.H / 2 + CP.composer_pan.final_center_dy_frac_comp_h * g.compH * s;
+    const compCy1 = st.H / 2 + CP.composer_pan.final_center_dy_frac_comp_h * compHFinal * s;
     const pan = TR.prog(t, tl.pick + CP.composer_pan.start, CP.composer_pan.dur, CP.composer_pan.ease === "linear" ? null : CP.composer_pan.ease);
-    const gy = gy0 + (compCy1 - compCy0) * pan;
+    // centre of the composer at its post-commit height: gy so that top + compHFinal/2 = compCy1
+    const gyEnd = compCy1 - s * (P0.L.compY + compHFinal / 2);
+    const gy = gy0 + (gyEnd - gy0) * pan;
     st.group.style.transform = `translate(${gx}px,${gy}px) scale(${s})`;
+    if (p.debug_cursor_only) st.group.style.opacity = 0; // QA: measure the cursor alone
     const ms = CP.menu_scale;
     const msc = TR.lerp(ms.from, ms.to, TR.prog(t, tl.pick + ms.start, ms.dur, ms.ease === "linear" ? null : ms.ease));
     ui.menu.style.transform = `scale(${msc})`;
     ui.menu.style.visibility = t >= tl.pick + CP.menu_opacity.hide_at_s ? "hidden" : "visible";
-
-    // hover + composer text
-    let hover = null;
-    for (let i = 0; i < tl.h.length; i++) if (t >= tl.h[i] - 1e-6) hover = i;
-    const committed = t >= tl.pick + CP.text_commit_s - 1e-6;
-    if (committed) hover = p.pick;
-    let typed = "", caret = false;
-    if (p.prompt && t >= tl.ts - 1e-6) {
-      const u = tl.te > tl.ts ? TR.ease(tl.TY.ease)(TR.clamp((t - tl.ts) / (tl.te - tl.ts), 0, 1)) : 1;
-      typed = p.prompt.slice(0, Math.round(u * p.prompt.length));
-      caret = t < tl.te + (tl.TY.caret_hide_after_s || 0.47);
-    }
-    ui.setState(p.menu ? hover : null, hover == null || !p.menu ? "" : p.items[hover].label, committed, typed, caret);
 
     // cursor (screen space; not part of the panning group)
     const C = K.cursor;
@@ -546,7 +610,7 @@
     const E = C.entry.table;
     const sendEnd = (panned) => {
       const sc = ui.sendCenter();
-      const ce = { x: gx + s * sc.x, y: gy0 + (panned ? compCy1 - compCy0 : 0) + s * (L.compY + sc.y) };
+      const ce = { x: gx + s * sc.x, y: (panned ? gyEnd : gy0) + s * (L.compY + sc.y) };
       return { x: ce.x + C.send.end_offset_frac_of_button[0] * sc.d * s, y: ce.y + C.send.end_offset_frac_of_button[1] * sc.d * s };
     };
     if (tl.noMenu) {

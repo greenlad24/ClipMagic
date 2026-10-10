@@ -362,5 +362,17 @@
   "start_after_in_s": 0.3,
   "out_after_typing_s": 0.3,
   "_note": "motion3 has no typing; the typing for the 'prompt' parameter is the MEASURED typing of motion4 (prompt_card_3d.kf.json typing: 110 chars in 1.55 s, 71 cps, ease, caret solid, gone 0.47 s after the last char). It starts 0.1 s after the collapse pan settles (or on beat 'type'); 'out' waits until 0.3 s after the last char."
+ },
+ "quantize_kits": false,
+ "kit_growth": {
+  "dur": 0.18,
+  "ease": [
+   0.25,
+   0.1,
+   0.25,
+   1
+  ],
+  "chip_dur": 0.25,
+  "_note": "NOT measured (no reference shows it): kit composers ease their text block to each new natural height (a wrapped line, a pill, an attachment tile) and fade/scale an attachment tile in \u2014 Jake round 3: 'not as smooth / glitches'. Positions are history-free per frame."
  }
 }

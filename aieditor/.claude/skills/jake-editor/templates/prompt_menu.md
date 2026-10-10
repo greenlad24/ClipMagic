@@ -112,7 +112,15 @@ Jake (2026-10-10): every way of prompting in this style, for both ChatGPT and Cl
 | `app-pill` | "+" → Presentations (or PDF / Documents / Template Creator) → pill → request | verified | — |
 | `attach-file` | "+" → Add photos & files → the attachment tile of a REAL produced image → prompt | tile verified; the native picker is skipped | — (no tile captured) |
 | `slash-command` | "/" → Feedback / Model / Study / Work in a project → Study → pill → question | rows verified; the pill after Study is assumed | — |
-| `model-switch` | model picker → pick a model → the check moves → the prompt types | DOM-only rebuild | — (picker not captured) |
+| `model-switch` | model picker → pick a model → the check moves → the composer's model label shows the picked model (e.g. "GPT-5.6 Sol") → the prompt types | DOM-only rebuild | — (picker not captured) |
+
+Kit looks (round 3, Jake: "glitch / jitter / not smooth"):
+- Each frame is computed from t alone, with no state carried from earlier frames.
+- Kits move at the render fps (no 30 fps hold; the neutral reference keeps it).
+- A kit composer only ever grows downward. Its box eases to each new height (0.18 s): a wrapped line, the single-line → multi-line switch, a pill, a tile.
+- The text glides from its old place to the reflowed one, so nothing pops or overlaps.
+- An attachment tile fades and scales in (0.25 s).
+- The single-line → multi-line switch is decided on the real DOM, so the text is never shown with an ellipsis.
 
 The params these presets add (all optional; the defaults reproduce the reference):
 
