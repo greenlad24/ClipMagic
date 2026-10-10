@@ -44,10 +44,23 @@ def rules():
     return skill.rules().get("motion_templates") or {}
 
 
+def approved():
+    """The templates Jake has approved one by one (rules.json motion_templates.approved). Jake 2026-10-10 approved
+    verb_swap (Roboto 500) and tagline_build after the round-2 preview; the others stay off until he approves them."""
+    if rules().get("enabled", False):
+        return set(IDS)
+    return {t for t in (rules().get("approved") or []) if t in IDS}
+
+
 def enabled():
-    """The ONE switch (rules.json motion_templates.enabled). Off: the overlay planner never offers or accepts a motion
-    template, the hook PROMPT → RESULT (MO05) is never placed or generated, the structure gate is as before."""
-    return bool(rules().get("enabled", False))
+    """Any motion template on? (rules.json motion_templates.enabled = all; else the per-template 'approved' list.)
+    None on: the overlay planner never offers or accepts one, the hook PROMPT → RESULT (MO05) is never placed or
+    generated, the structure gate is as before."""
+    return bool(approved())
+
+
+def is_on(tid):
+    return tid in approved()
 
 
 def ids():
@@ -338,6 +351,10 @@ def check(evs, video, segments=(), plates=(), kits=None, facts=None, log=None):
     if not enabled():
         return [], [{**e, "dropped": "motion templates are switched off (rules.json motion_templates.enabled = false)"}
                     for e in evs]
+    off = [e for e in evs if not is_on(e.get("template"))]
+    dropped += [{**e, "dropped": f"motion template {e.get('template')} is not approved yet (rules.json motion_templates.approved)"}
+                for e in off]
+    evs = [e for e in evs if is_on(e.get("template"))]
     hook = hook_s()
     cap = float(skill.rules().get("structure", {}).get("plates_max_frac", 0.015)) * float(video.get("duration") or 0)
     used = sum(max(0.0, (p.get("t1") or 0) - (p.get("t0") or 0)) for p in plates)

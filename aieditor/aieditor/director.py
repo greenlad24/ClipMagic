@@ -201,8 +201,8 @@ def validate_overlays(overlays, video, segs):
                 why = "overlaps a screencast"
             elif t0 < last_end + 0.6:
                 why = "overlaps the previous overlay"
-            if not motiontemplates.enabled():
-                why = "motion templates are switched off (rules.json motion_templates.enabled = false)"
+            if not motiontemplates.is_on(t):
+                why = f"motion template {t} is not approved yet (rules.json motion_templates.approved)"
             if why:
                 dropped.append({**ev, "dropped": why})
                 continue
@@ -867,7 +867,8 @@ OVERLAY_TEMPLATES = BASE_OVERLAYS + MOTION_OVERLAYS        # all known; offered 
 
 def overlay_templates():
     """The overlay ids the overlay call may use: the motion templates only when rules.json switches them on."""
-    return OVERLAY_TEMPLATES if motiontemplates.enabled() else BASE_OVERLAYS
+    on = motiontemplates.approved()
+    return tuple(t for t in OVERLAY_TEMPLATES if t in BASE_OVERLAYS or t in on)
 
 
 def overlay_schema():
@@ -888,6 +889,8 @@ def motion_docs():
     docs = skill.template_docs()
     out = []
     for t in (*MOTION_OVERLAYS, "prompt_result"):
+        if not motiontemplates.is_on(t):
+            continue
         d = docs.get(t, "").strip()
         if d:
             out.append(f"=== {t} (templates/{t}.md) ===\n{d[:6000]}")
@@ -925,7 +928,7 @@ beats = [{{"name", "word"}}] (word ids) for the beats the instructions name. The
 def _motion_fmt(mt, apps):
     return {"hook": mt.get("hook_s", 40), "maxn": mt.get("max_per_video", 2), "apart": mt.get("min_apart_s", 4),
             "durs": ", ".join(f"{k} {v['duration_s'][0]}-{v['duration_s'][1]} s" for k, v in (mt.get("ids") or {}).items()
-                              if k != "prompt_result"),
+                              if k != "prompt_result" and motiontemplates.is_on(k)),
             "apps": ", ".join(apps) or "(none)"}
 
 

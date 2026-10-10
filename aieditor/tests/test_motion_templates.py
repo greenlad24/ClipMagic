@@ -26,18 +26,21 @@ def video(text, step=0.4, dur=None):
                       for i, w in enumerate(ws)]}
 
 
-# ── THE SWITCH: off until Jake approves the previews — a plan containing motion templates is rejected ──
-check(MT.enabled() is False, "rules.json motion_templates.enabled is OFF by default")
+# ── THE SWITCH, per template (Jake 2026-10-10 approved verb_swap + tagline_build; the rest stay off) ──
+check(MT.approved() == {"verb_swap", "tagline_build"}, f"approved = verb_swap + tagline_build: {MT.approved()}")
+check(MT.is_on("verb_swap") and MT.is_on("tagline_build") and not MT.is_on("prompt_menu")
+      and not MT.is_on("prompt_card_3d") and not MT.is_on("prompt_highlight") and not MT.is_on("long_prompt_scroll")
+      and not MT.is_on("prompt_result"), "the unapproved templates are off")
 _off_v = video("Grok Bot can now search read and analyze X " + "filler " * 40, step=0.4)
-_o, _d = director.validate_overlays([{"template": "verb_swap", "start": 0, "end": 8, "fields": {
-    "prefix": "Grok Bot can now", "verbs": ["search", "read", "analyze"], "suffix": "X"}}], _off_v, [])
-check(not _o and "switched off" in _d[0]["dropped"], "off: the director rejects a motion overlay")
-_k, _dd = MT.check([{"template": "tagline_build", "t0": 1.0, "t1": 3.0, "fields": {"words": "Every agent. One inbox."}}],
-                   _off_v)
-check(not _k and "switched off" in _dd[0]["dropped"], "off: the motion check rejects everything")
-check("verb_swap" not in director.overlay_schema()["properties"]["overlays"]["items"]["properties"]["template"]["enum"],
-      "off: the overlay call is never offered a motion template")
-check("MOTION TEMPLATES" not in director.overlay_prompt(_off_v, [], apps=["chatgpt"]), "off: no motion text in the prompt")
+_o, _d = director.validate_overlays([{"template": "prompt_menu", "start": 0, "end": 8, "fields": {}}], _off_v, [])
+check(not _o and "not approved" in _d[0]["dropped"], "an unapproved motion overlay is rejected by the director")
+_k, _dd = MT.check([{"template": "prompt_highlight", "t0": 1.0, "t1": 3.0, "fields": {}}], _off_v)
+check(not _k and "not approved" in _dd[0]["dropped"], "the motion check rejects an unapproved template")
+_enum = director.overlay_schema()["properties"]["overlays"]["items"]["properties"]["template"]["enum"]
+check("verb_swap" in _enum and "tagline_build" in _enum and "prompt_menu" not in _enum and "prompt_card_3d" not in _enum,
+      f"the overlay call is offered only the approved motion templates: {_enum}")
+_pr = director.overlay_prompt(_off_v, [], apps=["chatgpt"])
+check("verb_swap" in _pr and "prompt_highlight (templates/" not in _pr, "the prompt carries only the approved templates' instructions")
 _U = planfit.units(_off_v)
 for _u in _U:
     _u["label"] = "A"
@@ -51,7 +54,7 @@ check(not any(e.get("template") == "verb_swap" for e in _val["overlays"]) and "m
       "off: validate() keeps no motion overlay and the structure gate is unchanged")
 
 # everything below tests the templates as they will behave once switched ON
-MT.enabled = lambda: True
+MT.approved = lambda: set(MT.IDS)              # the rest of this file tests every template as if all were approved
 
 # ── rules.json + registry ──
 R = skill.rules()["motion_templates"]

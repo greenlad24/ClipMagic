@@ -43,8 +43,10 @@ export interface OverlayTemplateInfo {
 export const PROMPT_KIT_NOTE =
   "Prompt boxes use the real app's UI kit (ChatGPT, Claude…) — or a neutral box when the app has no kit.";
 
-/** Mirrors aieditor rules.json motion_templates.enabled: the motion templates stay hidden until Jake approves them. */
-export const MOTION_TEMPLATES_ENABLED = false;
+/** Mirrors aieditor rules.json motion_templates.approved: each motion template shows once Jake has approved it
+ *  (2026-10-10: verb_swap + tagline_build). */
+export const MOTION_TEMPLATES_APPROVED: string[] = ['verb_swap', 'tagline_build'];
+export const MOTION_TEMPLATES_ENABLED = MOTION_TEMPLATES_APPROVED.length > 0;
 
 export const OVERLAY_TEMPLATES: OverlayTemplateInfo[] = [
   { id: 'lower_title', name: 'Lower title', description: 'White text, lower centre, 1–2 short lines — the intro and a section’s opening line.' },
@@ -453,7 +455,7 @@ export function OverlayPreviewStyles() {
 
 /** The template catalog: every overlay the planner may place, with its preview. */
 export function OverlayCatalog({ className }: { className?: string }) {
-  const shown = OVERLAY_TEMPLATES.filter((t) => MOTION_TEMPLATES_ENABLED || !t.motion);
+  const shown = OVERLAY_TEMPLATES.filter((t) => !t.motion || MOTION_TEMPLATES_APPROVED.includes(t.id));
   return (
     <details className={cn('group rounded-md border border-border', className)}>
       <OverlayPreviewStyles />
