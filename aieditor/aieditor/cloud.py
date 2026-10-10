@@ -19,7 +19,7 @@ Safety:
     droplet whose lease is missing or stale, or that outlived max_hours.
   * The token has no block_storage_action scope, so volumes are never attached to job
     droplets: they work on their own disk and results come back over the VPC.
-  * Only the keys the editor reads (ANTHROPIC_API_KEY, GROQ_API_KEY) are shipped, mode 0600.
+  * Only the keys the editor reads (ANTHROPIC_API_KEY, GROQ_API_KEY) are shipped — never an image-API key (Jake 2026-10-10: images are made in the app's UI), mode 0600.
     The Anthropic key a droplet gets is the SEPARATE, spend-limited, revocable droplet key
     (AIEDITOR_DROPLET_ANTHROPIC_KEY in .env), never the org key once that exists — until Jake has
     made it, require_droplet_key (default false) chooses between a warning + the org key and a
@@ -702,9 +702,11 @@ def droplet_env(log, s=None):
 
 def api_env(jid, workflow):
     """What a job droplet needs to keep the API caps without the main ledger (apiledger.py)."""
-    from . import apiledger
+    from . import apiledger, genledger
     job_cap, day_cap = apiledger.caps(workflow)
     return {"AIEDITOR_API_LEDGER": str(config.JOBS / jid / "api-ledger.jsonl"),
+            # the in-app generation ledger (daily cap per app across jobs, walls): this box's last 24 h + the job's own
+            genledger.ENV_LEDGER: str(config.JOBS / jid / "gen-ledger.jsonl"), genledger.ENV_PRIOR: genledger.prior_env(),
             apiledger.ENV_JOB_CAP: f"{job_cap:.4f}", apiledger.ENV_DAILY_CAP: f"{day_cap:.4f}",
             apiledger.ENV_PRIOR_DAY: f"{apiledger.daily_total():.6f}",
             apiledger.ENV_PRIOR_JOB: f"{apiledger.job_total(jid):.6f}",
@@ -713,12 +715,17 @@ def api_env(jid, workflow):
 
 def merge_ledger(job_dir, log=print):
     """The droplet's API ledger lines → the main ledger (idempotent: line ids)."""
-    from . import apiledger
+    from . import apiledger, genledger
     src = Path(job_dir) / "api-ledger.jsonl"
     if src.exists():
         n = apiledger.merge(src)
         if n:
             log(f"{n} Claude API call(s) added to the spending ledger")
+    g = Path(job_dir) / "gen-ledger.jsonl"
+    if g.exists():
+        n = genledger.merge(g)
+        if n:
+            log(f"{n} in-app generation(s) / stop(s) added to the generation ledger")
 
 
 def run_remote(job_dir, action, log, cancelled):
@@ -910,10 +917,11 @@ def run_remote(job_dir, action, log, cancelled):
             return tail
     finally:
         if ip and not ok_run:
-            try:                     # a failed job's API calls still count against the caps
-                rsync(f"root@{ip}:{config.JOBS / jid}/api-ledger.jsonl", str(job_dir) + "/", timeout=120)
-            except (DOError, subprocess.TimeoutExpired, OSError):
-                pass
+            for f in ("api-ledger.jsonl", "gen-ledger.jsonl"):   # a failed job's calls/generations still count
+                try:
+                    rsync(f"root@{ip}:{config.JOBS / jid}/{f}", str(job_dir) + "/", timeout=120)
+                except (DOError, subprocess.TimeoutExpired, OSError):
+                    pass
         try:
             merge_ledger(job_dir, log)
         except OSError as e:
