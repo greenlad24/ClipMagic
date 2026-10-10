@@ -333,7 +333,9 @@
   "default_after_pick_s": 0.361,
   "hold_after_out_s": 0.667,
   "exit": "cut",
-  "_note": "the reference ends on a hard cut 0.667 s after the cursor starts toward the send button (it has just arrived)"
+  "_note": "the reference ends on a hard cut 0.667 s after the cursor starts toward the send button (it has just arrived)",
+  "hold_after_click_s": 0.5,
+  "_note_menu_false": "menu:false (composer only): the cursor's measured entry glide lands on the send button on 'out' (the click); the clip holds 0.5 s and cuts"
  },
  "reference_beats": {
   "in": 0.0,
@@ -345,5 +347,20 @@
   "pick": 4.122,
   "out": 4.483
  },
- "reference_duration_s": 5.15
+ "reference_duration_s": 5.15,
+ "typing": {
+  "rate_cps": 71.0,
+  "ease": [
+   0.9,
+   0.9,
+   0.7,
+   0.9
+  ],
+  "caret_hide_after_s": 0.47,
+  "caret_blink": false,
+  "start_after_pan_s": 0.1,
+  "start_after_in_s": 0.3,
+  "out_after_typing_s": 0.3,
+  "_note": "motion3 has no typing; the typing for the 'prompt' parameter is the MEASURED typing of motion4 (prompt_card_3d.kf.json typing: 110 chars in 1.55 s, 71 cps, ease, caret solid, gone 0.47 s after the last char). It starts 0.1 s after the collapse pan settles (or on beat 'type'); 'out' waits until 0.3 s after the last char."
+ }
 }

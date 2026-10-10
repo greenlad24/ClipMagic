@@ -71,3 +71,17 @@ General example (`prompt_menu-general.png`): 7 rows, pick 5, title "Commands", a
 - A kit with a `greeting` (Claude: "Evening, Jake") draws it at its captured baseline above the composer. Under an "above" menu it stays covered until the collapse reveals it, the same way the reference's "Add context" chip is revealed. `params.greeting` = a string overrides it, false hides it.
 - The motion is identical in every case.
 - Preview renders: `motion-preview/prompt_menu/prompt_menu-chatgpt-dark.mp4` and `-claude-dark.mp4`.
+
+## Variations (2026-10-10)
+`motion/templates/prompt_menu.presets.json` holds 9 presets: type-prompt, skill, create-image, web-search, deep-research, app-pill, attach-file, slash-command and model-switch. The usage md (section 10) lists them.
+New params:
+- `menu`: false = composer only.
+- `menu_source`: menu, slash_menu or model_picker.
+- `items: "kit"`: use the app's real rows.
+- `prompt`: typed after the pick.
+- `chip`: how the pick shows in the composer (tool / image / file / indicator / none).
+- `preview`.
+- Beat `type`.
+
+The motion is unchanged. The typing is motion4's MEASURED typing: 71 cps, ease (0.9, 0.9, 0.7, 0.9), solid caret gone 0.47 s after the last char; source prompt_card_3d.kf.json. With `menu: false` the measured entry glide lands on send at `out`.
+Regression: the reference render is identical (cursor ≤ 2.2 px, every beat 0 frames).

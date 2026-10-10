@@ -1,0 +1,283 @@
+{
+ "id": "prompt_menu",
+ "about": "Variation presets of prompt_menu (Jake 2026-10-10: 'all variations … writing a prompt in this style, choosing different options (skills, images, research etc.) for both Claude and ChatGPT'). A preset = params (+ default beats) merged UNDER the overlay's own fields (fields win). 'items': 'kit' = the app's REAL rows of the chosen menu (kit menu_source). Options come from ui-kits/<app>/options.json (mapped 2026-10-10). 'chip.thumb_src': 'asset:<file>' = a produced asset the planner inlines as a data: URI (never invented).",
+ "params_added": {
+  "menu": "bool, default true. false = composer only (typing a prompt, then the cursor clicks send)",
+  "menu_source": "'menu' (the + / tools list, default) | 'slash_menu' ('/' commands) | 'model_picker' (kit only)",
+  "items": "[…] or 'kit' (the menu_source's real rows)",
+  "prompt": "string ≤ 220 chars typed after the pick (or alone with menu:false) at the measured motion4 typing (71 cps, eased, solid caret)",
+  "chip": "{kind: 'tool' (default with a kit chip) | 'image' | 'file' | 'indicator' | 'none', name?, thumb_src?, color?, bg?, style?}: how the pick shows in the composer",
+  "preview": "bool: grey '/<row>' preview while hovering (reference neutral box: true; real apps: false)"
+ },
+ "presets": {
+  "type-prompt": {
+   "description": "No menu: the prompt types into the app's composer, then the cursor glides in and clicks send on 'out'.",
+   "params": {
+    "menu": false,
+    "prompt": "Turn this rough sketch into a realistic photo — a glass squat hot sauce bottle on a weathered wooden picnic table, warm late-afternoon light, shallow depth of field."
+   },
+   "beats": {},
+   "apps": {
+    "chatgpt": {
+     "verified": true
+    },
+    "claude": {
+     "verified": "composer look from Jake's motion5 reference; live UI unverified"
+    },
+    "neutral": {
+     "verified": true
+    }
+   }
+  },
+  "skill": {
+   "description": "'/' opens the skills menu; the cursor hovers down and picks a skill; the composer shows '/<skill>' and the detail types after it.",
+   "apps": {
+    "neutral": {
+     "params": {
+      "trigger": "/",
+      "menu_title": "Skills",
+      "items": [
+       {
+        "label": "add_object",
+        "icon": "image"
+       },
+       {
+        "label": "newbg",
+        "icon": "image"
+       },
+       {
+        "label": "upscale",
+        "icon": "sparkles"
+       }
+      ],
+      "pick": 1,
+      "prompt": "rustic kitchen background",
+      "preview": true
+     },
+     "verified": "reference motion + look"
+    },
+    "claude": {
+     "params": {
+      "trigger": "/",
+      "menu_title": "Skills",
+      "items": [
+       {
+        "label": "skill-creator",
+        "icon": "none"
+       },
+       {
+        "label": "pdf",
+        "icon": "none"
+       },
+       {
+        "label": "pptx",
+        "icon": "none"
+       },
+       {
+        "label": "xlsx",
+        "icon": "none"
+       }
+      ],
+      "pick": 2,
+      "prompt": "turn these notes into a 5-slide deck for Grandma's Regret hot sauce"
+     },
+     "verified": false,
+     "note": "Claude's '/' menu was NOT captured (no claude.ai login): the menu is drawn from the kit tokens and the rows are Anthropic's public skill names; how a picked skill shows in the composer is undocumented → shown as '/pptx' text"
+    }
+   }
+  },
+  "create-image": {
+   "description": "'+' → Create image → the blue tool pill → the image prompt types after it.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 2,
+      "trigger": "",
+      "prompt": "A glass squat hot sauce bottle on a rustic kitchen counter beside fresh chillies, morning light through a window"
+     },
+     "verified": true
+    }
+   }
+  },
+  "web-search": {
+   "description": "'+' → Web search → (pill / toggle) → the question types.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 3,
+      "trigger": "",
+      "prompt": "What's new in ChatGPT Images 2.5 for product photos?"
+     },
+     "verified": true
+    },
+    "claude": {
+     "params": {
+      "trigger": "",
+      "menu_title": "",
+      "items": [
+       {
+        "label": "Add files or photos",
+        "icon": "none"
+       },
+       {
+        "label": "Research",
+        "icon": "none"
+       },
+       {
+        "label": "Web search",
+        "icon": "none"
+       },
+       {
+        "label": "Connectors",
+        "icon": "none"
+       },
+       {
+        "label": "Skills",
+        "icon": "none"
+       }
+      ],
+      "pick": 2,
+      "chip": {
+       "kind": "none"
+      },
+      "prompt": "What's new in ChatGPT Images 2.5 for product photos?"
+     },
+     "verified": false,
+     "note": "rows from Anthropic's help pages (unverified order/look); the documented effect (a checkmark in the menu row) closes with the menu, so the composer only shows the typed question"
+    }
+   }
+  },
+  "deep-research": {
+   "description": "'+' → Deep research / Research → the mode shows in the composer → the research question types.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 4,
+      "trigger": "",
+      "prompt": "Compare product photo tools for small shops: price, daily limits and how well they keep a label readable"
+     },
+     "verified": true,
+     "beats": {
+      "pick": 3.0
+     }
+    },
+    "claude": {
+     "params": {
+      "trigger": "",
+      "menu_title": "",
+      "items": [
+       {
+        "label": "Add files or photos",
+        "icon": "none"
+       },
+       {
+        "label": "Research",
+        "icon": "none"
+       },
+       {
+        "label": "Web search",
+        "icon": "none"
+       },
+       {
+        "label": "Connectors",
+        "icon": "none"
+       },
+       {
+        "label": "Skills",
+        "icon": "none"
+       }
+      ],
+      "pick": 1,
+      "chip": {
+       "kind": "indicator",
+       "name": "Research"
+      },
+      "prompt": "Compare product photo tools for small shops: price, daily limits and how well they keep a label readable"
+     },
+     "verified": false,
+     "note": "'Research' per Anthropic's help ('a blue indicator will appear on the bottom of the chat window'): the indicator's exact look is NOT captured — drawn as a small blue 'Research' tag; verify against live"
+    }
+   }
+  },
+  "app-pill": {
+   "description": "'+' → an app tool (Presentations / PDF / Documents / Template Creator) → its pill → the request types.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 7,
+      "trigger": "",
+      "prompt": "A 5-slide pitch deck for Grandma's Regret hot sauce"
+     },
+     "verified": true,
+     "beats": {
+      "pick": 3.9
+     }
+    }
+   }
+  },
+  "attach-file": {
+   "description": "'+' → Add photos & files → the attachment tile (a REAL produced image) → the prompt types under it.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "menu",
+      "items": "kit",
+      "pick": 0,
+      "trigger": "",
+      "chip": {
+       "kind": "image",
+       "name": "sketch_bottle_scene.png",
+       "thumb_src": "asset:sketch_bottle_scene.png"
+      },
+      "prompt": "Turn this rough sketch into a realistic photo"
+     },
+     "verified": "tile look verified 2026-10-09; the native file picker is skipped (the tile appears on the pick)"
+    }
+   }
+  },
+  "slash-command": {
+   "description": "'/' typed → ChatGPT's 4 commands (Feedback / Model / Study / Work in a project) → Study → its pill → the question types.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "slash_menu",
+      "items": "kit",
+      "pick": 2,
+      "trigger": "/",
+      "prompt": "Explain how image models keep a label readable"
+     },
+     "verified": "menu rows verified live; the composer state after picking 'Study' was not captured (shown as the tool pill)",
+     "beats": {
+      "pick": 2.9
+     }
+    }
+   }
+  },
+  "model-switch": {
+   "description": "The model picker opens; the cursor picks a model; the check moves; the picker closes; the prompt types.",
+   "apps": {
+    "chatgpt": {
+     "params": {
+      "menu_source": "model_picker",
+      "items": "kit",
+      "pick": 1,
+      "trigger": "",
+      "chip": {
+       "kind": "none"
+      },
+      "prompt": "Use this exact bottle. Put it on a rustic kitchen counter beside fresh chillies"
+     },
+     "verified": "DOM only (rebuilt from computed styles); picker placed over the model button"
+    }
+   }
+  }
+ }
+}

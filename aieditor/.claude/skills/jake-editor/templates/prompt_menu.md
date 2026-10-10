@@ -99,6 +99,34 @@ Timeline (clip seconds, t0 = 712.46): in 0.54 → cursor fades in from 0.87 → 
 - The menu is fully gone by pick + 0.16 s. Nothing is drawn before `in` or after the overlay end.
 - The plate is within the hook zone and the plate budget, and is never placed under the facecam bubble centre.
 
+## 10. Variation presets (`motion/templates/prompt_menu.presets.json`)
+Jake (2026-10-10): every way of prompting in this style, for both ChatGPT and Claude. A preset is a set of params plus default beats, merged UNDER the overlay's own fields. Use it with `"preset": "<name>"` and override `prompt`, `pick`, `items` and so on as needed. The options come from `ui-kits/<app>/options.json` (mapped 2026-10-10).
+
+| preset | what it shows | ChatGPT | Claude |
+|---|---|---|---|
+| `type-prompt` | no menu: the prompt types into the composer, then the cursor clicks send | verified | composer only (reference look) |
+| `skill` | "/" → skills menu → pick → "/skill" + detail types | — (ChatGPT's "/" menu has no skills) | UNVERIFIED: token-drawn menu, Anthropic's public skill names |
+| `create-image` | "+" → Create image → blue pill → image prompt | verified | — |
+| `web-search` | "+" → Web search → pill (ChatGPT) / toggle (Claude) → question | verified | UNVERIFIED rows from Anthropic's help pages |
+| `deep-research` | "+" → Deep research / Research → mode shown → question | verified (pill) | UNVERIFIED: the "blue indicator" is drawn as a small blue Research tag |
+| `app-pill` | "+" → Presentations (or PDF / Documents / Template Creator) → pill → request | verified | — |
+| `attach-file` | "+" → Add photos & files → the attachment tile of a REAL produced image → prompt | tile verified; the native picker is skipped | — (no tile captured) |
+| `slash-command` | "/" → Feedback / Model / Study / Work in a project → Study → pill → question | rows verified; the pill after Study is assumed | — |
+| `model-switch` | model picker → pick a model → the check moves → the prompt types | DOM-only rebuild | — (picker not captured) |
+
+The params these presets add (all optional; the defaults reproduce the reference):
+
+| param | default | meaning |
+|---|---|---|
+| menu | true | false = composer only |
+| menu_source | "menu" | "menu" (+ / tools), "slash_menu" ("/" commands), "model_picker" (kit only) |
+| items | — | a list, or "kit" = the menu_source's real rows |
+| prompt | "" | ≤ 220 chars, typed after the pick at motion4's measured typing (71 chars/s, eased, solid caret gone 0.47 s after the last char). It starts 0.1 s after the collapse settles, or on beat `type`; `out` waits ≥ 0.3 s after the last char |
+| chip | (kit pill) | how the pick shows in the composer: {kind: tool, image, file, indicator or none, name?, thumb_src: "asset:<produced file>"} |
+| preview | neutral true / kits false | the grey "/<row>" preview while hovering. The reference does it; real apps do not |
+
+Beats add `type` (optional). Rows deep in a long real menu (e.g. Presentations = row 7 of 12) need `pick` ≥ about 0.3 s × rows after `in`; the presets set it. Claude presets stay UNVERIFIED until a claude.ai Scout login exists. Keep them out of real videos until the kit agent recaptures the live menus.
+
 ```json
 {"id": "prompt_menu",
  "params": {
@@ -112,9 +140,15 @@ Timeline (clip seconds, t0 = 712.46): in 0.54 → cursor fades in from 0.87 → 
    "footer_label": {"type": "string", "default": "All sources", "min": 0, "max": 20, "unit": "chars"},
    "backdrop": {"type": "bool", "default": true, "min": null, "max": null},
    "cursor": {"type": "bool", "default": true, "min": null, "max": null},
-   "greeting": {"type": "string", "default": null, "min": 0, "max": 32, "unit": "chars"}
+   "greeting": {"type": "string", "default": null, "min": 0, "max": 32, "unit": "chars"},
+   "preset": {"type": "enum", "default": null, "values": ["type-prompt", "skill", "create-image", "web-search", "deep-research", "app-pill", "attach-file", "slash-command", "model-switch"]},
+   "menu": {"type": "bool", "default": true},
+   "menu_source": {"type": "enum", "default": "menu", "values": ["menu", "slash_menu", "model_picker"]},
+   "prompt": {"type": "string", "default": "", "min": 0, "max": 220, "unit": "chars"},
+   "chip": {"type": "object", "default": null},
+   "preview": {"type": "bool", "default": null}
  },
- "beats": ["in", "hover_0", "hover_1", "hover_2", "hover_3", "hover_4", "hover_5", "hover_6", "hover_7", "pick", "out"],
+ "beats": ["in", "type", "hover_0", "hover_1", "hover_2", "hover_3", "hover_4", "hover_5", "hover_6", "hover_7", "pick", "out"],
  "required_beats": ["pick"],
  "duration_s": [2.3, 8.0],
  "zone": "hook"}

@@ -142,6 +142,9 @@ def _inline_assets(obj, d):
         for k, v in obj.items():
             if k in ("icon", "icon_file") and isinstance(v, str) and v.endswith(".svg") and (d / v).exists():
                 out["icon_html"] = (d / v).read_text()
+            elif isinstance(v, str) and v.endswith(".svg") and (d / v).exists():
+                out[k] = v                                 # e.g. model_picker.check → check + check_html
+                out[f"{k}_html"] = (d / v).read_text()
             else:
                 out[k] = _inline_assets(v, d)
         return out

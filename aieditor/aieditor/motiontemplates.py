@@ -118,6 +118,8 @@ def validate_params(tid, fields):
                 errs.append(f"{tid}: '{name}' has {n} words (max {lim['max_words']})")
             if "min_words" in lim and n < lim["min_words"]:
                 errs.append(f"{tid}: '{name}' has {n} words (min {lim['min_words']})")
+        elif t == "list" and v == "kit" and lim.get("kit_ok"):
+            pass                                           # the app's real menu rows from its UI kit
         elif t == "list":
             v = _as_list(v)
             labels = [x.get("label", x.get("text", x.get("name", ""))) if isinstance(x, dict) else str(x) for x in v]
@@ -149,7 +151,7 @@ def validate_params(tid, fields):
             if v < lim.get("min", -1e9) or v > lim.get("max", 1e9):
                 errs.append(f"{tid}: '{name}' = {v} is out of range ({lim.get('min')}-{lim.get('max')})")
         out[name] = v
-    if tid == "prompt_menu" and not errs and not 0 <= out["pick"] < len(out["items"]):
+    if tid == "prompt_menu" and not errs and out["items"] != "kit" and not 0 <= out["pick"] < len(out["items"]):
         errs.append(f"prompt_menu: pick {out['pick']} is not one of the {len(out['items'])} items")
     if tid in ("prompt_highlight", "long_prompt_scroll") and not errs:
         miss = [p for p in out["phrases"] if str(p) not in str(out["prompt"])]

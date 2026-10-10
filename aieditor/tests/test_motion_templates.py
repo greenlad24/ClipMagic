@@ -137,6 +137,13 @@ check(k and k["app"] == "demo", "kit loads")
 sk = uikits.scene_kit(k)
 check(sk["menu"]["items"][0]["icon_html"].startswith("<svg") and "_dir" not in sk, "scene kit inlines icons, no paths")
 check(uikits.load("nothere", tmp) is None, "no kit → None")
+_k2 = dict(good, model_picker={"check": "assets/i.svg"})
+(tmp / "demo" / "kit.json").write_text(json.dumps(_k2))
+check(uikits.scene_kit(uikits.load("demo", tmp))["model_picker"]["check_html"].startswith("<svg"),
+      "any kit svg path gets a <key>_html twin (model picker check/chevron)")
+(tmp / "demo" / "kit.json").write_text(json.dumps(good))
+check(not MT.validate_params("prompt_menu", {"items": "kit", "pick": 3, "app": "chatgpt"})[1],
+      "prompt_menu items='kit' = the app's real menu rows (no 3-8 limit)")
 kit, note = uikits.for_app("other", base=tmp)
 check(kit is None and "neutral box" in note and "never another app" in note, f"neutral fallback, logged: {note}")
 (tmp / "wrong").mkdir()

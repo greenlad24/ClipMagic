@@ -96,12 +96,35 @@
     return svgIcon(name || ICON_CYCLE[i % ICON_CYCLE.length]);
   }
 
+  const CHECK_SVG = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>';
+  const CHEV_SVG = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 5 5-5 5"/></svg>';
+  // which of the kit's menus this clip opens: "menu" (the + / tools menu), "slash_menu" ("/" commands), "model_picker"
+  function kitSource(kit, name) {
+    if (!kit) return null;
+    if (name === "slash_menu" && kit.slash_menu && kit.menu && kit.menu.html)
+      return Object.assign({}, kit.menu, { items: kit.slash_menu.items || [], anchor: kit.slash_menu.anchor || kit.menu.anchor, gap: kit.slash_menu.gap != null ? kit.slash_menu.gap : kit.menu.gap });
+    if (name === "model_picker" && kit.model_picker && kit.model_picker.html) {
+      const mp = kit.model_picker;
+      return { model: true, css: mp.css, html: String(mp.html).replace("{{rows_html}}", "{{items_html}}"), item_html: mp.row_html, hover_class: mp.hover_class || "cg-hover",
+        anchor: mp.anchor || "below", gap: mp.gap != null ? mp.gap : 4, align: "model",
+        items: (mp.models || []).map((m) => ({ label: m.label, sub: m.sub || "", checked: !!m.checked })),
+        vars: { mode: mp.mode || "", chevron_html: mp.chevron_html || CHEV_SVG }, check_html: mp.check_html || CHECK_SVG };
+    }
+    return kit.menu && kit.menu.html ? kit.menu : null;
+  }
+
   function normParams(scene) {
     const p = Object.assign({ trigger: "/", menu_title: "Skills", placeholder_prefix: "/", after_label: "Add context",
-      footer_label: "All sources", backdrop: true, cursor: true, pick: 0 }, scene.params || {});
+      footer_label: "All sources", backdrop: true, cursor: true, pick: 0, menu: true, prompt: "" }, scene.params || {});
+    p.menu = p.menu !== false;
+    p.prompt = String(p.prompt || "");
+    if (p.items === "kit") {
+      const src = kitSource(scene.kit, p.menu_source) || {};
+      p.items = (src.items || []).map((x) => ({ label: x.label, desc: x.desc, sub: x.sub, checked: x.checked }));
+    }
     let items = p.items && p.items.length ? p.items : [{ label: "Messaging House Skill", icon: "mic" }, { label: "Task Filing Skill", icon: "cabinet" },
       { label: "Research and Insights PMM Review", icon: "search" }, { label: "GTM Plan Skill", icon: "rocket" }, { label: "Email Draft Skill", icon: "mail" }];
-    items = items.map((it) => (typeof it === "string" ? { label: it } : { label: String(it.label || ""), icon: it.icon }));
+    items = items.map((it) => (typeof it === "string" ? { label: it } : { label: String(it.label || ""), icon: it.icon, desc: it.desc, sub: it.sub, checked: it.checked }));
     p.items = items;
     p.pick = Math.max(0, Math.min(items.length - 1, Number(p.pick) || 0));
     return p;
@@ -109,7 +132,17 @@
 
   // ───────────────────────────── timeline (pure numbers, from beats + kf) ─────────────────────────────
   function timeline(scene, p) {
-    const K = scene.kf, B = scene.beats || {}, H = K.hover;
+    const K = scene.kf, B = scene.beats || {}, H = K.hover, TY = K.typing || { rate_cps: 71, ease: [0.9, 0.9, 0.7, 0.9], caret_hide_after_s: 0.47, start_after_pan_s: 0.1, start_after_in_s: 0.3, out_after_typing_s: 0.3 };
+    const typeDur = p.prompt ? p.prompt.length / TY.rate_cps : 0;
+    if (!p.menu) {
+      // composer only: the prompt types in, then the cursor glides in and clicks send on 'out'
+      const tin = B.in != null ? B.in : 0;
+      const ts = B.type != null ? Number(B.type) : tin + TY.start_after_in_s;
+      const te = ts + typeDur;
+      const out = B.out != null ? Math.max(Number(B.out), te) : te + TY.out_after_typing_s + 0.183;
+      const dur = scene.duration != null ? scene.duration : out + K.out.hold_after_click_s;
+      return { tin, h: [], pick: Infinity, out, dur, ts, te, TY, noMenu: true };
+    }
     const n = p.pick + 1;
     const tin = B.in != null ? B.in : 0;
     const h = new Array(n).fill(null);
@@ -132,9 +165,12 @@
     }
     for (let i = 1; i < n; i++) h[i] = Math.max(h[i], h[i - 1] + H.min_interval_s * 0.5);
     pick = Math.max(pick, h[n - 1] + 0.05);
-    const out = B.out != null ? Math.max(Number(B.out), pick + K.collapse.composer_pan.dur) : pick + K.out.default_after_pick_s;
+    const ts = B.type != null ? Math.max(Number(B.type), pick) : pick + K.collapse.composer_pan.dur + TY.start_after_pan_s;
+    const te = ts + typeDur;
+    const outMin = Math.max(pick + K.collapse.composer_pan.dur, p.prompt ? te + TY.out_after_typing_s : 0);
+    const out = B.out != null ? Math.max(Number(B.out), outMin) : Math.max(pick + K.out.default_after_pick_s, outMin);
     const dur = scene.duration != null ? scene.duration : out + K.out.hold_after_out_s;
-    return { tin, h, pick, out, dur };
+    return { tin, h, pick, out, dur, ts, te, TY };
   }
 
   // ───────────────────────────── neutral look (the reference's own composer) ─────────────────────────────
@@ -151,6 +187,9 @@
     const T = C.text;
     const slash = TR.el("div", `position:absolute;white-space:nowrap;font:${T.weight} ${T.font_px}px ${FF};line-height:1;letter-spacing:${T.tracking_em}em;color:${T.slash_color}`, comp, esc(p.trigger));
     const label = TR.el("div", `position:absolute;white-space:nowrap;font:${T.weight} ${T.font_px}px ${FF};line-height:1;letter-spacing:${T.tracking_em}em;color:${T.preview_color}`, comp, "");
+    // the typed prompt (after the pick, or alone with menu:false): wraps; the first line continues after the label
+    const typedEl = TR.el("div", `position:absolute;white-space:pre-wrap;overflow-wrap:break-word;font:${T.commit_weight} ${T.font_px}px ${FF};line-height:1.3;letter-spacing:${T.tracking_em}em;color:${T.commit_color};width:${C.w - T.x - (T.right_pad || 70)}px`, comp, "");
+    if (!p.menu) slash.style.display = "none";
     // footer
     const F = C.footer;
     TR.el("div", `position:absolute;left:${F.clip.x}px;top:${F.clip.y}px;width:${F.clip.w}px;height:${F.clip.h}px`, comp, SVG.clip(F.icon_color, F.icon_stroke));
@@ -216,16 +255,29 @@
       geo,
       layout() {
         layoutText();
+        if (!p.menu) { menu.style.display = "none"; comp.style.top = "0px"; return { menuW, compY: 0, menuY: 0, menuH: 0 }; }
         comp.style.top = menuH - M.overlap + "px";
         return { menuW, compY: menuH - M.overlap, menuY: 0 };
       },
       rowBand(i) { return { x: R.band_x, y: R.first_band_top + i * R.pitch, w: menuW - R.band_x - R.band_r_inset, h: R.band_h, pitch: R.pitch }; },
       sendCenter() { return { x: C.w - SD.cx_from_right, y: C.h - SD.cy_from_bottom, d: SD.d }; },
       menu, comp,
-      setState(hover, text, committed) {
-        const key = hover + "|" + text + "|" + committed;
+      setState(hover, text, committed, typed, caret) {
+        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret;
         if (key === lastKey) return;
         lastKey = key;
+        if (typed || caret) {
+          let indent = 0;
+          const x0 = p.menu ? parseFloat(slash.style.left) : T.x;
+          if (text && committed) {
+            const lw = TR.measure(text, font(T.commit_weight, T.font_px)).width;
+            indent = parseFloat(label.style.left || x0) + lw + TR.measure(" ", font(T.commit_weight, T.font_px)).width - x0;
+          }
+          place(typedEl, p.menu ? x0 - lsb(p.trigger, T.weight, T.font_px) : T.x, T.cap_top, "H", T.commit_weight, T.font_px, 1.3);
+          if (p.menu) typedEl.style.left = x0 + "px";
+          typedEl.style.textIndent = indent + "px";
+          typedEl.innerHTML = esc(typed) + (caret ? `<span style="display:inline-block;width:${T.caret_w || 2.5}px;height:0.8em;margin-left:2px;vertical-align:-0.08em;background:${T.caret_color || T.commit_color}"></span>` : "");
+        } else typedEl.innerHTML = "";
         if (hover == null || committed) band.style.display = hover == null ? "none" : "block";
         else band.style.display = "block";
         if (hover != null) band.style.top = R.first_band_top + hover * R.pitch + "px";
@@ -258,6 +310,7 @@
         derived: true, anchor: "above", gap: 8, hover_class: "pm-hover",
         css: `.pm-menu{box-sizing:border-box;width:${num(KC.width, 700)}px;padding:6px;background:${surf};border:1px solid ${bord};border-radius:14px;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;color:${text};-webkit-font-smoothing:antialiased;box-shadow:0 6px 24px rgba(0,0,0,0.25)}
 .pm-head{padding:6px 10px 4px;font-size:12px;color:${muted}}
+.pm-head:empty{display:none}
 .pm-item{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:9px;white-space:nowrap}
 .pm-item.pm-hover{background:${dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)"}}
 .pm-ic{width:18px;display:flex;justify-content:center;font-size:15px}
@@ -266,7 +319,7 @@
         item_html: `<div class="pm-item">{{icon_html}}<span>{{label}}</span><span class="pm-desc">{{desc}}</span></div>`,
       };
     };
-    const KM = kit.menu && kit.menu.html ? kit.menu : tokenMenu();
+    const KM = kitSource(kit, p.menu_source) || tokenMenu();
     const cls = "kit-" + String(kit.app || "app").replace(/[^a-z0-9_-]/gi, "");
     const scope = (css) => String(css || "").replace(/(^|\})\s*([^{}@]+)\{/g, (m, a, sel) =>
       `${a} ${sel.split(",").map((s) => (s.trim().startsWith(":root") ? `.${cls}` : `.${cls} ${s.trim()}`)).join(",")}{`);
@@ -295,11 +348,12 @@
     const kitHit = (label) => (kitItems || []).find((x) => x && x.label && String(x.label).toLowerCase() === String(label).toLowerCase());
     const itemsHtml = p.items.map((it, i) => {
       const h = TR.fill(KM ? KM.item_html : `<div style="display:flex;gap:12px;align-items:center;padding:8px 14px">{{icon_html}}<span>{{label}}</span></div>`,
-        { icon_html: `<span class="pm-ic" style="display:inline-flex;width:1.25em;height:1.25em;align-items:center;justify-content:center">${iconHtml(it.icon, i, kitItems, it.label)}</span>`, label: it.label, desc: it.desc != null ? it.desc : (kitHit(it.label) || {}).desc || "" });
+        { icon_html: `<span class="pm-ic" style="display:inline-flex;width:1.25em;height:1.25em;align-items:center;justify-content:center">${iconHtml(it.icon, i, kitItems, it.label)}</span>`, label: it.label, desc: it.desc != null ? it.desc : (kitHit(it.label) || {}).desc || "",
+          sub: it.sub || "", check_html: `<span class="pm-check" style="display:inline-flex;opacity:${it.checked ? 1 : 0}">${KM.check_html || CHECK_SVG}</span>` });
       return `<div data-pm-row="${i}" style="display:contents">${h}</div>`;
     }).join("");
     menuIn.innerHTML = TR.fill(KM ? KM.html : `<div style="background:#fff;border-radius:16px;padding:8px;min-width:360px">{{items_html}}</div>`,
-      { items_html: itemsHtml, title: p.menu_title });
+      Object.assign({ items_html: itemsHtml, title: p.menu_title }, KM.vars || {}));
     const rowEls = p.items.map((_, i) => {
       const w = menuIn.querySelector(`[data-pm-row="${i}"]`);
       return (w && w.firstElementChild) || w;
@@ -312,6 +366,8 @@
       const f = (anc.offsetWidth || ar.width) / (ar.width || 1);
       return { x: (er.left - ar.left) * f, y: (er.top - ar.top) * f, w: er.width * f, h: er.height * f };
     };
+    const cm = /\.([a-z0-9]+-caret)\b/i.exec(String(KC.css || ""));
+    const caretCls = cm ? `<span class="${cm[1]}"></span>` : "";
     let lastKey = "";
     let L = { menuW: 300, menuH: 300, compY: 0, menuY: 0 };
     const gap = KM ? num(KM.gap, 8) : 8;
@@ -329,10 +385,16 @@
         const ce = compIn.firstElementChild;
         if (ce && ce.offsetHeight) { geo.compH = ce.offsetHeight * k; compWrap.style.height = geo.compH + "px"; }
         geo.menuH = menuH;
-        const ox = KM ? num(KM.offset_x, 0) * k : 0;
+        const ox = KM && KM.align === "model" ? (KW - me.offsetWidth - num(KM.right_inset, 96)) * k : KM ? num(KM.offset_x, 0) * k : 0;
         menuWrap.style.width = menuW + "px"; menuWrap.style.height = menuH + "px";
         menuWrap.style.left = ox + "px";
         geo.menuX = ox;
+        if (!p.menu) {
+          menuWrap.style.display = "none"; compWrap.style.top = "0px";
+          if (greet) greet.style.top = -(num(G.baseline_above_composer, 39) + 0.8 * (greet.offsetHeight || 30)) * k + "px";
+          L = { menuW: 0, menuH: 0, compY: 0, menuY: 0, rows: [] };
+          return L;
+        }
         if (api.frozen && greet) greet.style.top = api.frozen.compY - (num(G.baseline_above_composer, 39) + 0.8 * (greet.offsetHeight || 30)) * k + "px";
         if (api.frozen) { menuWrap.style.top = api.frozen.menuY + "px"; compWrap.style.top = api.frozen.compY + "px"; return Object.assign({}, api.frozen, { rows: rr }); }
         if (anchor === "below") {
@@ -364,19 +426,33 @@
         return { x: S.composer.w - 60 * k, y: geo.compH - 40 * k, d: 40 * k };
       },
       menu: menuWrap, comp: compWrap,
-      setState(hover, text, committed) {
-        const key = hover + "|" + text + "|" + committed;
+      setState(hover, text, committed, typed, caret) {
+        const key = hover + "|" + text + "|" + committed + "|" + typed + "|" + caret;
         if (key === lastKey) return;
         lastKey = key;
         rowEls.forEach((e, i) => e && e.classList.toggle(hoverCls, i === hover));
-        let prompt = p.trigger, placeholder = "", chips = "";
-        if (text && !committed) { prompt = ""; placeholder = p.placeholder_prefix + text; }
+        let prompt = p.trigger, placeholder = "", chips = "", state = "";
+        const ck = (p.chip && p.chip.kind) || (KM.model ? "none" : null);
+        if (KM.model) rowEls.forEach((e, i) => { const c = e && e.querySelector(".pm-check"); if (c) c.style.opacity = (committed ? i === p.pick : p.items[i].checked) ? 1 : 0; });
+        // real apps do not preview a hovered row in the composer; the reference's neutral box does (params.preview)
+        if (text && !committed && p.preview === true) { prompt = ""; placeholder = p.placeholder_prefix + text; }
         if (text && committed) {
-          if (kit.chip && kit.chip.html) { chips = TR.fill(kit.chip.html, { name: text, kind: "skill", icon_html: (kitHit(text) || {}).icon_html || "", thumb_html: "" }); prompt = ""; }
+          if (ck === "none") prompt = "";
+          else if (ck === "indicator") {
+            prompt = "";
+            const c = p.chip || {};
+            state = `<div class="pm-indicator" style="position:absolute;${c.style || "left:52px;bottom:12px"};height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:8px;font:500 13px Inter,sans-serif;color:${c.color || "#5ea8ff"};background:${c.bg || "rgba(94,168,255,0.14)"}">${c.icon_html || ""}${esc(c.name || text)}</div>`;
+          } else if ((ck === "image" || ck === "file") && kit.chip && kit.chip.html) {
+            const c = p.chip || {};
+            chips = TR.fill(kit.chip.html, { name: c.name || text, kind: ck, icon_html: "", thumb_html: c.thumb_src ? `<img src="${c.thumb_src}" alt="">` : "" });
+            prompt = "";
+          } else if (kit.chip && kit.chip.html) { chips = TR.fill(kit.chip.html, { name: text, kind: "skill", icon_html: (kitHit(text) || {}).icon_html || "", thumb_html: "" }); prompt = ""; }
           else prompt = p.placeholder_prefix + text;
         }
         if (!/\{\{\s*placeholder/.test(KC.html) && placeholder) { prompt = p.trigger; placeholder = ""; }
-        compIn.innerHTML = TR.fill(KC.html, { prompt, placeholder: placeholder || (prompt || chips ? "" : KC.placeholder || ""), chips_html: chips, state_html: "", caret_html: "", layout_class: "", model: KC.model || kit.model_label || "", model_label: kit.model_label || KC.model || "" });
+        if (!p.menu) prompt = "";
+        if (typed || caret) { prompt = (prompt && committed ? prompt + " " : "") + (typed || ""); placeholder = ""; }
+        compIn.innerHTML = TR.fill(KC.html, { prompt, placeholder: placeholder || (prompt || chips ? "" : KC.placeholder || ""), chips_html: chips, state_html: state, caret_html: caret ? (KC.caret_html || caretCls || '<span class="pm-caret" style="display:inline-block;width:1.5px;height:1.05em;margin-left:1px;vertical-align:-0.15em;background:currentColor"></span>') : "", layout_class: (KC.multiline_over_px && TR.measure(prompt, `${num(KC.font_size, 16)}px Inter`).width > num(KC.multiline_over_px, 1e9)) ? "is-multiline" : "", model: KC.model || kit.model_label || "", model_label: kit.model_label || KC.model || "" });
       },
     };
     return api;
@@ -449,7 +525,13 @@
     for (let i = 0; i < tl.h.length; i++) if (t >= tl.h[i] - 1e-6) hover = i;
     const committed = t >= tl.pick + CP.text_commit_s - 1e-6;
     if (committed) hover = p.pick;
-    ui.setState(hover, hover == null ? "" : p.items[hover].label, committed);
+    let typed = "", caret = false;
+    if (p.prompt && t >= tl.ts - 1e-6) {
+      const u = tl.te > tl.ts ? TR.ease(tl.TY.ease)(TR.clamp((t - tl.ts) / (tl.te - tl.ts), 0, 1)) : 1;
+      typed = p.prompt.slice(0, Math.round(u * p.prompt.length));
+      caret = t < tl.te + (tl.TY.caret_hide_after_s || 0.47);
+    }
+    ui.setState(p.menu ? hover : null, hover == null || !p.menu ? "" : p.items[hover].label, committed, typed, caret);
 
     // cursor (screen space; not part of the panning group)
     const C = K.cursor;
@@ -462,8 +544,20 @@
     };
     let pos = null, alpha = 1;
     const E = C.entry.table;
-    const entryStart = tl.h[0] + E[0][0];
-    if (t >= entryStart - 1e-6) {
+    const sendEnd = (panned) => {
+      const sc = ui.sendCenter();
+      const ce = { x: gx + s * sc.x, y: gy0 + (panned ? compCy1 - compCy0 : 0) + s * (L.compY + sc.y) };
+      return { x: ce.x + C.send.end_offset_frac_of_button[0] * sc.d * s, y: ce.y + C.send.end_offset_frac_of_button[1] * sc.d * s };
+    };
+    if (tl.noMenu) {
+      // composer only: the measured entry glide, landing on the send button on 'out' (the click)
+      const h0 = tl.out - E[E.length - 1][0];
+      if (t >= h0 + E[0][0] - 1e-6) {
+        const r = sendEnd(false), te = t - h0;
+        pos = { x: r.x + s * tab(te, E, 1), y: r.y + s * tab(te, E, 2) };
+        alpha = tab(te, E, 3);
+      }
+    } else if (t >= tl.h[0] + E[0][0] - 1e-6) {
       const r0 = restOf(0);
       const te = t - tl.h[0];
       alpha = tab(te, E, 3);
@@ -484,9 +578,7 @@
       pos = posAt(t, tl.h.length);
       if (t >= tl.out) {
         const a = posAt(tl.out, tl.h.length);
-        const sc = ui.sendCenter();
-        const ce = { x: gx + s * sc.x, y: gy0 + (compCy1 - compCy0) + s * (L.compY + sc.y) };
-        const end = { x: ce.x + C.send.end_offset_frac_of_button[0] * sc.d * s, y: ce.y + C.send.end_offset_frac_of_button[1] * sc.d * s };
+        const end = sendEnd(true);
         const ts = t - tl.out;
         pos = { x: TR.lerp(a.x, end.x, tab(ts, C.send.table, 1)), y: TR.lerp(a.y, end.y, tab(ts, C.send.table, 2)) };
       }
