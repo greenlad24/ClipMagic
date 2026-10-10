@@ -1,0 +1,286 @@
+{
+ "app": "claude",
+ "built": "2026-10-10",
+ "rule": "Jake 2026-10-10: 'use public screenshots and my clips'. Priority where they disagree: 1 Jake's clips 5/6 > 2 official Anthropic images/help (newest first) > 3 press. Public images are REFERENCES only: no pixels from them are in the kit or its assets (all icons hand-drawn SVG). Reference copies were downloaded to a scratch dir only (untrusted data, analysed with python -I in throwaway containers) and are not part of the repo.",
+ "sources": [
+  {
+   "id": "clip5",
+   "kind": "Jake's clip",
+   "url": "/opt/aieditor-work/reference/motion-2026-10-09/motion5.mov",
+   "date": "2026-10-09 (screen capture of a YouTube tutorial, claude.ai dark)",
+   "shows": "new-chat page: spark + serif greeting, composer (prompt, +, 'Opus 5.5 High' ⌄, orange send), suggestion chips, disclaimer",
+   "took": "the approved composer/greeting/suggestions (v1, unchanged); confirms the composer label = model + effort; NO 'Project or folder · Output · Auto' row under the box"
+  },
+  {
+   "id": "clip6",
+   "kind": "Jake's clip",
+   "url": "/opt/aieditor-work/reference/motion-2026-10-09/motion6.mov",
+   "date": "2026-10-09",
+   "shows": "conversation view: serif reply streaming (frame 1 paused mid-stream), spark under the reply, docked composer 'Write a message...' + model label + mic + voice, disclaimer, chat-title header",
+   "took": "result.text (serif reply + spark), stream tail = last ~10 chars at 22 % opacity (measured 80/255 on a 32 page), conversation dock (= approved kit.message), placeholder after send. The chat title in the clip is someone else's and is NOT used."
+  },
+  {
+   "id": "press-new-experience",
+   "kind": "official image (Anthropic press asset, as published by TechCrunch)",
+   "url": "https://techcrunch.com/wp-content/uploads/2026/09/Claude-1920x1080-1.jpeg",
+   "page": "https://techcrunch.com/2026/09/16/anthropic-merges-claude-chat-and-cowork-in-one-interface/",
+   "date": "2026-09-16",
+   "shows": "light theme, new Claude experience: greeting, composer (+ left; mic, voice, ⌄ right), row under the box 'Project or folder · Output · Opus 5 High Auto', Output dropdown below: Docs/Slides/Design each with a coloured icon tile + 'Beta', divider, 'Artifact — Let Claude pick the format'",
+   "took": "output_menu rows/order/badges/tiles/side; menu family look (radius, row rhythm, hover fill) for the '+' menu; the under-box row recorded as a conflict with clip 5 (not drawn)"
+  },
+  {
+   "id": "yt-docs-slides-thumb",
+   "kind": "official video thumbnail",
+   "url": "https://i.ytimg.com/vi/To5nrYqvR44/maxresdefault.jpg",
+   "page": "https://claude.com/resources/articles/cowork-is-now-claude",
+   "date": "2026-09-16",
+   "shows": "Docs / Slides / Designs icon tiles (blue doc, orange stacked slides, purple palette)",
+   "took": "the shapes + tints of out-docs/out-slides/out-design (redrawn by hand)"
+  },
+  {
+   "id": "yt-chat-cowork-thumb",
+   "kind": "official video thumbnail",
+   "url": "https://i.ytimg.com/vi/qMUf-jwSpMo/maxresdefault.jpg",
+   "page": "https://claude.com/resources/articles/cowork-is-now-claude",
+   "date": "2026-09-16",
+   "shows": "the old 'Chat | Cowork' switch",
+   "took": "nothing (old experience; help 16761823 says it disappears in the new one)"
+  },
+  {
+   "id": "artifacts-feature",
+   "kind": "official image",
+   "url": "https://assets.claude.com/5417c7f247242efc74cab6cab3a72de5e1a8ea7c.png",
+   "page": "https://claude.com/features/artifacts",
+   "date": "2026 (page live 2026-10-10; new-experience content)",
+   "shows": "light: user message bubble at the TOP RIGHT (rounded, darker than the page, sans); below-left: spark + 'Building the launch deck' + muted detail line with a moving highlight and '>'",
+   "took": "result.user placement/shape; working layout (spark + title + detail line + shimmer)"
+  },
+  {
+   "id": "claude-design",
+   "kind": "official image",
+   "url": "https://assets.claude.com/968178549b079d4e7c5a6b3b57463528f1fcb526.png",
+   "page": "https://claude.com/product/claude-design",
+   "date": "2026 (page live 2026-10-10)",
+   "shows": "spark + 'Tweaking…' with a highlight sweep",
+   "took": "working.shimmer (a lighter window sweeping over the label)"
+  },
+  {
+   "id": "research-2025-a",
+   "kind": "official image",
+   "url": "https://assets.claude.com/2de448df750ac57760e61a59fe8af1defc46d86e.png",
+   "page": "https://www.anthropic.com/news/research",
+   "date": "2025-04-15",
+   "shows": "light: greeting (another fictional name — not used), composer with + / sliders / blue 'Research BETA' pill / model / send",
+   "took": "indicators.research (magnifier + 'Research' pill, blue, right of '+'; BETA badge dropped)"
+  },
+  {
+   "id": "research-2025-b",
+   "kind": "official image",
+   "url": "https://assets.claude.com/d94666bde1a93acd0d678ecf8c4017230a6416a5.png",
+   "page": "https://www.anthropic.com/news/research",
+   "date": "2025-04-15",
+   "shows": "light conversation: user bubble with avatar initial (old style), serif reply, bordered tool rows 'Searched recent events · 4 results ⌄' and 'Searching messages' (muted), spinner spark, 'Reply to Claude...' composer",
+   "took": "tool_row; NOT the bubble (the 2026 image supersedes it: no avatar, right-aligned)"
+  },
+  {
+   "id": "voice-help-img",
+   "kind": "official image (help center)",
+   "url": "https://downloads.intercomcdn.com/i/o/lupk8zyo/2042359690/68879db64559ecf87991f73ce058/671ff972-9e08-4686-bc04-955dab4b2de3",
+   "page": "https://support.claude.com/en/articles/11101966-use-voice-mode",
+   "date": "article updated 2026-09-16",
+   "shows": "dark MOBILE composer 'Reply to Claude' with round + and sliders buttons, mic, white voice button",
+   "took": "nothing directly (mobile); confirms mic + voice in the docked composer (as clip 6)"
+  },
+  {
+   "id": "skills-help-img",
+   "kind": "official image (help center)",
+   "url": "https://downloads.intercomcdn.com/i/o/lupk8zyo/2105391273/8359cbf8be20dce0f1cd3fd40e6f/CleanShot-2B2026-02-25-2Bat-2B15_50_16.png",
+   "page": "https://support.claude.com/en/articles/12512180-use-skills-in-claude",
+   "date": "2026-02-25 (article updated 2026-09-22)",
+   "shows": "light settings dropdown (Try in chat / Download / Edit with Claude / Replace / Delete): 16 px line icons, ~32 px rows, 12 px radius",
+   "took": "menu row rhythm + icon weight"
+  },
+  {
+   "id": "help-research",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/11088861-use-research-on-claude",
+   "date": "2026-06-02",
+   "took": "'+' → Research; 'a blue indicator will appear on the bottom of the chat window'; report with citations"
+  },
+  {
+   "id": "help-websearch",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/10684626-enable-and-use-web-search",
+   "date": "2026-10-07",
+   "took": "Web search = checkmark row in '+' menu; 'If you have the new Claude experience, there's no web search toggle' → legacy_items"
+  },
+  {
+   "id": "help-connectors",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities",
+   "date": "2026-10-01",
+   "took": "'+' (or '/') → hover 'Connectors' → per-service toggles, 'Manage connectors', 'Tool access' (Auto / On demand)"
+  },
+  {
+   "id": "help-model",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/8664678-change-the-model-effort-and-thinking-settings",
+   "date": "2026-10-07",
+   "took": "model + effort shown next to send; Effort on hover; 'Thinking'/'Extended' toggle per model; 'More models'"
+  },
+  {
+   "id": "help-upload",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/8241126-upload-files-to-claude",
+   "date": "2026-07-23",
+   "took": "'+' → 'Add files or photos' (label), drag-drop, paste"
+  },
+  {
+   "id": "help-one-claude",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/16761823-claude-cowork-and-chat-are-one-claude",
+   "date": "2026-09-16",
+   "took": "'/deep-research' or '+' → 'Research'; model picker unchanged; no Chat/Cowork switch; files appear alongside the conversation"
+  },
+  {
+   "id": "help-artifacts",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them",
+   "date": "2026-10-08",
+   "took": "artifact 'opens beside your conversation'; 'Output' in the message box → Docs, Slides, Design, Dashboards (beta), Motion (beta)"
+  },
+  {
+   "id": "help-release-notes",
+   "kind": "official help text",
+   "url": "https://support.claude.com/en/articles/12138966-release-notes",
+   "date": "2026-10-07",
+   "took": "current model names (Opus 5.5 2026-09-22, Sonnet 5.5 2026-09-28, Haiku 5.5 2026-10-07, Fable 5.1 2026-09-01)"
+  },
+  {
+   "id": "press-weloveclaude-composer",
+   "kind": "press (last resort)",
+   "url": "https://www.weloveclaude.com/features/chat-composer",
+   "date": "verified 2026-09-13",
+   "took": "'+' menu rows of the new experience: Add files or photos, Skills, Connectors, Design system, Plugins, Research, Memory (order not given); no Web search / Use style"
+  },
+  {
+   "id": "press-weloveclaude-model",
+   "kind": "press (last resort)",
+   "url": "https://www.weloveclaude.com/features/chat-composer-model",
+   "date": "2026-10-07",
+   "took": "picker rows + one-line descriptions (Fable 5.1 / Opus 5.5 / Sonnet 5.5 / Haiku), effort names Low/Medium/High/Extra/Max, 'More models', no Thinking toggle with Opus 5.5"
+  }
+ ],
+ "per_element": {
+  "menu (+)": {
+   "labels": [
+    "help-upload",
+    "help-connectors",
+    "help-one-claude",
+    "press-weloveclaude-composer"
+   ],
+   "look": [
+    "press-new-experience",
+    "skills-help-img"
+   ],
+   "verify_against_live": true
+  },
+  "slash_menu": {
+   "from": [
+    "help-connectors",
+    "help-one-claude"
+   ],
+   "verify_against_live": true
+  },
+  "connectors_menu": {
+   "from": [
+    "help-connectors"
+   ],
+   "verify_against_live": true
+  },
+  "output_menu": {
+   "from": [
+    "press-new-experience",
+    "yt-docs-slides-thumb",
+    "help-artifacts"
+   ],
+   "verify_against_live": "dark colours only"
+  },
+  "model_picker": {
+   "from": [
+    "help-model",
+    "help-release-notes",
+    "press-weloveclaude-model",
+    "clip5"
+   ],
+   "verify_against_live": true
+  },
+  "indicators.research": {
+   "from": [
+    "help-research",
+    "research-2025-a"
+   ],
+   "verify_against_live": "dark colours + position"
+  },
+  "indicators.extended_thinking": {
+   "from": [],
+   "verify_against_live": true
+  },
+  "chip (attachment tiles, skill pill)": {
+   "from": [
+    "help-upload"
+   ],
+   "verify_against_live": true
+  },
+  "working": {
+   "from": [
+    "artifacts-feature",
+    "claude-design",
+    "clip6"
+   ],
+   "verify_against_live": "dark colours, shimmer timing"
+  },
+  "result.user": {
+   "from": [
+    "artifacts-feature"
+   ],
+   "verify_against_live": "dark colour/radius/padding"
+  },
+  "result.text + stream tail": {
+   "from": [
+    "clip6"
+   ],
+   "verify_against_live": false
+  },
+  "conversation": {
+   "from": [
+    "clip6",
+    "artifacts-feature"
+   ],
+   "verify_against_live": "bubble only"
+  },
+  "tool_row": {
+   "from": [
+    "research-2025-b"
+   ],
+   "verify_against_live": "2026 look"
+  },
+  "code": {
+   "from": [],
+   "verify_against_live": true
+  },
+  "artifact": {
+   "from": [
+    "prompt_card_3d.style.json (copied verbatim)",
+    "help-artifacts"
+   ],
+   "verify_against_live": "panel chrome"
+  },
+  "research_report": {
+   "from": [
+    "help-research"
+   ],
+   "verify_against_live": true
+  }
+ }
+}

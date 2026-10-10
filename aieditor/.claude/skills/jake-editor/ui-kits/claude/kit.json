@@ -27,7 +27,21 @@
   "--cl-accent": "#d26c4d",
   "--cl-spark": "#d77f60",
   "--cl-greet": "#fafaf7",
-  "--cl-caret": "#898986"
+  "--cl-caret": "#898986",
+  "--cl-menu": "#292926",
+  "--cl-menu-border": "rgba(222,220,209,0.15)",
+  "--cl-menu-shadow": "0 8px 28px rgba(0,0,0,0.32)",
+  "--cl-hover": "rgba(255,255,255,0.06)",
+  "--cl-sep": "rgba(222,220,209,0.12)",
+  "--cl-blue": "#79b0ec",
+  "--cl-blue-bg": "rgba(70,140,220,0.17)",
+  "--cl-user": "#141412",
+  "--cl-code-bg": "#1a1a18",
+  "--cl-tile": "#1f1f1c",
+  "--cl-badge": "rgba(255,255,255,0.08)",
+  "--cl-switch-on": "#3b82d6",
+  "--cl-switch-off": "rgba(255,255,255,0.18)",
+  "--cl-sweep-x": "-60%"
  },
  "bg": "#20201d",
  "model_label": "Opus 5.5 High",
@@ -94,9 +108,72 @@
    }
   ]
  },
- "chip": null,
- "working": null,
- "result": null,
+ "chip": {
+  "kinds": {
+   "file": "120x120 file card above the prompt: name (3 lines max), optional meta ('54 lines'), type badge (PDF/TXT/…)",
+   "image": "120x120 image thumbnail above the prompt (thumb_html = an <img>)",
+   "skill": "inline blue pill (a '/' skill picked) — undocumented look",
+   "tool": "same as skill"
+  },
+  "css": ".cl-input:has(.clk-chip--file){display:flex;flex-wrap:wrap;gap:8px;padding-top:12px}\n.cl-input:has(.clk-chip--image){display:flex;flex-wrap:wrap;gap:8px;padding-top:12px}\n.cl-input:has(.clk-chip--file) .cl-prompt{order:2;width:100%;margin-top:4px}\n.cl-input:has(.clk-chip--image) .cl-prompt{order:2;width:100%;margin-top:4px}\n.clk-chip{display:inline-block;vertical-align:top;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.clk-att-file,.clk-att-img,.clk-pill{display:none}\n.clk-chip--file .clk-att-file{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:120px;height:120px;padding:10px 10px 8px;border-radius:10px;background:var(--cl-tile);border:0.5px solid var(--cl-menu-border);box-shadow:0 1px 3px rgba(0,0,0,0.25)}\n.clk-att-name{font-size:12px;line-height:16px;color:var(--cl-text);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}\n.clk-att-meta{margin-top:4px;font-size:11px;line-height:14px;color:var(--cl-muted)}\n.clk-att-meta:empty{display:none}\n.clk-att-badge{position:absolute;left:10px;bottom:9px;padding:0 5px;height:18px;line-height:18px;border-radius:5px;border:0.5px solid var(--cl-menu-border);background:var(--cl-surface);color:var(--cl-muted);font-size:10px;font-weight:600;letter-spacing:0.3px;text-transform:uppercase}\n.clk-att-badge:empty{display:none}\n.clk-chip--image .clk-att-img{display:block;width:120px;height:120px;border-radius:10px;overflow:hidden;border:0.5px solid var(--cl-menu-border);background:var(--cl-tile)}\n.clk-att-img img{width:100%;height:100%;object-fit:cover;display:block}\n.clk-chip--skill .clk-pill,.clk-chip--tool .clk-pill{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;margin:0 6px 0 0;border-radius:6px;background:var(--cl-blue-bg);color:var(--cl-blue);font-size:14px;line-height:20px;vertical-align:-3px}\n.clk-pill svg{width:14px;height:14px}\n.clk-pill-ic{display:flex}\n.clk-pill-ic:empty{display:none}",
+  "html": "<span class=\"clk-chip clk-chip--{{kind}}\"><span class=\"clk-att-file\"><span class=\"clk-att-name\">{{name}}</span><span class=\"clk-att-meta\">{{meta}}</span><span class=\"clk-att-badge\">{{ext}}</span></span><span class=\"clk-att-img\">{{thumb_html}}</span><span class=\"clk-pill\"><span class=\"clk-pill-ic\">{{icon_html}}</span>{{name}}</span></span>",
+  "fill": {
+   "meta": "optional, e.g. '54 lines'",
+   "ext": "optional type badge, e.g. 'pdf' (shown upper-case)"
+  },
+  "placement": "file/image tiles sit ABOVE the prompt inside the composer (the kit's chip css re-orders .cl-input only when a tile is present, so the approved composer is unchanged without one)",
+  "source": "help 8241126 (2026-07-23): attach via '+' → 'Add files or photos', drag-drop or paste — no official image of the tile exists",
+  "verify_against_live": true
+ },
+ "working": {
+  "texts": {
+   "thinking": "Thinking",
+   "research": "Researching",
+   "searching": "Searching the web",
+   "artifact": "Building the artifact",
+   "image": "Working"
+  },
+  "text_source": "official claude.com/features/artifacts image (2026): spark + title ('Building the launch deck') + muted detail line with a moving highlight and a '>' chevron; official Claude Design image (claude.com/product/claude-design): spark + 'Tweaking…' with the highlight sweep. Labels other than those two are generic (verify).",
+  "shimmer": {
+   "var": "--cl-sweep-x",
+   "rest": "-60%",
+   "from": "-60%",
+   "to": "160%",
+   "sweep_s": 1.2,
+   "period_s": 2.0,
+   "note": "a lighter window sweeps left→right over the muted label (both official images catch it mid-sweep). Speed/period NOT measured (stills only) → verify_against_live. Templates set --cl-sweep-x each frame (no @keyframes)."
+  },
+  "spark": {
+   "var": "--cl-spark-rot",
+   "note": "the spark animates while Claude works (clip 6 shows it under the streaming reply); exact motion unmeasured → a slow rotation is a placeholder (verify)"
+  },
+  "css": ".clk-work{display:flex;align-items:flex-start;gap:10px;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.clk-work-spark{flex:none;display:block;width:22px;height:23px;margin-top:0;color:var(--cl-spark);transform:rotate(var(--cl-spark-rot,0deg))}\n.clk-work-spark svg{width:100%;height:100%;display:block}\n.clk-work-tx{display:flex;flex-direction:column;gap:6px;padding-top:1px}\n.clk-work-title{position:relative;display:inline-block;font-size:16px;line-height:22px;color:var(--cl-text);white-space:nowrap}\n.clk-work-sub{position:relative;display:inline-flex;align-items:center;gap:6px;font-size:15px;line-height:20px;color:var(--cl-muted);white-space:nowrap}\n.clk-work-sub:empty{display:none}\n.clk-shimmer{color:var(--cl-muted)}\n.clk-sweep{position:absolute;inset:0;overflow:hidden;color:var(--cl-text);-webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 40%,#000 60%,transparent 100%);-webkit-mask-size:40% 100%;-webkit-mask-repeat:no-repeat;-webkit-mask-position:var(--cl-sweep-x) 0}\n.clk-sweep span{white-space:nowrap}",
+  "html": "<div class=\"clk-work\"><span class=\"clk-work-spark\">{{file:assets/spark.svg}}</span><span class=\"clk-work-tx\"><span class=\"clk-work-title clk-shimmer\">{{text}}<span class=\"clk-sweep\" aria-hidden=\"true\"><span>{{text}}</span></span></span><span class=\"clk-work-sub\">{{sub}}</span></span></div>",
+  "fill": {
+   "sub": "optional detail line (muted), e.g. 'Setting the headline'"
+  },
+  "verify_against_live": "dark colours, timing"
+ },
+ "result": {
+  "user": {
+   "css": ".clk-thread{box-sizing:border-box;width:727px;padding:0 22px;display:flex;flex-direction:column;align-items:stretch;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.clk-user{display:flex;justify-content:flex-end}\n.clk-user-b{box-sizing:border-box;max-width:84%;padding:10px 16px 11px;border-radius:14px;background:var(--cl-user);color:var(--cl-text);font-size:16px;line-height:24px;font-weight:440;letter-spacing:-0.27px;white-space:pre-wrap;overflow-wrap:break-word}\n.clk-reply{margin-top:22px}\n.clk-reply-md{font-family:'Gelasio',Georgia,'Times New Roman',serif;font-size:16.21px;line-height:24.89px;color:#ffffff;white-space:pre-wrap;overflow-wrap:break-word}\n.clk-reply-md p{margin:0 0 12px}\n.clk-tail{opacity:var(--cl-tail-op,0.22)}\n.clk-reply-spark{display:block;width:24px;height:25px;margin:11.5px 0 0 -0.6px;color:var(--cl-spark);transform:rotate(var(--cl-spark-rot,0deg))}\n.clk-reply-spark svg{width:100%;height:100%;display:block}",
+   "html": "<div class=\"clk-thread\"><div class=\"clk-user\"><div class=\"clk-user-b\">{{text}}</div></div>{{user_actions_html}}</div>",
+   "source": "official claude.com/features/artifacts image (2026, light): the user's message is a rounded bubble at the TOP RIGHT, sans text, darker than the page; Claude's activity starts at the left below it. Dark bubble colour = claude.ai's dark bg-300 mapped to the encode (verify).",
+   "verify_against_live": "dark bubble colour, radius, padding"
+  },
+  "text": {
+   "css": ".clk-thread{box-sizing:border-box;width:727px;padding:0 22px;display:flex;flex-direction:column;align-items:stretch;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.clk-user{display:flex;justify-content:flex-end}\n.clk-user-b{box-sizing:border-box;max-width:84%;padding:10px 16px 11px;border-radius:14px;background:var(--cl-user);color:var(--cl-text);font-size:16px;line-height:24px;font-weight:440;letter-spacing:-0.27px;white-space:pre-wrap;overflow-wrap:break-word}\n.clk-reply{margin-top:22px}\n.clk-reply-md{font-family:'Gelasio',Georgia,'Times New Roman',serif;font-size:16.21px;line-height:24.89px;color:#ffffff;white-space:pre-wrap;overflow-wrap:break-word}\n.clk-reply-md p{margin:0 0 12px}\n.clk-tail{opacity:var(--cl-tail-op,0.22)}\n.clk-reply-spark{display:block;width:24px;height:25px;margin:11.5px 0 0 -0.6px;color:var(--cl-spark);transform:rotate(var(--cl-spark-rot,0deg))}\n.clk-reply-spark svg{width:100%;height:100%;display:block}",
+   "html": "<div class=\"clk-thread\"><div class=\"clk-reply\"><div class=\"clk-reply-md\">{{text_html}}</div><span class=\"clk-reply-spark\">{{file:assets/spark.svg}}</span></div></div>",
+   "stream": {
+    "tail_opacity": 0.22,
+    "tail_chars": 10,
+    "tail_class": "clk-tail",
+    "note": "Jake's clip 6 (frame 1, paused mid-stream): the last ~10 characters of the reply ('aze at the') sit at 22 % opacity (measured: 80 vs 255 text / 32 page), the rest fully opaque; the spark sits under the last line. Wrap the newest chunk in <span class=\"clk-tail\">; fade-in speed not measurable (the clip holds the frame)."
+   },
+   "source": "Jake's clip 6 (serif reply, white, Gelasio metrics = kit.message), spark under the reply",
+   "verify_against_live": false
+  }
+ },
  "privacy": "Display name shown: Jake (greeting 'Evening, Jake'). No e-mail, avatar, chat history, org name or account id is part of this kit. The reference's own greeting name is never used.",
  "message": {
   "name": "Claude (claude.ai) — conversation view with one long assistant message, dark theme",
@@ -133,5 +210,407 @@
   "html": "<div class=\"clm-view\"><div class=\"clm-scroll\"><div class=\"clm-col\"><div class=\"clm-msg\">{{content_html}}</div><span class=\"clm-spark\">{{file:assets/spark.svg}}</span></div></div><div class=\"clm-head\"><span class=\"clm-side\"><svg viewBox=\"0 0 17.2 14.6\" width=\"100%\" height=\"100%\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.15\"><rect x=\"0.6\" y=\"0.6\" width=\"16\" height=\"13.4\" rx=\"2.6\"/><path d=\"M6.2 0.8V13.8\"/></svg></span><span class=\"clm-title\">{{title}}</span></div><div class=\"clm-dock\"><div class=\"clm-comp\"><div class=\"clm-ph\">{{placeholder}}</div><span class=\"clm-plus\">{{file:assets/plus.svg}}</span><span class=\"clm-model\">{{model_label}}</span><span class=\"clm-chev\">{{file:assets/chevron.svg}}</span><span class=\"clm-mic\"><svg viewBox=\"0 0 17.2 24\" width=\"100%\" height=\"100%\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\"><rect x=\"5\" y=\"0.7\" width=\"7.2\" height=\"13.6\" rx=\"3.6\"/><path d=\"M1 10.4a7.6 7.6 0 0 0 15.2 0M8.6 18.2V23.3\"/></svg></span><span class=\"clm-wave\"><svg viewBox=\"0 0 22.3 14.6\" width=\"100%\" height=\"100%\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.3\" stroke-linecap=\"round\"><path d=\"M0.7 5.2v4.2M5.9 2.6v9.4M11.15 0.7v13.2M16.4 2.6v9.4M21.6 5.2v4.2\"/></svg></span></div><div class=\"clm-disc\">{{disclaimer}}</div></div></div>",
   "notes": "The Claude conversation view: chat-title header (sidebar toggle + title; solid bg band that clips the scrolled text at css y 86.7), one assistant message in the serif (pre-wrapped plain text: section headings are just ALL-CAPS lines ending in ':' after a blank line — same size and weight as the body), the Claude spark under the message, and the docked composer ('Write a message...', +, model label, chevron, mic, voice) with the disclaimer line. Placeholders: {{content_html}} (the message text, already escaped/marked up by the template), {{title}} (chat title; empty = none), {{placeholder}}, {{model_label}} (kit.model_label), {{disclaimer}}. The template scrolls the element at scroll_sel (translateY) and draws marker highlights inside text_sel. Lead: merge as kit.message and add \"Gelasio\": \"Gelasio.ttf\" to kit.fonts. Reference values: message font 18.89 px / line pitch 29.0 px at the start view (screen px) = 16.21 / 24.89 css; text column 795.6 screen px (682.9 css; set so every reference line wraps where the reference wraps) starting at screen x 560; composer 847x121.5 screen px at (536.5, 914.5).",
   "privacy": "No names, e-mail, avatar, org or history. The reference's own chat title is NOT used (title is a parameter, default empty)."
+ },
+ "tokens_v2": {
+  "--cl-menu": "#292926",
+  "--cl-menu-border": "rgba(222,220,209,0.15)",
+  "--cl-menu-shadow": "0 8px 28px rgba(0,0,0,0.32)",
+  "--cl-hover": "rgba(255,255,255,0.06)",
+  "--cl-sep": "rgba(222,220,209,0.12)",
+  "--cl-blue": "#79b0ec",
+  "--cl-blue-bg": "rgba(70,140,220,0.17)",
+  "--cl-user": "#141412",
+  "--cl-code-bg": "#1a1a18",
+  "--cl-tile": "#1f1f1c",
+  "--cl-badge": "rgba(255,255,255,0.08)",
+  "--cl-switch-on": "#3b82d6",
+  "--cl-switch-off": "rgba(255,255,255,0.18)",
+  "--cl-sweep-x": "-60%"
+ },
+ "menu": {
+  "anchor": "below",
+  "gap": 8,
+  "offset_x": 18,
+  "row_h": 32,
+  "width": 262,
+  "hover_class": "clk-hov",
+  "anchor_note": "new-chat page: the composer sits mid-page → the dropdown opens BELOW the '+' (left edges aligned, like the official Output dropdown in the 2026-09-16 press image). In a conversation (composer docked at the bottom) it opens ABOVE (anchor_in_thread).",
+  "anchor_in_thread": "above",
+  "css": ".clk-menu{box-sizing:border-box;width:262px;padding:6px;background:var(--cl-menu);border:0.5px solid var(--cl-menu-border);border-radius:12px;box-shadow:var(--cl-menu-shadow);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;letter-spacing:-0.1px;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-head{padding:6px 8px 4px;font-size:12px;line-height:16px;color:var(--cl-muted)}\n.clk-head:empty{display:none}\n.clk-item{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:8px;white-space:nowrap}\n.clk-item.clk-hov{background:var(--cl-hover)}\n.clk-ic{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--cl-icon)}\n.clk-ic svg,.clk-ic img{width:16px;height:16px}\n.clk-label{flex:1 1 auto;overflow:hidden;text-overflow:clip}\n.clk-desc{color:var(--cl-muted);font-size:12px}\n.clk-desc:empty{display:none}\n.clk-sub{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:0;line-height:0;color:var(--cl-muted)}\n.clk-sub:empty{display:none}\n.clk-sub::after{content:'';display:block;width:5.5px;height:5.5px;margin:0 0 0 -2.5px;border-right:1.5px solid currentColor;border-top:1.5px solid currentColor;transform:rotate(45deg)}\n.clk-item .pm-check{color:var(--cl-blue)}\n.clk-sep{height:0.5px;margin:5px 4px;background:var(--cl-sep)}",
+  "html": "<div class=\"clk-menu\"><div class=\"clk-head\">{{title}}</div>{{items_html}}</div>",
+  "item_html": "<div class=\"clk-item\"><span class=\"clk-ic\">{{icon_html}}</span><span class=\"clk-label\">{{label}}</span><span class=\"clk-desc\">{{desc}}</span>{{check_html}}<span class=\"clk-sub\">{{sub}}</span></div>",
+  "sep_html": "<div class=\"clk-sep\"></div>",
+  "items": [
+   {
+    "label": "Add files or photos",
+    "icon": "assets/menu-paperclip.svg",
+    "kind": "attach",
+    "source": "help 8241126 (label verbatim)",
+    "verify_against_live": "icon + position"
+   },
+   {
+    "label": "Skills",
+    "icon": "assets/menu-skills.svg",
+    "sub": "1",
+    "sep_before": true,
+    "kind": "submenu",
+    "source": "help 12512180 + weloveclaude (2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Connectors",
+    "icon": "assets/menu-connectors.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "help 11176164 (2026-10-01): 'hover over Connectors'",
+    "verify_against_live": "icon + position"
+   },
+   {
+    "label": "Plugins",
+    "icon": "assets/menu-plugins.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "weloveclaude (press, 2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Design system",
+    "icon": "assets/menu-design-system.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "weloveclaude (press, 2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Research",
+    "icon": "assets/menu-research.svg",
+    "sep_before": true,
+    "kind": "mode",
+    "effect": "indicators.research in the composer",
+    "source": "help 16761823 (2026-09-16): '+ → Research'; icon after the official 2025 Research pill",
+    "verify_against_live": "row look"
+   },
+   {
+    "label": "Memory",
+    "icon": "assets/menu-memory.svg",
+    "kind": "toggle",
+    "source": "weloveclaude (press, 2026-10-07) + changelog (memory off per chat from +)",
+    "verify_against_live": true
+   }
+  ],
+  "legacy_items": [
+   {
+    "label": "Web search",
+    "icon": "assets/menu-web-search.svg",
+    "kind": "toggle",
+    "checked": true,
+    "note": "help 10684626 (2026-10-07): checkmark next to 'Web search' when on — but 'If you have the new Claude experience, there's no web search toggle'. Only for the OLD experience.",
+    "verify_against_live": true
+   },
+   {
+    "label": "Use style",
+    "icon": "assets/menu-design-system.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "note": "styles folded into Skills (academy) — old experience only",
+    "verify_against_live": true
+   }
+  ],
+  "item_fields": "label, icon (svg, inlined as icon_html), desc (muted, right of the label), sub ('1' = submenu chevron), checked (blue check), sep_before (draw kit.menu.sep_html before the row)",
+  "title_default": "",
+  "source": "LABELS: official help pages (see sources.json); LOOK (surface, radius, row height, icon size, order, side): no official image of the 2026 '+' menu exists — built from the kit's measured tokens and the official 2026-09-16 Output dropdown (same component family)",
+  "verify_against_live": true
+ },
+ "slash_menu": {
+  "anchor": "below",
+  "gap": 8,
+  "items": [
+   {
+    "label": "Add files or photos",
+    "icon": "assets/menu-paperclip.svg",
+    "kind": "attach",
+    "source": "help 8241126 (label verbatim)",
+    "verify_against_live": "icon + position"
+   },
+   {
+    "label": "Skills",
+    "icon": "assets/menu-skills.svg",
+    "sub": "1",
+    "sep_before": true,
+    "kind": "submenu",
+    "source": "help 12512180 + weloveclaude (2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Connectors",
+    "icon": "assets/menu-connectors.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "help 11176164 (2026-10-01): 'hover over Connectors'",
+    "verify_against_live": "icon + position"
+   },
+   {
+    "label": "Plugins",
+    "icon": "assets/menu-plugins.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "weloveclaude (press, 2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Design system",
+    "icon": "assets/menu-design-system.svg",
+    "sub": "1",
+    "kind": "submenu",
+    "source": "weloveclaude (press, 2026-10-07)",
+    "verify_against_live": true
+   },
+   {
+    "label": "Research",
+    "icon": "assets/menu-research.svg",
+    "sep_before": true,
+    "kind": "mode",
+    "effect": "indicators.research in the composer",
+    "source": "help 16761823 (2026-09-16): '+ → Research'; icon after the official 2025 Research pill",
+    "verify_against_live": "row look"
+   },
+   {
+    "label": "Memory",
+    "icon": "assets/menu-memory.svg",
+    "kind": "toggle",
+    "source": "weloveclaude (press, 2026-10-07) + changelog (memory off per chat from +)",
+    "verify_against_live": true
+   }
+  ],
+  "commands": [
+   {
+    "label": "/deep-research",
+    "desc": "Research",
+    "source": "help 16761823 (2026-09-16): 'Type /deep-research'"
+   }
+  ],
+  "note": "help 11176164: 'click the + button … (or type \"/\")' opens the same menu → same component and rows as kit.menu. Skills appear here by name (custom labels use the item look). How a picked skill shows in the composer is undocumented → chip kind 'skill' (verify).",
+  "verify_against_live": true
+ },
+ "connectors_menu": {
+  "css": ".clk-menu{box-sizing:border-box;width:262px;padding:6px;background:var(--cl-menu);border:0.5px solid var(--cl-menu-border);border-radius:12px;box-shadow:var(--cl-menu-shadow);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;letter-spacing:-0.1px;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-head{padding:6px 8px 4px;font-size:12px;line-height:16px;color:var(--cl-muted)}\n.clk-head:empty{display:none}\n.clk-item{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:8px;white-space:nowrap}\n.clk-item.clk-hov{background:var(--cl-hover)}\n.clk-ic{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--cl-icon)}\n.clk-ic svg,.clk-ic img{width:16px;height:16px}\n.clk-label{flex:1 1 auto;overflow:hidden;text-overflow:clip}\n.clk-desc{color:var(--cl-muted);font-size:12px}\n.clk-desc:empty{display:none}\n.clk-sub{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:0;line-height:0;color:var(--cl-muted)}\n.clk-sub:empty{display:none}\n.clk-sub::after{content:'';display:block;width:5.5px;height:5.5px;margin:0 0 0 -2.5px;border-right:1.5px solid currentColor;border-top:1.5px solid currentColor;transform:rotate(45deg)}\n.clk-item .pm-check{color:var(--cl-blue)}\n.clk-sep{height:0.5px;margin:5px 4px;background:var(--cl-sep)}\n.clk-sw{flex:none;position:relative;width:28px;height:16px;border-radius:8px;background:var(--cl-switch-off)}\n.clk-sw::after{content:'';position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:6px;background:#fff}\n.clk-sw.on{background:var(--cl-switch-on)}\n.clk-sw.on::after{left:14px}\n.clk-app{flex:none;width:16px;height:16px;border-radius:4px;background:var(--cl-badge);color:var(--cl-text);font-size:10px;line-height:16px;text-align:center;font-weight:600}",
+  "html": "<div class=\"clk-menu\">{{items_html}}<div class=\"clk-sep\"></div><div class=\"clk-item\"><span class=\"clk-label\">Manage connectors</span></div><div class=\"clk-item\"><span class=\"clk-label\">Tool access</span><span class=\"clk-desc\">Auto</span><span class=\"clk-sub\">1</span></div></div>",
+  "item_html": "<div class=\"clk-item\"><span class=\"clk-app\">{{initial}}</span><span class=\"clk-label\">{{label}}</span><span class=\"clk-sw {{on}}\"></span></div>",
+  "fill": {
+   "initial": "first letter of the connector (no brand logos are drawn)",
+   "on": "'on' or ''"
+  },
+  "anchor": "side",
+  "note": "opens beside the '+' menu on hover over 'Connectors' (help 11176164: 'Hover over Connectors to toggle individual services on'; 'Manage connectors'; 'Tool access' Auto / On demand).",
+  "verify_against_live": true
+ },
+ "output_menu": {
+  "trigger": "the 'Output' control under the message box (official help 17153992: \"select 'Output' in the message box and choose a template\")",
+  "anchor": "below",
+  "gap": 10,
+  "hover_class": "clk-hov",
+  "css": ".clk-menu{box-sizing:border-box;width:262px;padding:6px;background:var(--cl-menu);border:0.5px solid var(--cl-menu-border);border-radius:12px;box-shadow:var(--cl-menu-shadow);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;letter-spacing:-0.1px;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-head{padding:6px 8px 4px;font-size:12px;line-height:16px;color:var(--cl-muted)}\n.clk-head:empty{display:none}\n.clk-item{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:8px;white-space:nowrap}\n.clk-item.clk-hov{background:var(--cl-hover)}\n.clk-ic{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--cl-icon)}\n.clk-ic svg,.clk-ic img{width:16px;height:16px}\n.clk-label{flex:1 1 auto;overflow:hidden;text-overflow:clip}\n.clk-desc{color:var(--cl-muted);font-size:12px}\n.clk-desc:empty{display:none}\n.clk-sub{flex:none;display:flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:0;line-height:0;color:var(--cl-muted)}\n.clk-sub:empty{display:none}\n.clk-sub::after{content:'';display:block;width:5.5px;height:5.5px;margin:0 0 0 -2.5px;border-right:1.5px solid currentColor;border-top:1.5px solid currentColor;transform:rotate(45deg)}\n.clk-item .pm-check{color:var(--cl-blue)}\n.clk-sep{height:0.5px;margin:5px 4px;background:var(--cl-sep)}\n.clk-omenu{width:330px;padding:8px}\n.clk-omenu .clk-item{height:40px;gap:12px}\n.clk-tile{flex:none;width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center}\n.clk-tile svg{width:16px;height:16px}\n.clk-tile.docs{background:rgba(66,133,224,0.20);color:#78a9ec}\n.clk-tile.slides{background:rgba(214,138,40,0.20);color:#e0a050}\n.clk-tile.design{background:rgba(140,110,220,0.22);color:#a995e8}\n.clk-tile.artifact{background:none;color:var(--cl-icon)}\n.clk-beta{flex:none;padding:0 6px;height:20px;line-height:20px;border-radius:5px;background:var(--cl-badge);color:var(--cl-muted);font-size:12px}\n.clk-beta:empty{display:none}\n.clk-out-label{flex:none}\n.clk-out-desc{color:var(--cl-muted)}",
+  "html": "<div class=\"clk-menu clk-omenu\">{{items_html}}</div>",
+  "item_html": "<div class=\"clk-item\"><span class=\"clk-tile {{tone}}\">{{icon_html}}</span><span class=\"clk-out-label\">{{label}}</span><span class=\"clk-beta\">{{badge}}</span><span class=\"clk-out-desc\">{{desc}}</span></div>",
+  "items": [
+   {
+    "label": "Docs",
+    "tone": "docs",
+    "badge": "Beta",
+    "icon": "assets/out-docs.svg"
+   },
+   {
+    "label": "Slides",
+    "tone": "slides",
+    "badge": "Beta",
+    "icon": "assets/out-slides.svg"
+   },
+   {
+    "label": "Design",
+    "tone": "design",
+    "badge": "Beta",
+    "icon": "assets/out-design.svg"
+   },
+   {
+    "label": "Artifact",
+    "tone": "artifact",
+    "badge": "",
+    "desc": "Let Claude pick the format",
+    "icon": "assets/out-artifact.svg",
+    "sep_before": true
+   }
+  ],
+  "source": "official Anthropic press image of the new Claude experience (2026-09-16; via TechCrunch) — LIGHT theme: rows, order, labels, Beta badges, coloured icon tiles, divider before 'Artifact', opens below. Dark colours derived from the kit tokens.",
+  "conflict": "Jake's clip 5 shows the composer WITHOUT the under-box row ('Project or folder · Output · <model> <effort> Auto'); his account/clip predates it or lacks it. The approved composer stays as the clip shows it.",
+  "verify_against_live": "dark colours only"
+ },
+ "model_picker": {
+  "css": ".clk-mp{box-sizing:border-box;width:300px;padding:6px;background:var(--cl-menu);border:0.5px solid var(--cl-menu-border);border-radius:12px;box-shadow:var(--cl-menu-shadow);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;letter-spacing:-0.1px;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-mp-row{display:flex;align-items:center;gap:10px;min-height:32px;padding:6px 8px;box-sizing:border-box;border-radius:8px}\n.clk-mp-row.clk-hov{background:var(--cl-hover)}\n.clk-mp-tx{flex:1;display:flex;flex-direction:column}\n.clk-mp-name{color:var(--cl-text)}\n.clk-mp-sub{font-size:12px;line-height:16px;color:var(--cl-muted)}\n.clk-mp-sub:empty{display:none}\n.clk-mp .pm-check{color:var(--cl-blue)}\n.clk-mp-val{color:var(--cl-muted)}\n.clk-mp-chev{display:flex;width:16px;height:16px;color:var(--cl-muted)}\n.clk-mp-chev svg{width:16px;height:16px}\n.clk-mp-sp{flex:1}\n.clk-sep{height:0.5px;margin:5px 4px;background:var(--cl-sep)}",
+  "html": "<div class=\"clk-mp\">{{rows_html}}<div class=\"clk-sep\"></div><div class=\"clk-mp-row\"><span>Effort</span><span class=\"clk-mp-sp\"></span><span class=\"clk-mp-val\">{{mode}}</span><span class=\"clk-mp-chev\">{{chevron_html}}</span></div><div class=\"clk-mp-row\"><span>More models</span><span class=\"clk-mp-sp\"></span><span class=\"clk-mp-chev\">{{chevron_html}}</span></div></div>",
+  "row_html": "<div class=\"clk-mp-row\"><span class=\"clk-mp-tx\"><span class=\"clk-mp-name\">{{label}}</span><span class=\"clk-mp-sub\">{{sub}}</span></span>{{check_html}}</div>",
+  "hover_class": "clk-hov",
+  "anchor": "below",
+  "gap": 8,
+  "right_inset": 96,
+  "chevron": "assets/chevron-right.svg",
+  "check": "assets/check.svg",
+  "mode": "High",
+  "models": [
+   {
+    "label": "Fable 5.1",
+    "sub": "For your toughest challenges"
+   },
+   {
+    "label": "Opus 5.5",
+    "sub": "For complex work and everyday tasks",
+    "checked": true
+   },
+   {
+    "label": "Sonnet 5.5",
+    "sub": "Most efficient for simpler tasks"
+   },
+   {
+    "label": "Haiku 5.5",
+    "sub": "Fastest for quick answers"
+   }
+  ],
+  "effort_levels": [
+   "Low",
+   "Medium",
+   "High",
+   "Extra",
+   "Max"
+  ],
+  "label_format": "the composer label = model + effort ('Opus 5.5 High', Jake's clip 5/6) — after a pick the template shows '<model> <effort>'",
+  "thinking": "no separate Thinking toggle with Opus 5.5 (press 2026-10-07; help 8664678: 'Thinking' or 'Extended' toggle depending on the model) → not drawn",
+  "source": "help 8664678 (2026-10-07): model + effort next to send, Effort on hover, Thinking/Extended toggle, 'More models'; model list + one-line descriptions + effort names from weloveclaude (press, verified 2026-10-07); 'Haiku 5.5' from the official release notes (2026-10-07; the press page still listed Haiku 4.5); label from Jake's clips",
+  "verify_against_live": true
+ },
+ "indicators": {
+  "css": ".clk-ind{position:absolute;bottom:12px;height:32px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:0 10px 0 8px;border-radius:8px;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;letter-spacing:-0.1px;white-space:nowrap;color:var(--cl-blue);background:var(--cl-blue-bg);-webkit-font-smoothing:antialiased}\n.clk-ind svg{width:16px;height:16px}\n.clk-ind-ic{display:flex}\n.clk-ind.icon-only{width:32px;padding:0;justify-content:center}",
+  "slot": "composer {{state_html}} (the .cl-state layer covers the whole composer; indicators sit in the bottom row right of the '+': left 58 px, bottom 12 px)",
+  "research": {
+   "html": "<div class=\"clk-ind\" style=\"left:58px\"><span class=\"clk-ind-ic\">{{file:assets/menu-research.svg}}</span>Research</div>",
+   "left": 58,
+   "source": "help 11088861 (2026-06-02): 'a blue indicator will appear on the bottom of the chat window'; official 2025-04-15 Research announcement images (pill: magnifier + 'Research' in blue, right of '+'; the 2025 'BETA' badge is not drawn)",
+   "verify_against_live": "dark colours + exact position"
+  },
+  "extended_thinking": {
+   "html": "<div class=\"clk-ind icon-only\" style=\"left:58px\"><span class=\"clk-ind-ic\">{{file:assets/thinking-clock.svg}}</span></div>",
+   "left": 58,
+   "note": "OLD experience only (blue clock toggle). With Opus 5.5 there is no Thinking toggle (press 2026-10-07); thinking shows as the working state instead.",
+   "verify_against_live": true
+  },
+  "web_search": {
+   "html": "",
+   "note": "no composer indicator: help 10684626 — a checkmark next to 'Web search' in the + menu (old experience); new experience has no toggle"
+  },
+  "connectors": {
+   "html": "",
+   "note": "no composer indicator documented: per-connector switches in the Connectors submenu (help 11176164)",
+   "verify_against_live": true
+  },
+  "styles": {
+   "html": "",
+   "note": "styles were folded into Skills (academy) — nothing to show"
+  }
+ },
+ "conversation": {
+  "what": "the chat AFTER sending: user bubble top-right, Claude's streamed serif reply with the spark under it, composer docked at the bottom ('Write a message...', +, model label, mic, voice) with the disclaimer — i.e. kit.message's view + kit.result.user above the reply",
+  "use": "render kit.message.html with content_html = '' and put TR.fill(kit.result.user.html) + TR.fill(kit.result.text.html) into .clm-col (the message column, left 480.6 / width 682.9 css px at the message scale)",
+  "placeholder_after_send": "Write a message...",
+  "source": "dock, header, placeholder, disclaimer, serif reply, spark: Jake's clip 6; bubble placement: official artifacts image (2026)",
+  "verify_against_live": "bubble only"
+ },
+ "tool_row": {
+  "css": ".clk-tool{box-sizing:border-box;display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;border:0.5px solid var(--cl-menu-border);border-radius:10px;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:20px;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-tool-ic{flex:none;width:24px;height:24px;border-radius:6px;background:var(--cl-badge);display:flex;align-items:center;justify-content:center;color:var(--cl-icon)}\n.clk-tool-ic svg{width:14px;height:14px}\n.clk-tool-l{flex:1}\n.clk-tool.busy .clk-tool-l{color:var(--cl-muted)}\n.clk-tool-r{color:var(--cl-muted);font-size:13px}\n.clk-tool-ch{width:14px;height:14px;color:var(--cl-muted);display:flex}\n.clk-tool-ch svg{width:14px;height:14px;transform:rotate(90deg)}",
+  "html": "<div class=\"clk-tool {{state}}\"><span class=\"clk-tool-ic\">{{icon_html}}</span><span class=\"clk-tool-l\">{{label}}</span><span class=\"clk-tool-r\">{{right}}</span><span class=\"clk-tool-ch\">{{file:assets/chevron-right.svg}}</span></div>",
+  "example": [
+   {
+    "label": "Searched the web",
+    "right": "10 results"
+   },
+   {
+    "label": "Searching messages",
+    "state": "busy"
+   }
+  ],
+  "icon": "assets/tool-search.svg",
+  "source": "official 2025-04-15 Research announcement image (light): bordered rows 'Searched recent events · 4 results ⌄' and a muted in-progress row 'Searching messages' between paragraphs of the reply",
+  "verify_against_live": "2026 look + dark colours"
+ },
+ "code": {
+  "css": ".clk-code{box-sizing:border-box;margin:0 0 14px;border-radius:10px;background:var(--cl-code-bg);border:0.5px solid var(--cl-menu-border);overflow:hidden}\n.clk-code-head{display:flex;align-items:center;justify-content:space-between;height:34px;padding:0 10px 0 14px;font-family:Inter,system-ui,sans-serif;font-size:12px;color:var(--cl-muted)}\n.clk-code-copy{display:flex;width:16px;height:16px;color:var(--cl-muted)}\n.clk-code-copy svg{width:16px;height:16px}\n.clk-code-pre{margin:0;padding:2px 16px 14px;white-space:pre;font-family:'DejaVu Sans Mono',ui-monospace,monospace;font-size:13px;line-height:20px;color:#e6e4dd}\n.tk-kw{color:#c792ea}\n.tk-str{color:#a5d6a7}\n.tk-num{color:#f5a97f}\n.tk-com{color:#7f7d76;font-style:italic}\n.tk-fn{color:#82aaff}\n.tk-tag{color:#f07178}\n.tk-attr{color:#ffcb6b}",
+  "html": "<div class=\"clk-code\"><div class=\"clk-code-head\"><span>{{lang}}</span><span class=\"clk-code-copy\">{{file:assets/copy.svg}}</span></div><pre class=\"clk-code-pre\">{{code_html}}</pre></div>",
+  "token_classes": [
+   "tk-kw",
+   "tk-str",
+   "tk-num",
+   "tk-com",
+   "tk-fn",
+   "tk-tag",
+   "tk-attr"
+  ],
+  "note": "block bg + mono size match prompt_card_3d.style.json message.md_css (#1a1a18, 13/20) so the two never disagree; header (language + copy) and syntax palette are NOT from any image",
+  "verify_against_live": true
+ },
+ "artifact": {
+  "md_css": ".clm-msg.pc-md{white-space:normal;font-family:'Gelasio','Noto Color Emoji',Georgia,serif}\n.pc-md p{margin:0 0 14px}\n.pc-md h1{font-size:22px;line-height:30px;font-weight:700;margin:4px 0 12px}\n.pc-md h2{font-size:18.5px;line-height:26px;font-weight:700;margin:18px 0 8px}\n.pc-md h3{font-size:16.8px;line-height:24px;font-weight:700;margin:14px 0 6px}\n.pc-md ul,.pc-md ol{margin:0 0 14px;padding-left:26px}\n.pc-md li{margin:5px 0}\n.pc-md li.pc-ind1{margin-left:22px}\n.pc-md li.pc-ind2{margin-left:44px}\n.pc-md strong{font-weight:700}\n.pc-md code{font-family:'DejaVu Sans Mono',monospace;font-size:13.4px;background:rgba(255,255,255,0.07);border:1px solid var(--cl-border);border-radius:5px;padding:0 4px}\n.pc-md pre{margin:0 0 14px;padding:14px 16px;border-radius:10px;background:#1a1a18;border:1px solid var(--cl-border);overflow:hidden;white-space:pre;font-family:'DejaVu Sans Mono',monospace;font-size:13px;line-height:20px;color:#e6e4dd}\n.pc-md pre code{background:none;border:0;padding:0;font-size:inherit}\n.pc-md hr{border:0;border-top:1px solid var(--cl-border);margin:16px 0}\n.pc-md table{border-collapse:collapse;margin:0 0 14px;font-size:15px;line-height:21px}\n.pc-md th,.pc-md td{border-bottom:1px solid var(--cl-border);padding:6px 14px 6px 0;text-align:left}\n.pc-md th{font-weight:700}\n.pc-md .pc-link{text-decoration:underline;text-underline-offset:3px}\n.pc-artcard{display:flex;align-items:center;gap:14px;margin:4px 0 16px;padding:12px 16px;border:1px solid var(--cl-border);border-radius:12px;background:var(--cl-surface);font-family:Inter,sans-serif;width:360px}\n.pc-artcard-ic{width:40px;height:40px;border-radius:8px;background:#1a1a18;border:1px solid var(--cl-border);display:flex;align-items:center;justify-content:center;color:var(--cl-muted);font-size:13px}\n.pc-artcard-t{display:block;font-size:14px;line-height:20px;color:var(--cl-text);font-weight:500}\n.pc-artcard-s{display:block;font-size:12px;line-height:16px;color:var(--cl-muted)}",
+  "artifact_css": ".pc-art .clm-col{left:56px;width:560px}\n.pc-art .clm-comp{left:30px;width:612px}\n.pc-art .clm-ph{left:19px}\n.pc-art .clm-model{left:383px}\n.pc-art .clm-chev{left:498px}\n.pc-art .clm-mic{left:522px}\n.pc-art .clm-wave{left:567px}\n.pc-art .clm-disc{width:672px}\n.pc-art .clm-head{width:672px}\n.pc-artpanel{position:absolute;left:672px;top:0;width:976px;height:927px;z-index:5;box-sizing:border-box;background:var(--cl-bg);border-left:1px solid var(--cl-border);font-family:Inter,sans-serif}\n.pc-arthead{position:absolute;left:0;top:0;right:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 22px;border-bottom:1px solid var(--cl-border);color:var(--cl-text);font-size:14px}\n.pc-arttitle{font-weight:500}\n.pc-arttabs{display:flex;gap:2px;padding:3px;border-radius:8px;background:var(--cl-surface);font-size:12.5px;color:var(--cl-muted)}\n.pc-arttabs span{padding:4px 10px;border-radius:6px}\n.pc-arttabs .on{background:#3a3a36;color:var(--cl-text)}\n.pc-artframe{position:absolute;left:0;top:53px;width:976px;height:874px;border:0;background:#fff}",
+  "artifact_icon": "&lt;/&gt;",
+  "artifact_kind_label": "Code · HTML",
+  "artifact_tabs": [
+   "Preview",
+   "Code"
+  ],
+  "panel_html": "<div class=\"pc-artpanel\"><div class=\"pc-arthead\"><span class=\"pc-arttitle\">{{title}}</span><span class=\"pc-arttabs\"><span class=\"on\">{{tab0}}</span><span>{{tab1}}</span></span></div>{{frame_html}}</div>",
+  "card_html": "<div class=\"pc-artcard\"><span class=\"pc-artcard-ic\">{{artifact_icon}}</span><span><span class=\"pc-artcard-t\">{{title}}</span><span class=\"pc-artcard-s\">{{kind_label}}</span></span></div>",
+  "source": "COPIED VERBATIM from motion/templates/prompt_card_3d.style.json message.{md_css, artifact_css, artifact_icon, artifact_kind_label, artifact_tabs} (Jake 2026-10-10: artifact_app liked — look must not change). Official help 17153992 (2026-10-08): the artifact 'opens beside your conversation' — matches the right-hand panel.",
+  "verify_against_live": "panel chrome (help confirms the side panel only)"
+ },
+ "research_report": {
+  "working_texts": [
+   "Researching",
+   "Searching the web",
+   "Reading sources",
+   "Writing the report"
+  ],
+  "card_css": ".clk-rcard{box-sizing:border-box;display:flex;align-items:center;gap:14px;width:420px;margin:4px 0 16px;padding:12px 16px;border:0.5px solid var(--cl-menu-border);border-radius:12px;background:var(--cl-surface);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.clk-rcard-ic{flex:none;width:40px;height:40px;border-radius:8px;background:var(--cl-code-bg);border:0.5px solid var(--cl-menu-border);display:flex;align-items:center;justify-content:center;color:var(--cl-icon)}\n.clk-rcard-ic svg{width:20px;height:20px}\n.clk-rcard-t{display:block;font-size:14px;line-height:20px;color:var(--cl-text);font-weight:500}\n.clk-rcard-s{display:block;font-size:12px;line-height:16px;color:var(--cl-muted)}",
+  "card_html": "<div class=\"clk-rcard\"><span class=\"clk-rcard-ic\">{{file:assets/report.svg}}</span><span><span class=\"clk-rcard-t\">{{title}}</span><span class=\"clk-rcard-s\">{{sub}}</span></span></div>",
+  "card_sub_default": "Research report · {{n}} sources",
+  "doc_css": ".clk-rdoc{box-sizing:border-box;padding:40px 56px;font-family:'Gelasio',Georgia,serif;color:var(--cl-text);-webkit-font-smoothing:antialiased}\n.clk-rdoc h1{font-size:26px;line-height:34px;font-weight:700;margin:0 0 14px}\n.clk-rdoc h2{font-size:19px;line-height:27px;font-weight:700;margin:22px 0 8px}\n.clk-rdoc p{font-size:16px;line-height:26px;margin:0 0 12px}\n.clk-cite{display:inline-block;margin-left:3px;padding:0 6px;height:18px;line-height:18px;border-radius:9px;background:var(--cl-badge);color:var(--cl-muted);font-family:Inter,sans-serif;font-size:11px;vertical-align:2px}",
+  "doc_html": "<div class=\"clk-rdoc\">{{report_html}}</div>",
+  "panel": "the report opens in the same right-hand panel as kit.artifact (pc-artpanel chrome, tabs hidden)",
+  "source": "help 11088861 (2026-06-02): Research runs many searches and returns a report with citations; no official image of the 2026 report UI → card + panel built from the artifact look",
+  "verify_against_live": true
+ },
+ "v2": {
+  "date": "2026-10-10",
+  "rule": "Jake 2026-10-10: 'use public screenshots and my clips' — no Claude login. Priority: Jake's clips 5/6 > official Anthropic images/help > press. Public screenshots are REFERENCES only: every icon here is drawn by hand as SVG, nothing is copied from their pixels.",
+  "sources": "sources.json (every URL, its date, what it shows, what was taken)",
+  "sections_added": [
+   "menu",
+   "slash_menu",
+   "connectors_menu",
+   "output_menu",
+   "model_picker",
+   "indicators",
+   "chip",
+   "working",
+   "result.user",
+   "result.text",
+   "conversation",
+   "tool_row",
+   "code",
+   "artifact",
+   "research_report"
+  ],
+  "untouched": [
+   "composer",
+   "greeting",
+   "suggestions",
+   "message",
+   "existing tokens"
+  ]
  }
 }

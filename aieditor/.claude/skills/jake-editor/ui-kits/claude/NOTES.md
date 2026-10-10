@@ -47,3 +47,42 @@ The colours are as the YouTube encode shows them. Live claude.ai dark is slightl
 - There is no e-mail, avatar, org name, chat history or account id.
 - The reference greeting's first name is blurred in every reference image we produce and appears in no file.
 - `uikits.load("claude")` passes the private-text check.
+
+## v2 (2026-10-10): the rest of the UI, from public sources + Jake's clips
+
+Jake 2026-10-10: *"use public screenshots and my clips"*. There is still no claude.ai login. Every source (URL, date, what it
+shows, what was taken) is in `sources.json`. Priority on conflicts: Jake's clips 5/6 > official Anthropic images/help > press.
+Public images were used as **references only**: every new icon in `assets/` is hand-drawn SVG, and no pixels were copied.
+
+**Untouched (approved):** `composer`, `greeting`, `suggestions`, `message` and every existing token. `prompt_highlight` and
+`long_prompt_scroll` renders are pixel-identical before and after (max abs diff 0 on 5 test frames).
+
+**New sections** (`verify_against_live` is on each one; true = neither a clip nor an official image shows it):
+- `menu` ("+"; labels from help, look verify; opens below on the new-chat page, above in a thread), `slash_menu`
+  (= the same menu, plus `/deep-research`), and `connectors_menu` (switches, Manage connectors, Tool access).
+  `menu.legacy_items` holds Web search and Use style, which the new experience removed.
+- `output_menu`: Docs, Slides, Design (Beta) and Artifact, from the official 2026-09-16 press image. Its trigger, the
+  under-box row "Project or folder · Output · <model> <effort> Auto", is **not** in Jake's clip 5, so it is not drawn
+  (see the conflict note).
+- `model_picker`: Fable 5.1, Opus 5.5 (checked), Sonnet 5.5 and Haiku 5.5, each with a one-line description, then
+  Effort (High ›) and More models ›.
+- `indicators`: the composer `{{state_html}}` items.
+  - research: a blue magnifier pill with "Research", at left 58 / bottom 12.
+  - extended_thinking: legacy.
+  - web search, connectors and styles have no indicator (see why in the section).
+- `chip`: file tiles (120×120, name, meta and type badge) and image tiles, shown ABOVE the prompt. The CSS re-orders
+  `.cl-input` only while a tile is present. Also the blue skill pill.
+- `working`: spark, title (shimmer through `--cl-sweep-x`) and an optional detail line.
+- `result.user`: the bubble at the top right. `result.text`: Claude's serif reply with the spark under it. Stream tail:
+  the newest ~10 characters in `.clk-tail` at 22 % opacity, measured in clip 6.
+- `conversation`: the recipe that combines kit.message's view with the bubble and the reply.
+- `tool_row`: "Searched the web · 10 results ⌄".
+- `code`: a block with its language, a copy button and the `tk-*` syntax classes.
+- `artifact`: copied verbatim from `prompt_card_3d.style.json`, because Jake liked it.
+- `research_report`: a card plus a serif document with citation chips.
+
+New tokens (new names only): `--cl-menu`, `--cl-menu-border`, `--cl-hover`, `--cl-sep`, `--cl-blue(-bg)`, `--cl-user`,
+`--cl-code-bg`, `--cl-tile`, `--cl-badge`, `--cl-switch-on/off`, `--cl-sweep-x`. They are also listed in `tokens_v2`.
+
+The still sheet (kit render next to its reference) is at
+`scratchpad/motion-preview/ui-kits/claude-kit-v2-sheet.png`.
