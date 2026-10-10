@@ -305,8 +305,8 @@
   "producer": {
    "src": "Jake 2026-10-10: assets are made in the app's UI (no image API key) by a producer agent that finds the route itself (aieditor/producer.py); limits enforced in code (genledger.py)",
    "daily_generations": {
-    "chatgpt": 35,
-    "default": 35
+    "chatgpt": 100000,
+    "default": 100000
    },
    "spacing_s": 45,
    "asset_time_budget_s": 720,
@@ -314,7 +314,8 @@
    "fail_fast_s": 90,
    "max_wait_s": 240,
    "poll_s": 3,
-   "model": "claude-opus-5-5"
+   "model": "claude-opus-5-5",
+   "daily_generations_src": "Jake 2026-10-10: 'when the message appear in ChatGPT it will be the daily cap' — no own cap; the app's limit/wall message stops every generation (genledger block) and the job waits"
   }
  },
  "ship": {

@@ -26,7 +26,7 @@ from pathlib import Path
 from . import config
 
 DAY = 86400
-DEFAULT_CAPS = {"chatgpt": 35, "default": 35}
+DEFAULT_CAPS = {"chatgpt": 100000, "default": 100000}   # Jake 2026-10-10: no own cap — the app's limit message is the cap
 DEFAULT_SPACING_S = 45.0
 ENV_LEDGER = "AIEDITOR_GEN_LEDGER"
 ENV_PRIOR = "AIEDITOR_GEN_PRIOR"

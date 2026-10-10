@@ -387,8 +387,11 @@ def test_wall_stops_everything():
 
 
 def test_daily_cap():
+    """A configured cap still stops (the default is none — Jake: the app's limit message is the cap)."""
     fresh_ledger()
     clk = Clock()
+    _cap = genledger.cap
+    genledger.cap = lambda app: 35
     for i in range(35):
         genledger.record("chatgpt", "another-job", f"a{i}", 1, "x", now=clk() - 3600 * 20 + i * 60)
     ctx, world, c2, logs, _ = make("cap", {"answer": lambda s, p, k: {"kind": "image"}})
@@ -400,6 +403,8 @@ def test_daily_cap():
         check("Waiting:" in e.status() and "Bangkok" in e.status(), f"a clear status: {e.status()}")
     check(len(world.sends) == 0, "no generation at the cap")
     check(genledger.remaining("claude", clk()) == 35, "per app")
+    genledger.cap = _cap
+    check(genledger.cap("chatgpt") >= 100000, "no own cap by default — the app's limit message is the cap (Jake)")
     # other jobs' generations count; the spacing holds across jobs
     fresh_ledger()
     genledger.record("chatgpt", "another-job", "z", 1, "x", now=clk() - 10)
