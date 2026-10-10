@@ -47,6 +47,7 @@ import base64
 import copy
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -88,10 +89,45 @@ def app_cap():
 
 # ────────────────────────────── P1: the needs, grouped ──────────────────────────────
 
+# WHAT a need is decides its route, not the group a check gave it (TEST v3 21:58: a 'structure' error on a camera.zoom
+# beat, "Close on the bottle's label", was routed to the app and ChatGPT was asked to GENERATE "Zoom in close on the
+# label"). A camera move / framing / structure / timing need is D (code or a warning): never a generation, never an
+# onboarding. Matched on the need's own fields (what to do), never on the narration sentence.
+CAMERA_RX = re.compile(r"\bcamera\.\w+|\bzoom(?:s|ed|ing)?\b|\bclose[- ]?up\b|^\W*close (?:in )?on\b|\bpush(?:es)?[- ]in\b|"
+                       r"\bpull(?:s)?[- ]back\b|\bpan(?:s|ned)? (?:to|across|over|down|up)\b|\bframing\b|\breframe\b|"
+                       r"\bstructure \w+ =|\bspan\b.{0,30}\b(?:too short|share)\b|\btiming\b|\bhold (?:on|the shot)\b|"
+                       r"\bcut (?:to|away)\b", re.I)
+
+
+def is_camera_need(row):
+    """True when a needs row asks for a camera move / framing / structure / timing (route D, never the app)."""
+    pr = row.get("proposed") if isinstance(row.get("proposed"), dict) else {}
+    act = str(pr.get("action") or row.get("action") or "")
+    if act.startswith("camera.") or str(pr.get("needs_primitive") or "").startswith("camera."):
+        return True
+    fields = [pr.get("need"), pr.get("desc"), row.get("need"), pr.get("body")]
+    if row.get("code") in ("structure", "lost", "plate", "coverage", "session"):
+        fields.append(row.get("why"))
+    return any(CAMERA_RX.search(str(f)) for f in fields if f)
+
+
+def not_a_picture(desc):
+    """The guard before ANY generation: the need must be a picture the video shows. → None (it is) or why not."""
+    d = re.sub(r"^\W*(?:the|a|an)\s+", "", str(desc or "").strip(), flags=re.I)
+    if not d:
+        return "no description of a picture"
+    if CAMERA_RX.match(d) or re.match(r"(?:zoom|close|push|pull|pan|cut|hold|frame|reframe)\b", d, re.I):
+        return f"'{d[:60]}' is a camera move / framing in the edit, not a picture the app makes"
+    return None
+
+
 def classify(row):
     """A needs row (director needs_primitive shape: {sentence, word_ids, why, proposed, code?, kind?, need?}) → its
-    group A/B/C/D. A structured row (the R14 plan schema: kind / code) wins; a free-text one (older plans, e.g. the
-    test-v2 job's 43 rows) is read by its words."""
+    group A/B/C/D. A camera / framing / structure / timing need is always D (is_camera_need). Otherwise a structured
+    row (the R14 plan schema: kind / code) wins; a free-text one (older plans, e.g. the test-v2 job's 43 rows) is
+    read by its words."""
+    if is_camera_need(row):
+        return "D"
     if row.get("kind") in KIND_GROUP and row.get("kind") != "other":
         return KIND_GROUP[row["kind"]]
     code = row.get("code")
@@ -524,8 +560,11 @@ def prove(ctx, aid, params=None, n=None):
     return playbook.replay(factory, ctx.pb, aid, n=n, params=params or {}, allow_generate=gen)
 
 
-def onboard_action(ctx, need, params=None, generates=False):
-    """P2 for one needed action: explore → propose → prove 3/3 (fix rounds feed the failures back). → row."""
+def onboard_action(ctx, need, params=None, generates=False, generating=False):
+    """P2 for one needed action: explore → propose → prove 3/3 (fix rounds feed the failures back). → row.
+    generating=True: the step STARTS a generation (a tool's submit): the explorer finds it without pressing it, and
+    it is proven by presence (its requires + selector + pre asserts), never pressed 3x (3 generations) — the
+    producer presses it once, counted, when it makes the asset."""
     ex = Explorer(ctx, ctx.budget)
     row = {"need": need, "status": "failed", "attempts": []}
     feedback = None
@@ -544,11 +583,17 @@ def onboard_action(ctx, need, params=None, generates=False):
             row.update(why=res.get("why"), budget=bool(res.get("budget")))
             return row
         aid, act = res["action_id"], res["action"]
+        if generating:
+            act["generates"] = True
         ctx.pb["actions"][aid] = act
         p = dict(params or {})
         if act.get("start_url") and ctx.image_chat:
             p.setdefault("chat_url", ctx.image_chat)
-        pr = prove(ctx, aid, p)
+        if generating:
+            ok, why = presence(ctx, aid, p)
+            pr = {"proven": ok, "ok": int(ok), "n": 1, "replays": [{"ok": ok, "why": why, "mode": "presence (generating)"}]}
+        else:
+            pr = prove(ctx, aid, p)
         row["attempts"][-1]["replays"] = pr["replays"]
         if pr["proven"]:
             act["video_proof"] = {"mode": "onboarded", "replays": pr["replays"], "ok": pr["ok"], "n": pr["n"]}
@@ -700,31 +745,139 @@ def asset_kind(desc):
     return "app_generation" if RESULT_RX.search(str(desc or "")) else "photo"
 
 
-def produce_asset(ctx, aid, desc, made_from=(), prompt=None):
+def _remember(ctx, aid, row):
+    """What later assets need to know about a ready one: its file, its description, the chat (+ index) it was made in
+    (a chat this job's producer created — the app's own tools run on it there)."""
+    ctx.asset_files[aid] = row["file"]
+    ctx.asset_descs[aid] = str(row.get("desc") or "")[:200]
+    src = row.get("source") or {}
+    if src.get("chat_url"):
+        ctx.asset_chats[aid] = {"chat": src["chat_url"], "nth": src.get("nth")}
+        ctx.allowed_chats.add(src["chat_url"])
+
+
+PAIR_RX = re.compile(r"^(?P<inp>.{6,160}?\b(?:photo|picture|image|scan|snapshot|sketch|drawing)\b[^+→>]{0,60}?)\s*"
+                     r"(?:\+|→|->|=>|\band (?:then )?(?:its|the|a|an)\b|\bthen\b|\bnext to (?:its|the)\b)\s*"
+                     r"(?P<res>.{0,60}?\b(?:result|version|colori[sz]ed|restored|edited|fixed|after)\b.*)$", re.I)
+
+
+def split_pair(desc):
+    """'b/w photo + colorized result' → (input description, result description), else None."""
+    d = str(desc or "").strip()
+    if ":" in d[:60]:
+        d = d.split(":", 1)[1].strip()
+    m = PAIR_RX.match(d)
+    if not m or re.search(r"\b(?:result|version|colori[sz]ed|restored)\b", m.group("inp"), re.I):
+        return None
+    return m.group("inp").strip(" ,;"), m.group("res").strip(" ,;")
+
+
+def reuse_ok(ctx, aid, old):
+    """A stored row is reused only when it passes TODAY's checks (look, continuity, no UI chrome): a row the new
+    producer checked carries fidelity v>=2; an older one is re-checked once (one vision call) — so a dropped or redo
+    asset is never resurrected by its old side file."""
+    from . import producer as prod_mod
+    fid = old.get("fidelity") or {}
+    if fid.get("v", 0) >= prod_mod.FIDELITY_V and all(fid.get(k, True) for k in ("look_ok", "clean", "same_subject")):
+        return True
+    if getattr(ctx, "check", None) is None:
+        return False
+    desc = str(old.get("desc") or "")
+    p_ = getattr(ctx, "producer", None)
+    look = old.get("look") or ("faithful" if p_ is not None and p_.tool_of(desc) else
+                               "real" if asset_kind(desc) == "photo" else "impressive")
+    srcs = [ctx.asset_files[m] for m in old.get("made_from") or [] if ctx.asset_files.get(m)]
+    try:
+        chk = ctx.check({"id": aid, "desc": desc, "look": look, **({"source_files": srcs} if srcs else {})},
+                        old["file"], [desc])
+        ctx.budget.add(chk.get("usd"))
+    except Exception as e:  # noqa: BLE001 — not checkable: made again
+        ctx.log(f"{aid}: the stored picture could not be re-checked ({e})")
+        return False
+    ok = bool(chk.get("matches")) and all(chk.get(k, True) is not False for k in ("same_subject", "look_ok", "clean"))
+    if ok:
+        old["fidelity"] = {"v": prod_mod.FIDELITY_V, "look": look, "look_ok": True, "clean": True, "rechecked": True,
+                           **({"same_subject": True} if srcs else {})}
+        old["look"] = look
+    return ok
+
+
+def _row(aid, desc, status, why, **kw):
+    return {"id": aid, "kind": "app_generation", "desc": desc, "status": status, "file": None, "source": None,
+            "attempts": [why], "checks": [], "why": why, **kw}
+
+
+def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, window=None, look=None, verbatim=False):
     """P3: one needed asset, made IN THE APP before recording, off camera, checked against its description; never
     silently dropped. Jake 2026-10-10: "it needs to generate images in the ChatGPT UI" — no image API here.
       live (ctx.producer set, preprod.make_ctx): the producer AGENT (aieditor/producer.py) — the learned / hint recipe
         first, then it diagnoses every failed try and picks the next route itself; a route that works is learned into
         THIS video's playbook. Raises genledger.QuotaWait at the daily cap / a wall (the job waits, never holds).
       no producer (tests, a hand run): the app adapter's own in-app call (ctx.in_app), spaced, <= max tries, checked.
+    FIDELITY (Jake 2026-10-10, TEST v3):
+      - the guard: it must be a picture the video shows (not_a_picture) — a camera move never reaches the app;
+      - the request is what the PERSON types (person_request), never the planner's internal description; a tool result
+        with no typed text is just the tool's click; every concrete detail he narrates is kept;
+      - the look (real | impressive | faithful) rides on the request and is scored by the vision check;
+      - "the result of the app's <tool> on <source>" runs the tool (playbook produce.tools) on the source picture;
+      - a new picture of a subject the video already has (the hero bottle) is an EDIT of that picture (source_inputs).
     An asset an earlier run of this job already produced and checked (assets/<id>.produced.json) is reused: a job
     that waited for the daily cap does not pay for it twice.
-    → assets.json row {id, kind, desc, status ready|needs_asset, file, source, attempts, checks}."""
+    → assets.json row {id, kind, desc, status ready|needs_asset|not_a_picture, file, source, attempts, checks}."""
     dst = Path(ctx.out) / "assets" / f"{aid}.png"
     dst.parent.mkdir(parents=True, exist_ok=True)
     side = dst.with_suffix(".produced.json")
     try:
         old = json.loads(side.read_text())
         if old.get("desc") == desc and old.get("status") == "ready" and Path(old.get("file") or "").exists():
-            ctx.asset_files[aid] = old["file"]
-            ctx.log(f"{aid}: already made and checked by an earlier run of this job — reused")
-            return old
+            if reuse_ok(ctx, aid, old):
+                _remember(ctx, aid, old)
+                side.write_text(json.dumps(old, indent=1, ensure_ascii=False))
+                ctx.log(f"{aid}: already made and checked by an earlier run of this job — reused")
+                return old
+            ctx.log(f"{aid}: an earlier run made it, but it fails today's fidelity checks — made again")
     except (OSError, ValueError):
         pass
-    # a picture MADE FROM other pictures (a merge of three photos, an edit of a reference) is made for real: its source
-    # pictures first, then the app's own edit with all of them attached — never a single invented "merge" (TEST v3)
-    if not made_from and not getattr(ctx, "_composing", False):
-        plan_in = source_inputs(ctx, desc, sorted(ctx.asset_files))
+    why = not_a_picture(desc)
+    if why:
+        ctx.log(f"{aid}: not made — {why} (no generation)")
+        return _row(aid, desc, "not_a_picture", why, made_from=list(made_from))
+    # an input AND its result in one description ("b/w photo + colorized result"): TWO pictures — the input (a real
+    # photo he brings) first, then the result made FROM it (TEST v3: a before/after collage with a caption baked in)
+    pair = split_pair(desc) if not made_from and not getattr(ctx, "_composing", False) else None
+    if pair:
+        iid = f"{aid}_input"[:40]
+        ctx.log(f"{aid}: names an input and its result — making the input '{iid}' first, then the result from it")
+        if iid not in ctx.asset_files:
+            ctx._composing = True
+            try:
+                r_in = produce_asset(ctx, iid, pair[0], sentence=sentence, window=window, look="real")
+            finally:
+                ctx._composing = False
+            if r_in.get("status") != "ready":
+                return _row(aid, desc, "needs_asset", f"its input picture '{iid}' could not be made: {r_in.get('why')}"[:400])
+        made_from = (iid,)
+    prod = getattr(ctx, "producer", None)
+    tool = prod.tool_of(desc) if prod is not None else None
+    tspec = prod.tool_spec(tool) if tool else {}
+    on_source = bool(tool) and tspec.get("on_source", True)
+    # a picture MADE FROM other pictures (a merge of three photos, an edit of a reference, a tool on a photo, a new shot
+    # of the video's hero product) is made for real: its source pictures first (reusing one the video already has),
+    # then the app's own edit / tool on them — never a single invented "merge" (TEST v3)
+    if not made_from and not getattr(ctx, "_composing", False) and (not tool or on_source):
+        plan_in = source_inputs(ctx, desc, {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
+        same = str(plan_in.get("same_as") or "")
+        if same and same in ctx.asset_files and not tool:
+            shutil.copyfile(ctx.asset_files[same], dst)
+            row = {"id": aid, "kind": "app_generation", "desc": desc, "status": "ready", "file": str(dst),
+                   "source": {**((json.loads(dst.with_name(f"{same}.produced.json").read_text()).get("source") or {})
+                                 if dst.with_name(f"{same}.produced.json").exists() else {}),
+                              "reused": same, "type": f"the same picture as '{same}' (reused, no generation)"},
+                   "attempts": [], "checks": [], "made_from": [same], "for": "R14 P3"}
+            ctx.log(f"{aid}: the same picture as '{same}' — reused (no generation)")
+            _remember(ctx, aid, row)
+            side.write_text(json.dumps(row, indent=1, ensure_ascii=False))
+            return row
         if plan_in.get("needs_inputs") and plan_in.get("inputs"):
             ids = []
             ctx._composing = True
@@ -733,36 +886,62 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None):
                     iid = re.sub(r"[^a-z0-9_]+", "_", str(inp.get("id") or "").lower()).strip("_")[:32] or f"{aid}_src{len(ids) + 1}"
                     if iid not in ctx.asset_files:
                         ctx.log(f"{aid}: needs its source picture '{iid}' first — making it")
-                        r_in = produce_asset(ctx, iid, str(inp.get("desc") or iid))
+                        r_in = produce_asset(ctx, iid, str(inp.get("desc") or iid), sentence=sentence, window=window)
                         if r_in.get("status") != "ready":
-                            return {"id": aid, "kind": "app_generation", "desc": desc, "status": "needs_asset",
-                                    "file": None, "source": None, "attempts": [f"source picture {iid} failed"],
-                                    "checks": [], "why": f"its source picture '{iid}' could not be made: {r_in.get('why')}"[:400]}
+                            return _row(aid, desc, "needs_asset", f"its source picture '{iid}' could not be made: "
+                                                                  f"{r_in.get('why')}"[:400])
+                    elif iid != aid:
+                        ctx.log(f"{aid}: made from the picture the video already has: '{iid}'")
                     ids.append(iid)
             finally:
                 ctx._composing = False
-            made_from, prompt = tuple(ids), (plan_in.get("instruction") or desc)
+            made_from = tuple(ids)
+            if not prompt and plan_in.get("instruction") and not tool:
+                prompt = str(plan_in["instruction"])
     inputs = [ctx.asset_files.get(m) for m in made_from if ctx.asset_files.get(m)]
     from . import preprod
-    new_photo = not made_from and not prompt
-    if getattr(ctx, "producer", None) is not None:
-        style = preprod.PHONE_STYLE if new_photo and asset_kind(desc) == "photo" else ""
-        subject = image_prompt(ctx, desc) if new_photo else desc
-        row = ctx.producer.produce(aid, desc, dst, inputs, prompt=prompt, subject=subject, style=style)
+    new_photo = not made_from and not prompt and not tool
+    req = person_request(ctx, desc, sentence, window, tool=tool, tool_spec=tspec, new_photo=new_photo,
+                         typed_hint=None if verbatim else prompt)
+    look = look or req["look"]
+    on_screen = verbatim or bool(req.get("on_screen") and req.get("typed"))
+    if prod is not None:
+        src = None
+        if made_from:
+            m0 = made_from[0]
+            ch = ctx.asset_chats.get(m0) or {}
+            src = {"id": m0, "file": ctx.asset_files.get(m0), "chat": ch.get("chat"), "nth": ch.get("nth")}
+        if new_photo and not on_screen:
+            style, subject, final = look_style(look), with_look(image_prompt(ctx, desc), look, cues=False), None
+        else:
+            typed = (prompt if verbatim else req["typed"]) if (not tool or tspec.get("typed")) else ""
+            if tool and not tspec.get("typed"):
+                final = None                               # the tool's click, no text at all
+            elif on_screen:
+                final = typed or prompt                    # his on-screen words, verbatim — never a look added
+            else:
+                final = with_look(typed or prompt or req["as_words"], look)
+            style, subject = "", final or req["as_words"]
+        row = prod.produce(aid, desc, dst, inputs, prompt=final, subject=subject, style=style,
+                           objects=[req["expect"]] if req.get("expect") else None, tool=tool,
+                           tool_params=req.get("params") or {}, source=src, look=look, verbatim=on_screen,
+                           as_words=with_look(req["as_words"], look) if not on_screen else req["as_words"])
         row["made_from"] = list(made_from)
     else:
-        row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo)
+        base = prompt if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
+        row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, base, new_photo, look=look)
+    row["look"] = look
     if row.get("status") == "ready":
-        ctx.asset_files[aid] = row["file"]
+        _remember(ctx, aid, row)
         side.write_text(json.dumps(row, indent=1, ensure_ascii=False))
     return row
 
 
-def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo):
+def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo, look="real"):
     """The simple path without the agent: the adapter's in-app call, spaced, up to max_tries_per_asset, checked."""
-    from . import preprod
     tries = int(onboarding_rules().get("max_tries_per_asset", 10))
-    base = prompt or ("Create an image: " + preprod.PHONE_STYLE + image_prompt(ctx, desc) if new_photo else desc)
+    base = prompt or ("Create an image: " + look_style(look) + with_look(image_prompt(ctx, desc), look, cues=False)
+                      if new_photo else desc)
     row = {"id": aid, "kind": "app_generation", "desc": desc, "status": "needs_asset", "file": None, "source": None,
            "attempts": [], "checks": [], "prompt": base, "made_from": list(made_from), "for": "R14 P3"}
     if ctx.in_app is None:
@@ -780,7 +959,8 @@ def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo):
         except Exception as e:  # noqa: BLE001 — the next try
             row["attempts"].append(f"in-app try {k + 1}: {e}"[:240])
             continue
-        res = ctx.check({"id": aid, "desc": desc}, dst, [desc])
+        res = ctx.check({"id": aid, "desc": desc, "look": look,
+                         **({"source_files": [f for f in inputs if f]} if inputs else {})}, dst, [desc])
         row["checks"].append({"producer": "app_generation", "try": k + 1, "matches": res.get("matches"),
                               "missing": res.get("missing_objects")})
         ctx.budget.add(res.get("usd"))
@@ -793,40 +973,269 @@ def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo):
     return row
 
 
+# ── the LOOK (Jake 2026-10-10): "it should look impressive when it needs to look impressive, and it should look real
+#    when it needs to look real. Make sure the prompts match it every time." ──
+LOOKS = ("real", "impressive", "faithful")
+LOOK_CUES = {
+    "real": ("Casual phone snapshot, handheld, slightly uneven framing, ordinary indoor light, a little noise and "
+             "softness, everyday clutter, unedited, the kind of photo anyone takes. "),
+    "impressive": ("Striking composition, beautiful natural light, rich fine detail, sharp focus, vivid but believable "
+                   "colour, the kind of picture that makes people stop scrolling. "),
+    "faithful": "",
+}
+LOOK_BOOST = {
+    "real": "Make it look like a real amateur phone photo, not a polished or AI-looking image. ",
+    "impressive": "Make it look genuinely impressive: a bold, well-lit, detailed shot worth showing off. ",
+    "faithful": "",
+}
+# words that make a "real" photo look staged / AI-made, and any styling on a "faithful" tool result
+GLOSS_RX = re.compile(r",?\s*\b(?:professional(?:ly)?|cinematic|studio(?:[- ]lit| lighting| shot)?|glossy|polished|"
+                      r"award[- ]winning|masterpiece|ultra[- ]?(?:detailed|realistic|hd)|hyper[- ]?realistic|8k|4k|hdr|"
+                      r"dramatic lighting|commercial|editorial|magazine[- ]quality|high[- ]end|premium)\b", re.I)
+STYLE_RX = re.compile(r",?\s*\b(?:stunning|beautiful|striking|vivid|gorgeous|moody|vibrant|dramatic|artistic|stylish|"
+                      r"professional(?:ly)?|cinematic|studio|glossy|polished|award[- ]winning|masterpiece|"
+                      r"ultra[- ]?(?:detailed|realistic|hd)|hyper[- ]?realistic|8k|4k|hdr|high[- ]end|premium)\b", re.I)
+
+
+def look_style(look, boost=0):
+    """The look's cue line for a NEW picture's prompt (plain words a person might type)."""
+    return LOOK_CUES.get(look, "") + (LOOK_BOOST.get(look, "") if boost else "")
+
+
+def with_look(text, look, cues=True, boost=0):
+    """A request carrying its look: real → no gloss words (+ phone-snapshot cues), impressive → light/composition/detail
+    cues, faithful → no styling words at all. (Never called on an on-screen prompt: that one is verbatim.)"""
+    t = str(text or "").strip()
+    if look == "real":
+        t = re.sub(r"\s{2,}", " ", GLOSS_RX.sub("", t)).strip(" ,")
+    elif look == "faithful":
+        t = re.sub(r"\s{2,}", " ", STYLE_RX.sub("", t)).strip(" ,")
+    if not cues or look == "faithful" or not t:
+        return t
+    tail = (LOOK_CUES.get(look) or "").strip()
+    if boost:
+        tail = (tail + " " + LOOK_BOOST.get(look, "")).strip()
+    return f"{t.rstrip('. ')}. {tail}" if tail else t
+
+
+STOP = set("""a an the and or but of to in on at by for with from into onto over under this that these those it its is are
+be been was were he she i i'm i'll you your my me we our they them his her just so then now also very really make made
+let let's lets it's can could would should will do does did done have has had not no yes as like there here what which who
+how why when where some any all more most one two up out off about than too only even still get got gonna want photo
+picture image please okay ok uh um um, right well""".split())
+
+
+def content_words(text):
+    """The concrete words of a narrated request (rustic, kitchen, golden, 9:16, regret …), lower-case."""
+    t = re.sub(r"(?:^|\s)[/@][\w-]+", " ", str(text or ""))           # a /command itself is not a detail to keep
+    out = []
+    for w in re.findall(r"[a-z0-9][a-z0-9:'’-]*", t.lower()):
+        w = w.strip("'’-").replace("’", "'")
+        w = re.sub(r"'s$", "", w)
+        if len(w) >= 3 and w not in STOP or re.match(r"^\d+:\d+$", w):
+            out.append(w)
+    return list(dict.fromkeys(out))
+
+
+def missing_words(narrated, request):
+    """The narrated request's content words the rewrite dropped (or substituted). A word counts as kept when the
+    request has it or its stem (charred ~ char, aged ~ age)."""
+    have = " " + " ".join(content_words(request)) + " "
+    out = []
+    for w in content_words(narrated):
+        stem = re.sub(r"(?:ed|ing|es|s)$", "", w) if len(w) > 4 else w
+        if f" {w} " not in have and not re.search(rf"\b{re.escape(stem)}\w*", have):
+            out.append(w)
+    return out
+
+
+def keep_details(narrated, request):
+    """The deterministic repair when a rewrite still drops narrated details: his words go back in, verbatim."""
+    miss = missing_words(narrated, request)
+    if not miss:
+        return request
+    return f"{str(request).rstrip('. ')} ({narrated.strip()})"
+
+
+PERSON_SYSTEM = """A video shows a person using an app. A picture in the video must be MADE in that app, off camera, the way
+the person does it. From the planner's INTERNAL description (never shown to the app) and the narration, write:
+- typed: exactly what the person types into the app for this picture, in his words. When the narration reads or shows
+  the prompt he types, copy it VERBATIM and set on_screen=true. When the picture comes from a tool button with no
+  typed text (e.g. a remove-background or resize click), typed is "". Never internal words: "result", "in-app", the
+  app's name, ids, "same X as" — a person never types those.
+- narrated: the request words as he SAYS them in the narration (verbatim span; "" if he says none).
+- as_words: the same change asked plainly in a chat with the picture attached (used only if the tool fails).
+- look: "real" = an ordinary input he brings (a phone photo, a blurry or old photo, "my product on a desk"): amateur,
+  believable, unpolished. "impressive" = a showcase result the video sells (sketch → photo, a merge, a logo, a hero
+  shot): striking, high quality. "faithful" = a tool result that must show exactly what he narrates, artefacts
+  included (a partial erase, soft cut-out edges): honest, not prettified.
+- expect: what the picture must visibly show (objects, and for a tool result the narrated artefacts).
+- params: values a tool needs, from the options given (e.g. shape, target = the thing to brush/box/pin).
+RULE: every concrete detail he narrates (materials, light, time of day, colours, ratios like 9:16, names in quotes,
+an on-screen prompt's wording) is kept EXACTLY; you may only add what the app needs, never substitute. JSON only."""
+KV_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["key", "value"],
+             "properties": {"key": {"type": "string"}, "value": {"type": "string"}}}
+PERSON_SCHEMA = {"type": "object", "additionalProperties": False,
+                 "required": ["typed", "on_screen", "narrated", "as_words", "look", "expect", "params"],
+                 "properties": {"typed": {"type": "string"}, "on_screen": {"type": "boolean"},
+                                "narrated": {"type": "string"}, "as_words": {"type": "string"},
+                                "look": {"type": "string", "enum": list(LOOKS)}, "expect": {"type": "string"},
+                                "params": {"type": "array", "items": KV_SCHEMA}}}
+INTERNAL_RX = re.compile(r"\bin-app\b|\bresults?\b|\basset\b|\b[a-z]+_[a-z_]+\b|\bsame (?:\w+ ){0,2}as\b|"
+                         r"\b(?:the app|the planner)\b", re.I)
+
+
+def _strip_internal(desc, app_name=""):
+    """Without a model: the internal description → plain words (never the description itself)."""
+    t = str(desc or "")
+    if ":" in t[:80]:
+        t = t.split(":", 1)[1]
+    t = re.sub(rf"\b(?:{re.escape(app_name)}(?:'s)?|in-app|the app's|results?|asset)\b" if app_name else
+               r"\b(?:in-app|the app's|results?|asset)\b", " ", t, flags=re.I)
+    t = re.sub(r"\bsame\s+", "this ", t, flags=re.I)
+    t = re.sub(r"\s{2,}", " ", t).strip(" ,.;:-")
+    return f"Edit this picture so it shows {t}" if t else "Edit this picture"
+
+
+def _is_internal(text, desc):
+    t = str(text or "").strip()
+    return bool(t) and (t.lower() == str(desc or "").strip().lower() or bool(INTERNAL_RX.search(t)))
+
+
+def _param_defaults(ctx, tspec, desc, sentence):
+    """Tool params from the words (data: an enum of a playbook action, e.g. resize_option.shape)."""
+    out, said = {}, f"{desc} {sentence or ''}".lower()
+    for name, spec in (tspec.get("params") or {}).items():
+        enum = (((ctx.pb.get("actions") or {}).get(spec.get("enum_of") or "") or {}).get("params") or {}).get(name, {}).get("enum")
+        if enum:
+            hits = [v for v in enum if any(tok.lower() in said for tok in str(v).split() if ":" in tok)]
+            hits = hits or [v for v in enum if str(v).split()[0].lower() in said]
+            if len(hits) == 1:
+                out[name] = hits[0]
+    return out
+
+
+def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=None, new_photo=False, typed_hint=None):
+    """(A) The asset's request to the app = what the PERSON would do or type, derived by ONE cheap call from the
+    internal description + the narration (sentence, ±3 sentences around it), with its LOOK. Code then checks it:
+    never the internal description (else plain-words fallback), every narrated detail kept (else one retry, then his
+    words go back in verbatim), no typed text for a tool that has none.
+    → {"typed", "on_screen", "narrated", "as_words", "look", "expect", "params"}."""
+    tspec = tool_spec or {}
+    app_name = str(ctx.pb.get("name") or ctx.app)
+    look0 = "faithful" if tool else ("real" if asset_kind(desc) == "photo" else "impressive")
+    quoted = re.findall(r"['\"‘“]([^'\"’”]{2,60})['\"’”]", str(desc))
+    base = {"typed": typed_hint or (quoted[0] if tool and tspec.get("typed") and quoted else ""), "on_screen": False,
+            "narrated": "", "as_words": typed_hint or _strip_internal(desc, app_name), "look": look0, "expect": "",
+            "params": _param_defaults(ctx, tspec, desc, sentence)}
+    if getattr(ctx, "llm", None) is None:
+        return base
+    opts = {}
+    for name, spec in (tspec.get("params") or {}).items():
+        enum = (((ctx.pb.get("actions") or {}).get(spec.get("enum_of") or "") or {}).get("params") or {}).get(name, {}).get("enum")
+        opts[name] = enum or "free text from the narration"
+    content = (f"INTERNAL description: {desc}\nTHE SENTENCE: {sentence or ''}\nNARRATION AROUND IT: {window or ''}\n"
+               + (f"TOOL: the app's {tspec.get('label') or tool} — "
+                  + ("he types text in it" if tspec.get("typed") else "a click, NO typed text (typed must be \"\")")
+                  + f"; params: {json.dumps(opts)}\n" if tool else "")
+               + ("A NEW picture (no source).\n" if new_photo else "")
+               + (f"What the plan says he types: {typed_hint}\n" if typed_hint else ""))
+    model = config.OVERLAY_MODEL if hasattr(config, "OVERLAY_MODEL") else config.VISION_MODEL
+    msgs = [{"role": "user", "content": content}]
+    out = None
+    for k in range(2):
+        try:
+            ctx.budget.need(llm.estimate(model, PERSON_SYSTEM, msgs, 700))
+            r = ctx.llm(model, PERSON_SYSTEM, None, 700, effort="low", msgs=msgs, schema=PERSON_SCHEMA,
+                        stage=f"preprod.onboard.{ctx.app}", purpose="P3 person request + look (what he types)")
+            ctx.budget.add(r.get("usd"))
+            j = json.loads(r.get("text") or "{}")
+        except Exception:  # noqa: BLE001 — the plain-words fallback
+            break
+        if not isinstance(j, dict) or not any(j.get(x) for x in ("typed", "as_words", "look")):
+            break
+        out = dict(base)
+        for f_ in ("typed", "narrated", "as_words", "expect"):
+            if isinstance(j.get(f_), str):
+                out[f_] = j[f_].strip()
+        out["on_screen"] = bool(j.get("on_screen"))
+        if j.get("look") in LOOKS:
+            out["look"] = j["look"]
+        for kv in j.get("params") or []:
+            if isinstance(kv, dict) and kv.get("key") and kv.get("value"):
+                out["params"][str(kv["key"])] = str(kv["value"])
+        miss = []
+        if out["narrated"]:
+            miss = (missing_words(out["narrated"], out["typed"]) if out["typed"] else []) \
+                + missing_words(out["narrated"], out["as_words"])
+        if not miss or k == 1:
+            break
+        msgs = msgs + [{"role": "assistant", "content": json.dumps(j)},
+                       {"role": "user", "content": f"You dropped or changed narrated details: {', '.join(dict.fromkeys(miss))}. "
+                                                   "Keep every one of his words exactly; only add. Answer again."}]
+    if out is None:
+        return base
+    if tool and not tspec.get("typed"):
+        out["typed"], out["on_screen"] = "", False
+    if out["on_screen"] and out["narrated"] and missing_words(out["narrated"], out["typed"]):
+        out["typed"] = out["narrated"]                         # the on-screen prompt is his, verbatim
+    for f_ in ("typed", "as_words"):
+        if _is_internal(out[f_], desc) and not out["on_screen"]:
+            out[f_] = "" if f_ == "typed" else _strip_internal(desc, app_name)
+        if out["narrated"] and out[f_] and not out["on_screen"]:
+            out[f_] = keep_details(out["narrated"], out[f_])
+    if not out["as_words"]:
+        out["as_words"] = out["typed"] or _strip_internal(desc, app_name)
+    return out
+
+
 INPUTS_SYSTEM = """A video needs a picture made in an app. Decide whether that picture is honestly the app's EDIT of other
-pictures the person brings (e.g. "merge these three photos: the person, the market stall, the bottle", "make my photo
-look like this reference", "restore this old photo"). If so, list each SOURCE picture as a separate photo to make first
-(visible-only description; reuse an AVAILABLE id when one fits) and the instruction he types with them attached.
-A plain new photo, or a result of a single edit whose source is obvious and available, needs no inputs. JSON only."""
-INPUTS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["needs_inputs", "inputs", "instruction"],
+pictures (e.g. "merge these three photos: the person, the market stall, the bottle", "make my photo look like this
+reference", "restore this old photo", the app's remove-background / resize / erase tool on a photo). If so, list
+each SOURCE picture (visible-only description) and the instruction he types with them attached.
+CONTINUITY: the video has ONE hero subject per thing (the same bottle, the same person). When the picture shows a
+subject an AVAILABLE picture already shows, its source IS that available picture (reuse its id): a new shot of the
+same product is an edit of the first photo ("put this exact bottle on a desk"), never a new invention. When the picture
+is the very same picture as an available one (same subject, same scene, same moment), set same_as to that id.
+A plain new photo of a new subject needs no inputs. JSON only."""
+INPUTS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["needs_inputs", "inputs", "instruction", "same_as"],
                  "properties": {"needs_inputs": {"type": "boolean"}, "instruction": {"type": "string"},
+                                "same_as": {"type": "string"},
                                 "inputs": {"type": "array", "items": {"type": "object", "additionalProperties": False,
                                                                       "required": ["id", "desc"],
                                                                       "properties": {"id": {"type": "string"},
                                                                                      "desc": {"type": "string"}}}}}}
 
 
-def source_inputs(ctx, desc, available):
-    """Generic (any app): does this picture need source pictures made first? → {needs_inputs, inputs[{id,desc}],
-    instruction}. One cheap call; without a model, or on any error: no inputs."""
+def source_inputs(ctx, desc, available, tool=None):
+    """Generic (any app): does this picture need source pictures made first — or is its subject one the video already
+    has (the hero product)? available = {id: desc} (or ids). → {needs_inputs, inputs[{id,desc}], instruction, same_as}.
+    One cheap call; without a model, or on any error: no inputs."""
+    none = {"needs_inputs": False, "inputs": [], "instruction": "", "same_as": ""}
     if getattr(ctx, "llm", None) is None:
-        return {"needs_inputs": False, "inputs": [], "instruction": ""}
+        return none
+    if not isinstance(available, dict):
+        available = {k: "" for k in available or []}
+    av = "\n".join(f"- {k}: {v}" if v else f"- {k}" for k, v in available.items()) or "none"
     model = config.OVERLAY_MODEL if hasattr(config, "OVERLAY_MODEL") else config.VISION_MODEL
-    msgs = [{"role": "user", "content": f"PICTURE: {desc}\nAVAILABLE pictures (ids): {', '.join(available) or 'none'}"}]
+    msgs = [{"role": "user", "content": f"PICTURE: {desc}\n" + (f"It is the app's {tool} tool applied to a source picture: "
+                                                                 "name exactly that one source.\n" if tool else "")
+             + f"AVAILABLE pictures:\n{av}"}]
     try:
         ctx.budget.need(llm.estimate(model, INPUTS_SYSTEM, msgs, 500))
         r = ctx.llm(model, INPUTS_SYSTEM, None, 500, effort="low", msgs=msgs, schema=INPUTS_SCHEMA,
                     stage=f"preprod.onboard.{ctx.app}", purpose="P3 source pictures of a composite")
         ctx.budget.add(r.get("usd"))
         j = json.loads(r.get("text") or "{}")
-        return j if isinstance(j, dict) else {"needs_inputs": False, "inputs": [], "instruction": ""}
+        return {**none, **j} if isinstance(j, dict) else none
     except Exception:  # noqa: BLE001 — treated as a plain picture
-        return {"needs_inputs": False, "inputs": [], "instruction": ""}
+        return none
 
 
 IMAGE_SYSTEM = """A video narration describes a picture he shows (a photo he brings, a result). Rewrite it as ONE image
 prompt that describes only what is VISIBLE in the picture: the subject, the setting, the light, the style. Drop fillers
-("uh"), what he does with it ("I drag it into the chat"), and anything about the video. Answer with the JSON only."""
+("uh"), what he does with it ("I drag it into the chat"), and anything about the video. Keep every concrete detail he
+says. Answer with the JSON only."""
 IMAGE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["prompt"],
                 "properties": {"prompt": {"type": "string"}}}
 
@@ -855,27 +1264,81 @@ def image_prompt(ctx, desc):
         return text
 
 
-PLAIN_SYSTEM = """A video narration names a feature an app does not have (e.g. a '/newbg rustic kitchen' command). Write
-the equivalent request in PLAIN WORDS that the app can really do (e.g. "Replace the background of this photo with a
-rustic kitchen"), and what the result must visibly show. Answer with the JSON only."""
-PLAIN_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["prompt", "expect"],
-                "properties": {"prompt": {"type": "string"}, "expect": {"type": "string"}}}
+PLAIN_SYSTEM = """A video narration names a feature an app does not have (e.g. a '/newbg rustic kitchen' command). Read the
+NARRATION AROUND IT and decide what the feature does in the video:
+- result_kind "image": it produces a PICTURE he shows (e.g. /newbg → the photo with a new background). Then write the
+  equivalent request in PLAIN WORDS the app can really do ("Replace the background of this photo with a rustic
+  kitchen") and what the result must visibly show.
+- result_kind "ui_state": it opens or changes the app's INTERFACE (a blank canvas he draws on, a menu, a badge, a
+  counter, a picker). Nothing is generated; prompt "". If a picture appears inside that UI (his doodle on the canvas),
+  name the AVAILABLE picture that is it in uses_asset.
+- result_kind "none": nothing to show.
+RULE: every concrete detail he says (rustic, golden hour, charred, 9:16, a quoted name) is kept EXACTLY — you may only
+ADD what makes the app do it, never substitute. narrated = his request words verbatim. look: "real" | "impressive" |
+"faithful" (see: an input he brings / a showcase result / an honest tool result). Answer with the JSON only."""
+PLAIN_SCHEMA = {"type": "object", "additionalProperties": False,
+                "required": ["result_kind", "prompt", "expect", "narrated", "look", "uses_asset"],
+                "properties": {"result_kind": {"type": "string", "enum": ["image", "ui_state", "none"]},
+                               "prompt": {"type": "string"}, "expect": {"type": "string"},
+                               "narrated": {"type": "string"}, "look": {"type": "string", "enum": list(LOOKS)},
+                               "uses_asset": {"type": "string"}}}
 
 
-def plain_request(ctx, feature, text, sentence):
-    """The command he says → a plain-words request the app can do + what the result must show (one cheap call)."""
-    content = f"Feature: {feature}\nWhat he types/says: {text}\nThe sentence: {sentence}"
+def plain_request(ctx, feature, text, sentence, window="", available=()):
+    """The feature he names → what it produces in the video (result_kind: image | ui_state | none, read from the
+    narration ±3 sentences) and, for an image, a plain-words request the app can do + what it must show — every detail
+    he narrates kept (checked; one retry; then his words go back in). TEST v3: 'Sketch' (a blank canvas he draws on)
+    was misread as "turn the photo into a pencil sketch" and two generations were wasted; /newbg's "rustic kitchen"
+    became "a bright, modern kitchen".
+    → {"result_kind", "prompt", "expect", "narrated", "look", "uses_asset"}"""
+    content = (f"Feature: {feature}\nWhat he types/says: {text}\nThe sentence: {sentence}\n"
+               f"NARRATION AROUND IT: {window or sentence}\nAVAILABLE pictures: {', '.join(available) or 'none'}")
     model = config.OVERLAY_MODEL if hasattr(config, "OVERLAY_MODEL") else config.VISION_MODEL
     msgs = [{"role": "user", "content": content}]
-    ctx.budget.need(llm.estimate(model, PLAIN_SYSTEM, msgs, 600))
-    r = ctx.llm(model, PLAIN_SYSTEM, None, 600, effort="low", msgs=msgs, schema=PLAIN_SCHEMA,
-                stage=f"preprod.onboard.{ctx.app}", purpose="P4 plain-words request (real result)")
-    ctx.budget.add(r.get("usd"))
-    try:
-        j = json.loads(r.get("text") or "{}")
-        return {"prompt": str(j.get("prompt") or text), "expect": str(j.get("expect") or text)}
-    except ValueError:
-        return {"prompt": str(text or feature), "expect": str(text or feature)}
+    narrated0 = str(text or "")
+    out = {"result_kind": "image", "prompt": str(text or feature), "expect": str(text or feature), "narrated": narrated0,
+           "look": "impressive", "uses_asset": ""}
+    for k in range(2):
+        ctx.budget.need(llm.estimate(model, PLAIN_SYSTEM, msgs, 600))
+        r = ctx.llm(model, PLAIN_SYSTEM, None, 600, effort="low", msgs=msgs, schema=PLAIN_SCHEMA,
+                    stage=f"preprod.onboard.{ctx.app}", purpose="P4 plain-words request (real result)")
+        ctx.budget.add(r.get("usd"))
+        try:
+            j = json.loads(r.get("text") or "{}")
+        except ValueError:
+            break
+        if not isinstance(j, dict):
+            break
+        out = {"result_kind": j.get("result_kind") if j.get("result_kind") in ("image", "ui_state", "none") else "image",
+               "prompt": str(j.get("prompt") or text), "expect": str(j.get("expect") or text),
+               "narrated": str(j.get("narrated") or narrated0), "look": j.get("look") if j.get("look") in LOOKS else "impressive",
+               "uses_asset": str(j.get("uses_asset") or "")}
+        if out["result_kind"] != "image":
+            out["prompt"] = ""
+            break
+        miss = missing_words(out["narrated"], out["prompt"]) + missing_words(narrated0, out["prompt"])
+        if not miss or k == 1:
+            break
+        msgs = msgs + [{"role": "assistant", "content": json.dumps(j)},
+                       {"role": "user", "content": f"You dropped or changed what he says: {', '.join(dict.fromkeys(miss))}. "
+                                                   "Keep every one of his words exactly; only add. Answer again."}]
+    if out["result_kind"] == "image":
+        for nar in (out["narrated"], narrated0):
+            if nar and missing_words(nar, out["prompt"]):
+                out["prompt"] = keep_details(nar, out["prompt"])
+    if out["uses_asset"] and out["uses_asset"] not in available:
+        out["uses_asset"] = ""
+    return out
+
+
+def window_of(video, wid, k=3):
+    """The narration around a word: its sentence ± k sentences (what the feature / picture is, in context)."""
+    from . import planfit
+    ss = planfit.sentences(video["words"])
+    i = next((n for n, s in enumerate(ss) if any(w["i"] == wid for w in s)), None)
+    if i is None:
+        return ""
+    return " ".join(" ".join(w["word"] for w in s) for s in ss[max(0, i - k): i + k + 1])
 
 
 # ────────────────────────────── P4: the app's UI kit, per video ──────────────────────────────
@@ -936,6 +1399,9 @@ class Ctx:
         self.budget = budget or Budget()
         self.image_chat = image_chat
         self.asset_files = dict(asset_files or {})
+        self.asset_descs = {}                              # id → description (the source picker's AVAILABLE list)
+        self.asset_chats = {}                              # id → {"chat", "nth"}: where this job's producer made it
+        self.locate = None                                 # (image, target) → [x0, y0, x1, y1] fractions (vision)
         self.log = log or (lambda m: None)
         self.kit_app = kit_app or app
         self.allowed_chats = set(allowed_chats or ())
@@ -1003,6 +1469,73 @@ def _prior_asset(answer, wid, pos, usable):
     return best
 
 
+STROKE_RX = re.compile(r"\b(?:draw|drew|drawing|doodle|scribble|pick the pen|start a stroke|pen stroke|brush(?:es)? over|"
+                       r"highlight(?:s|ed)? (?:the|over)|drag (?:a )?box|box over|circle (?:the|around))\b", re.I)
+MODE_RX = re.compile(r"\b(markup|erase|eraser|comment|sketch|canvas|whiteboard|paint)\b", re.I)
+
+
+def stroke_need(need):
+    """A P2 need that is a STROKE (draw a shape on a canvas, box a region in Markup, brush a region in Erase) →
+    {"key", "surface", "how", "target", "onboard", "params"}, else None. TEST v3 22:01: "draw a squat bottle" was
+    onboarded as its own action and the explorer improvised one straight drag (3 rounds, 3/3 never passed). The tool
+    + the surface are onboarded ONCE; the strokes are data (the doodle asset's shapes / the target's region)."""
+    n = str(need or "")
+    if not STROKE_RX.search(n):
+        return None
+    if re.search(r"\b(?:click|press|tap|submit|send|type|paste|download)\b", n, re.I) and \
+            not re.search(r"\b(?:draw|drew|brush|drag|pen|stroke)\b", n, re.I):
+        return None                                        # a click on the canvas UI (the check mark), not a stroke
+    m = MODE_RX.search(n)
+    mode = (m.group(1).lower() if m else "image").replace("eraser", "erase")
+    canvas = mode in ("sketch", "canvas", "whiteboard", "paint") or (re.search(r"\b(?:draw|drew|doodle|pen)\b", n, re.I)
+                                                                   and not re.search(r"\b(?:photo|image|viewer)\b", n, re.I))
+    tm = re.search(r"\b(?:over|around|on)\s+((?:the|a|an)\s+[^,;.]{2,60}?)(?:\s+(?:so|to|in|as|and|that|then|next|beside|near|by|with)\b|[,;.]|$)", n, re.I)
+    target = tm.group(1).strip() if tm and not canvas else ""
+    if canvas:
+        where = f"the {mode} canvas" if mode not in ("image",) else "the drawing canvas"
+        return {"key": "stroke:canvas:draw", "surface": where, "how": "draw", "target": "",
+                "params": {"strokes": [[[420, 512], [520, 470], [610, 520]]], "space": 1024},
+                "onboard": (f"THE STROKE TOOL on {where} (context: {n[:160]}). Get to the drawing surface, pick the pen, "
+                            "and propose ONE action of kind 'draw' whose selector is the drawing surface. Its strokes are "
+                            "DATA supplied at record time (the doodle's shapes, scaled to the surface): never draw or "
+                            "invent a shape. Prove it with ONE short test stroke (params strokes / space as given); the "
+                            "post assert must show the stroke landed. Then undo or close; never submit.")}
+    how = "box" if re.search(r"\bbox\b|\bcircle\b", n, re.I) else "brush"
+    return {"key": f"stroke:{mode}:{how}", "surface": f"the picture in the {mode} mode", "how": how, "target": target,
+            "params": {"rel_from": [0.42, 0.45], "rel_to": [0.58, 0.55]},
+            "onboard": (f"THE {mode.upper()} STROKE on the picture in the image viewer (context: {n[:160]}). Get to the "
+                        f"{mode} mode and propose ONE action of kind 'drag' on the viewer image's selector with params "
+                        "rel_from / rel_to (fractions of the image box). The region is DATA supplied at record time (where "
+                        "the target is in the picture): never choose it yourself. Prove it with the test drag given in the "
+                        "params; the post assert must show the selection landed. Never send.")}
+
+
+def bind_stroke(ctx, bt, sk, image_asset=None):
+    """The data of one stroke beat: the doodle shape it draws (beatscript binds that shape's strokes from the sketch
+    asset, scaled to the canvas), or the target's region in the picture (vision: ctx.locate) as rel_from / rel_to."""
+    from . import beatscript
+    if sk["how"] == "draw":
+        shape = beatscript.shape_of(" ".join(str(bt.get(k) or "") for k in ("need", "body")))
+        if shape:
+            bt["subject"] = f"shape:{shape}"
+        return bt
+    target = sk.get("target") or ""
+    f = ctx.asset_files.get(image_asset) if image_asset else None
+    box = None
+    if target and f and callable(getattr(ctx, "locate", None)):
+        try:
+            box = ctx.locate(f, target)
+        except Exception as e:  # noqa: BLE001 — the beat keeps the proven default
+            ctx.log(f"P2: could not locate '{target}' in {image_asset}: {e}")
+    if box and len(box) == 4:
+        x0, y0, x1, y1 = [max(0.0, min(1.0, float(v))) for v in box]
+        params = ({"rel_from": [x0, y0], "rel_to": [x1, y1]} if sk["how"] == "box"
+                  else {"rel_from": [x0, (y0 + y1) / 2], "rel_to": [x1, (y0 + y1) / 2]})
+        bt["params"] = {**(bt.get("params") or {}), **params}
+        bt["region"] = {"target": target, "in": image_asset, "box": [x0, y0, x1, y1]}
+    return bt
+
+
 def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     """Fill every need of the plan (P2/P3/P4, D is code) and check the patched plan again with THIS video's playbook.
     pdoc = preprod/plan.json ({"plan": director.plan() output incl. "answer", "raw"}); assets = assets.json (updated
@@ -1021,10 +1554,19 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     by_asset = {a["id"]: a for a in assets.get("assets", [])}
     usable = {k for k, a in by_asset.items() if a.get("status") in ("ready", "pending_in_app")}
     ctx.asset_files.update({k: a["file"] for k, a in by_asset.items() if a.get("file")})
+    for k, a in by_asset.items():
+        if a.get("file") and a.get("status") == "ready":
+            _remember(ctx, k, a) if str((a.get("source") or {}).get("type", "")).startswith("in-app generation") \
+                else ctx.asset_descs.setdefault(k, str(a.get("desc") or "")[:200])
 
     # assets the manifest could not make (or left to the dry run) are needs too — retried and re-routed (P3), never
     # silently dropped (the old go_with_fallbacks path)
     for a in list(assets.get("assets", [])):
+        made_here = str((a.get("source") or {}).get("type", "")).startswith("in-app generation")
+        side_ = Path(ctx.out) / "assets" / f"{a['id']}.produced.json"
+        if a.get("status") == "ready" and made_here and not side_.exists():
+            a["status"] = "needs_asset"                   # its .produced.json was removed: a redo, never resurrected
+            ctx.log(f"{a['id']}: marked for a redo (no stored check) — made again")
         if a.get("status") in ("missing", "needs_asset") or (a.get("status") == "pending_in_app" and ctx.in_app):
             assets["assets"].remove(a)
             by_asset.pop(a["id"], None)
@@ -1066,7 +1608,12 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         if not made_from and asset_kind(desc) == "app_generation":
             prior = _prior_asset(answer, pr.get("word_id") or (r.get("word_ids") or [None])[0], pos, usable)
             made_from = [prior] if prior else []
-        row = produce_asset(ctx, aid, desc, made_from)
+        wid0 = pr.get("word_id") or (r.get("word_ids") or [None])[0]
+        row = produce_asset(ctx, aid, desc, made_from, sentence=r.get("sentence"),
+                            window=window_of(video, wid0) if wid0 is not None else r.get("sentence"))
+        if row["status"] == "not_a_picture":            # a camera move / framing: the edit's job (D), not the app's
+            note(r, "D", "not a picture — camera / framing in the edit (no generation)", asset=aid, why2=row.get("why"))
+            continue
         assets.setdefault("assets", []).append(row)
         by_asset[aid] = row
         if row["status"] == "ready":
@@ -1097,23 +1644,36 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                 kit.update(ensure_kit(ctx))
             a, b, sentence = _sentence_ids(video, wid) if wid is not None else (None, None, r.get("sentence"))
             res_id = f"p4_{re.sub(r'[^a-z0-9]+', '_', str(text).lower()).strip('_')[:20]}"
+            win = window_of(video, wid) if wid is not None else sentence
             try:
-                req = plain_request(ctx, feature, text, sentence)
+                req = plain_request(ctx, feature, text, sentence, win, sorted(usable))
             except BudgetSpent as e:
-                req = {"prompt": str(text), "expect": str(text)}
+                req = {"result_kind": "image", "prompt": str(text), "expect": str(text), "look": "impressive",
+                       "uses_asset": "", "narrated": str(text)}
                 warnings.append(str(e))
             prior = _prior_asset(answer, wid, pos, usable) if wid is not None else None
-            res = produce_asset(ctx, res_id, req["expect"], [prior] if prior else [], prompt=req["prompt"])
-            res["kind"] = res["kind"] if res["status"] == "ready" else "app_generation"
-            res["for"] = "R14 P4"
-            assets.setdefault("assets", []).append(res)
-            if res["status"] != "ready":
-                held.append({"reason": "p4_result_failed", "detail": f"feature {feature}: the real result could not be made "
-                                                                      f"({res.get('why')})"[:300]})
-                note(r, "P4", "failed: no real result", verify=v)
-                return
-            usable.add(res_id)
-            how = f"{res['kind']} — \"{req['prompt'][:120]}\"" + (f" on {prior}" if prior else "")
+            if req.get("result_kind") != "image":
+                # the feature changes the app's UI (a canvas, a menu, a badge): shown from the UI kit, NO generation;
+                # a picture inside it (his doodle on the canvas) is an asset the video already has
+                res_id = req.get("uses_asset") or None
+                how = f"{req.get('result_kind')} — the app's UI from the kit" + (f", with '{res_id}' in it" if res_id else "")
+                ctx.log(f"feature {feature}: {req.get('result_kind')} (from the narration around it) — no generation")
+            else:
+                res = produce_asset(ctx, res_id, req["expect"], [prior] if prior else [], prompt=req["prompt"],
+                                    sentence=sentence, window=win, look=req.get("look"))
+                if res["status"] == "not_a_picture":
+                    note(r, "D", "not a picture — camera / framing in the edit (no generation)", verify=v)
+                    return
+                res["kind"] = res["kind"] if res["status"] == "ready" else "app_generation"
+                res["for"] = "R14 P4"
+                assets.setdefault("assets", []).append(res)
+                if res["status"] != "ready":
+                    held.append({"reason": "p4_result_failed", "detail": f"feature {feature}: the real result could not be made "
+                                                                          f"({res.get('why')})"[:300]})
+                    note(r, "P4", "failed: no real result", verify=v)
+                    return
+                usable.add(res_id)
+                how = f"{res['kind']} — \"{req['prompt'][:120]}\"" + (f" on {prior}" if prior else "")
             if a is None:
                 warnings.append(f"P4 {feature}: no words to place it on")
                 note(r, "P4", "no window", verify=v)
@@ -1125,7 +1685,9 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             if tid == "long_prompt_scroll" and len(prompt) < 200:
                 tid = "prompt_highlight"
             p4.append({"start": a, "end": b, "template": tid, "feature": feature, "verified": v["searched"][:6],
-                       "result_asset": res_id, "how": how, "kit_dir": (kit or {}).get("dir"),
+                       "result_asset": res_id if req.get("result_kind", "image") == "image" else None,
+                       "ui_asset": res_id if req.get("result_kind", "image") != "image" else None,
+                       "how": how, "result_kind": req.get("result_kind", "image"), "kit_dir": (kit or {}).get("dir"),
                        "fields": {"prompt": prompt[:440].ljust(8), "phrases": phrases, "app": ctx.kit_app}})
             # the beat that asked for it leaves the screencast (no fake screencast of a missing feature)
             for si, s, bt in list(_beats(answer)):
@@ -1148,10 +1710,17 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         ctx.check_cancel()
         pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
         need = pr.get("need") or r.get("need") or str(r.get("why"))
-        key = re.sub(r"\W+", " ", need.lower()).strip()[:120]
+        # a draw / markup box / erase brush is ONE stroke tool per surface, onboarded once; the shapes are DATA
+        sk = stroke_need(need)
+        key = sk["key"] if sk else re.sub(r"\W+", " ", need.lower()).strip()[:120]
         if key not in seen:
             try:
-                seen[key] = onboard_action(ctx, need, {"text": pr.get("text")} if pr.get("text") else None)
+                if sk:
+                    ctx.log(f"P2: '{need[:60]}' is a stroke on {sk['surface']} — onboarding the stroke tool once ({sk['key']}); "
+                            "the strokes are data")
+                    seen[key] = onboard_action(ctx, sk["onboard"], sk["params"])
+                else:
+                    seen[key] = onboard_action(ctx, need, {"text": pr.get("text")} if pr.get("text") else None)
             except BudgetSpent as e:
                 seen[key] = {"status": "failed", "why": str(e), "budget": True}
         res = seen[key]
@@ -1163,12 +1732,16 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                 if bt.get("action") == director.ONBOARD_ACTION and (bt.get("word_id") == wid or
                                                                     (bt.get("need") or "") == need):
                     bt["action"] = aid
+                    if sk:
+                        bind_stroke(ctx, bt, sk, _prior_asset(answer, bt.get("word_id"), pos, usable))
                     hit = True
             if not hit and wid is not None:
                 seg = next((s for s in answer.get("segments") or [] if pos.get(s["start_word"], 1e9) <= pos.get(wid, -1)
                             <= pos.get(s["end_word"], -1)), None)
                 bt = {"word_id": wid, "action": aid, "body": need[:140], "subject": "screen", "text": pr.get("text"),
                       "url": None, "asset_id": None, "live": False, "wait_end_word": None}
+                if sk:
+                    bind_stroke(ctx, bt, sk, _prior_asset(answer, wid, pos, usable))
                 if seg is None:
                     a, b, _ = _sentence_ids(video, wid)
                     seg = {"start_word": a, "end_word": b, "app": ctx.app, "session": "logged_in", "beats": []}

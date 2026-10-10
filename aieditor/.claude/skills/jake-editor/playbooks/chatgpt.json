@@ -2122,7 +2122,11 @@
    "open_result": "open_image_viewer",
    "tools": {
     "remove_bg": "viewer_remove_bg",
-    "resize": "resize_option"
+    "resize": "resize_option",
+    "erase": "need",
+    "markup": "need",
+    "comment": "need",
+    "logo_template": "send"
    }
   },
   "prompt_template": "Create an image: {style}{subject}",
@@ -2171,6 +2175,192 @@
      }
     ],
     "source": "the hand route (preprod.ChatGPT.make_in_app with input files)"
+   }
+  },
+  "tools_src": "Jake 2026-10-10 (TEST v3): a 'Resize result' / 'Remove BG result' / 'Erase result' / 'logo template result' is made by RUNNING the app's own tool, on the real source picture, never by describing it. Data only: 'match' = regexes on the asset description that pick the tool (the first choice comes from here, not the planner); 'on_source' = the tool acts on a source picture (opened in the chat where it was made, '{nth}' = its index there); 'typed' = the person types text in this flow; a step with 'need' instead of 'action' is onboarded for the video first (P2 explorer) when this video's playbook has no action for it yet; 'generates' marks the step that starts the generation (never pressed while onboarding); '{shape}', '{target}' come from the person-wording call / the description.",
+  "tools": {
+   "remove_bg": {
+    "label": "Remove background",
+    "match": [
+     "\\bremove[ -]?(?:bg|background)\\b",
+     "\\bbackground (?:removed|removal)\\b",
+     "\\bcut ?out\\b"
+    ],
+    "on_source": true,
+    "typed": false,
+    "steps": [
+     {
+      "action": "open_image_viewer",
+      "params": {
+       "nth": "{nth}"
+      }
+     },
+     {
+      "action": "viewer_remove_bg"
+     }
+    ]
+   },
+   "resize": {
+    "label": "Resize",
+    "match": [
+     "\\bresiz\\w*\\b",
+     "\\b(?:story|portrait|landscape|widescreen|square) (?:9:16|3:4|4:3|16:9|1:1)\\b"
+    ],
+    "on_source": true,
+    "typed": false,
+    "params": {
+     "shape": {
+      "enum_of": "resize_option"
+     }
+    },
+    "steps": [
+     {
+      "action": "open_image_viewer",
+      "params": {
+       "nth": "{nth}"
+      }
+     },
+     {
+      "action": "resize_option",
+      "params": {
+       "shape": "{shape}"
+      }
+     }
+    ]
+   },
+   "erase": {
+    "label": "Erase",
+    "match": [
+     "\\berase[sd]?\\b",
+     "\\berasing\\b"
+    ],
+    "on_source": true,
+    "typed": false,
+    "params": {
+     "target": {
+      "from": "narration"
+     }
+    },
+    "steps": [
+     {
+      "action": "open_image_viewer",
+      "params": {
+       "nth": "{nth}"
+      }
+     },
+     {
+      "action": "viewer_erase"
+     },
+     {
+      "need": "in the image viewer's Erase mode, brush over {target} so it is highlighted as the selection",
+      "per_param": "target"
+     },
+     {
+      "need": "in the image viewer's Erase mode with a selection brushed, the control that submits the erase (it starts a generation: find it, never press it)",
+      "generates": true
+     }
+    ]
+   },
+   "markup": {
+    "label": "Markup",
+    "match": [
+     "\\bmark ?up\\b"
+    ],
+    "on_source": true,
+    "typed": true,
+    "params": {
+     "target": {
+      "from": "narration"
+     }
+    },
+    "steps": [
+     {
+      "action": "open_image_viewer",
+      "params": {
+       "nth": "{nth}"
+      }
+     },
+     {
+      "action": "viewer_markup"
+     },
+     {
+      "need": "in the image viewer's Markup mode, drag a box over {target}",
+      "per_param": "target"
+     },
+     {
+      "need": "in the image viewer's Markup mode after a box is drawn, type the note into the box that opens",
+      "text": true
+     },
+     {
+      "need": "in the image viewer's Markup mode with a note typed, the control that sends the change (it starts a generation: find it, never press it)",
+      "generates": true
+     }
+    ]
+   },
+   "comment": {
+    "label": "Comment",
+    "match": [
+     "\\bcomment (?:pins?|result)\\b",
+     "\\bpins?\\b.{0,40}\\bresult\\b"
+    ],
+    "on_source": true,
+    "typed": true,
+    "params": {
+     "target": {
+      "from": "narration"
+     }
+    },
+    "steps": [
+     {
+      "action": "open_image_viewer",
+      "params": {
+       "nth": "{nth}"
+      }
+     },
+     {
+      "action": "viewer_comment"
+     },
+     {
+      "need": "in the image viewer's Comment mode, click {target} to place a pin; its note box opens",
+      "per_param": "target"
+     },
+     {
+      "need": "in the image viewer's Comment mode, type the note into the open pin's box",
+      "text": true
+     },
+     {
+      "need": "in the image viewer's Comment mode with notes typed, the control that sends the comments (it starts a generation: find it, never press it)",
+      "generates": true
+     }
+    ]
+   },
+   "logo_template": {
+    "label": "Templates → Logo",
+    "match": [
+     "\\blogo[ -]?template\\b",
+     "\\btemplates?\\b.{0,30}\\blogo\\b",
+     "\\blogo\\b.{0,30}\\btemplates?\\b"
+    ],
+    "on_source": false,
+    "typed": true,
+    "start": "open_images_page",
+    "steps": [
+     {
+      "action": "images_templates_tab"
+     },
+     {
+      "need": "on the Images page's Templates tab, click the Logo template card so its prompt / name box opens"
+     },
+     {
+      "action": "paste_prompt",
+      "params": {
+       "text": "{prompt}"
+      }
+     },
+     {
+      "action": "send"
+     }
+    ]
    }
   }
  }

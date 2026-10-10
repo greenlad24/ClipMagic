@@ -684,22 +684,103 @@ GEN_CHECK_SCHEMA = {"type": "object", "additionalProperties": False, "required":
                                    "missing_objects": {"type": "array", "items": {"type": "string"}}}}
 
 
-def gen_check(asset, path, objects):
-    """The generation check: ONE Sonnet vision call per generated asset → {"matches", "missing_objects", "usd"}."""
+FIDELITY_CHECK_SYSTEM = """You check a picture an app made for a video factory. Answer four things:
+1. matches / missing_objects: does it show every object in the list (each clearly recognisable)?
+2. same_subject: when SOURCE picture(s) are attached, is it the SAME subject as the source — the same product (shape,
+   label, colour), the same person, the same scene — with only the requested change? A different bottle, a different
+   person or a re-invented scene is false. (No source: true.)
+3. look_ok: does it read as the LOOK asked for — real: a believable amateur photo (never glossy, studio or AI-looking);
+   impressive: a striking, high-quality showcase picture; faithful: an honest tool result that shows exactly the
+   narrated change, artefacts included, not prettified.
+4. clean: ONE plain picture — false when it contains app/UI chrome (toolbars, buttons, windows, a fake screenshot),
+   captions, labels or titles written on it, arrows, before/after splits or collage panels — unless the description
+   explicitly asks for that (then true). chrome = what you saw ("" if clean).
+Answer with the JSON only."""
+FIDELITY_CHECK_SCHEMA = {"type": "object", "additionalProperties": False,
+                         "required": ["matches", "missing_objects", "same_subject", "subject_diff", "look_ok", "look_why",
+                                      "clean", "chrome"],
+                         "properties": {"matches": {"type": "boolean"},
+                                        "missing_objects": {"type": "array", "items": {"type": "string"}},
+                                        "same_subject": {"type": "boolean"}, "subject_diff": {"type": "string"},
+                                        "look_ok": {"type": "boolean"}, "look_why": {"type": "string"},
+                                        "clean": {"type": "boolean"}, "chrome": {"type": "string"}}}
+# a description that ASKS for chrome / a collage / a caption (then the clean rule does not apply)
+CHROME_ASKED_RX = re.compile(r"\b(?:screenshot|collage|before[ /-]and[ /-]after|before/after|side[- ]by[- ]side|split[- ]screen|"
+                             r"caption(?:ed)?|labell?ed|title card|poster|mock-?up|interface|toolbar|grid of)\b", re.I)
+LOOK_WORDS = {"real": "a real, ordinary amateur phone photo (believable, unpolished)",
+              "impressive": "an impressive showcase picture (striking, high quality)",
+              "faithful": "an honest tool result showing exactly the narrated change, artefacts included"}
+
+
+def _img(path):
     import base64
     data = Path(path).read_bytes()
     mt = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
-    content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(data).decode()}},
-               {"type": "text", "text": f"The narration says this picture ({asset.get('desc', asset['id'])}) shows: "
-                                        + ", ".join(objects) + ". Does it show every one of them?"}]
-    r = llm.messages(config.VISION_MODEL, GEN_CHECK_SYSTEM, content, 1000, effort="low", schema=GEN_CHECK_SCHEMA,
-                     stage="preprod.gencheck", purpose=f"generation check {asset['id']} (Sonnet vision)")
+    return {"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(data).decode()}}
+
+
+def gen_check(asset, path, objects):
+    """The generation check: ONE vision call per generated asset → {"matches", "missing_objects", "usd"}; with
+    asset["source_files"] (the picture(s) it was made FROM) and/or asset["look"] it is the FIDELITY check (Jake
+    2026-10-10, TEST v3: every "resize result" was a new, different bottle and still passed): the source attached,
+    "same subject as the source, with only the requested change?" → same_subject; and the look → look_ok."""
+    srcs = [f for f in (asset.get("source_files") or []) if f and Path(f).exists()][:3]
+    look = asset.get("look")
+    chrome_ok = bool(CHROME_ASKED_RX.search(str(asset.get("desc") or "")))
+    if not srcs and not look:
+        content = [_img(path), {"type": "text", "text": f"The narration says this picture ({asset.get('desc', asset['id'])}) shows: "
+                                                        + ", ".join(objects) + ". Does it show every one of them?"}]
+        r = llm.messages(config.VISION_MODEL, GEN_CHECK_SYSTEM, content, 1000, effort="low", schema=GEN_CHECK_SCHEMA,
+                         stage="preprod.gencheck", purpose=f"generation check {asset['id']} (Sonnet vision)")
+        try:
+            ans = json.loads(r.text)
+        except ValueError:
+            ans = {"matches": False, "missing_objects": list(objects)}
+        return {"matches": bool(ans.get("matches")) and not ans.get("missing_objects"),
+                "missing_objects": [str(x) for x in ans.get("missing_objects") or []], "usd": r["usd"]}
+    content = []
+    for k, f in enumerate(srcs):
+        content += [{"type": "text", "text": f"SOURCE picture {k + 1}:"}, _img(f)]
+    content += [{"type": "text", "text": "THE PICTURE TO CHECK:"}, _img(path),
+                {"type": "text", "text": f"It is: {asset.get('desc', asset['id'])}. It must show: " + ", ".join(objects)
+                 + (f". The requested change from the source: {asset.get('change')}" if asset.get("change") else "")
+                 + (f". LOOK asked for: {look} = {LOOK_WORDS.get(look, look)}." if look else ". No look asked (look_ok true).")
+                 + (" The description asks for UI / captions / a collage (clean true)." if chrome_ok else "")}]
+    r = llm.messages(config.VISION_MODEL, FIDELITY_CHECK_SYSTEM, content, 1200, effort="low", schema=FIDELITY_CHECK_SCHEMA,
+                     stage="preprod.gencheck", purpose=f"fidelity check {asset['id']} (source + look, vision)")
     try:
         ans = json.loads(r.text)
     except ValueError:
-        ans = {"matches": False, "missing_objects": list(objects)}
+        ans = {"matches": False, "missing_objects": list(objects), "same_subject": not srcs, "look_ok": not look}
     return {"matches": bool(ans.get("matches")) and not ans.get("missing_objects"),
-            "missing_objects": [str(x) for x in ans.get("missing_objects") or []], "usd": r["usd"]}
+            "missing_objects": [str(x) for x in ans.get("missing_objects") or []],
+            "same_subject": bool(ans.get("same_subject", True)) if srcs else True,
+            "subject_diff": str(ans.get("subject_diff") or ""),
+            "look_ok": bool(ans.get("look_ok", True)) if look else True, "look_why": str(ans.get("look_why") or ""),
+            "clean": True if chrome_ok else bool(ans.get("clean", True)), "chrome": str(ans.get("chrome") or ""),
+            "usd": r["usd"]}
+
+
+LOCATE_SYSTEM = """Find ONE named thing in the picture and give its bounding box as fractions of the picture's width and
+height (x0, y0 = top-left, x1, y1 = bottom-right, 0-1). Answer with the JSON only."""
+LOCATE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["found", "x0", "y0", "x1", "y1"],
+                 "properties": {"found": {"type": "boolean"}, "x0": {"type": "number"}, "y0": {"type": "number"},
+                                "x1": {"type": "number"}, "y1": {"type": "number"}}}
+
+
+def locate_region(path, target):
+    """Where the target (the napkin, the label) is in a picture → [x0, y0, x1, y1] fractions, or None (one vision
+    call). The data of a markup box / an erase brush beat (onboard.bind_stroke)."""
+    r = llm.messages(config.VISION_MODEL, LOCATE_SYSTEM, [_img(path), {"type": "text", "text": f"Find: {target}"}], 300,
+                     effort="low", schema=LOCATE_SCHEMA, stage="preprod.locate", purpose=f"locate '{str(target)[:40]}'")
+    try:
+        j = json.loads(r.text)
+    except ValueError:
+        return None
+    if not j.get("found"):
+        return None
+    box = [float(j[k]) for k in ("x0", "y0", "x1", "y1")]
+    return box if box[2] > box[0] and box[3] > box[1] else None
 
 
 class Spacer:
@@ -1701,6 +1782,12 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     check()
 
     # 3. THE PLAN: one Opus plan call + the plan check (re-asks) + one Sonnet overlay call
+    # request.json "reuse_plan": the plan already paid for is kept as is — no plan call on a re-run (Jake 2026-10-10:
+    # "restart this process but without spending more money on the plan")
+    if "plan" in steps and job.request.get("reuse_plan") and (out / "plan.json").exists() \
+            and (json.loads((out / "plan.json").read_text()).get("plan") or {}).get("answer"):
+        steps = [s for s in steps if s != "plan"]
+        say("plan: reused as requested (reuse_plan) — no plan call")
     if "plan" in steps:
         video = job_video(job, ranges)
         sites = job.sites or [{"url": app.site, "note": ""}]
@@ -1804,11 +1891,13 @@ def make_ctx(job, out, app, readiness, assets, say=log, progress=None, cancelled
             time.sleep(w)
         genledger.record(pid, Path(out).parent.name, a.get("id"), None, "adapter make_in_app")
         return gen(a, dst, fs)
-    return onboard.Ctx(out, pid, site, pb, transport_factory=transport, readiness=readiness,
+    ctx = onboard.Ctx(out, pid, site, pb, transport_factory=transport, readiness=readiness,
                        in_app=in_app if callable(gen) else None, producer=getattr(app, "use_producer", True),
                        status=lambda m: _status(progress, m), cancelled=cancelled,
                        image_chat=chats[-1] if chats else None, asset_files=files, log=say, allowed_chats=chats,
                        kit_app=pid, kit_capture=lambda a, dst, url: onboard.capture_kit_live(a, dst, url, sc.get("profile")))
+    ctx.locate = locate_region                       # a markup box / erase brush region: vision on the picture
+    return ctx
 
 
 def app_id(app):

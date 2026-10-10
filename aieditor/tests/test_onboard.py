@@ -121,6 +121,8 @@ def scripted_llm(turns, usd=0.05):
         if "plain-words" in str(kw.get("purpose")):
             return Reply(text=json.dumps({"prompt": "Replace the background of this photo with a rustic kitchen",
                                           "expect": "the same bottle photo, now in a rustic kitchen"}), usd=0.01)
+        if "onboarding" not in str(kw.get("purpose")):     # the P3 wording / source / prompt calls: neutral
+            return Reply(text="{}", usd=0.001)
         return Reply(text=json.dumps(seq.pop(0) if seq else {"do": "give_up", "note": "no more turns"}), usd=usd)
     f.calls = calls
     return f

@@ -29,6 +29,18 @@ the account lock the dispatcher holds, in fresh chats only):
      recipes.produce_photo / produce_edit / produce_edit:<tool>) — the shared skill playbook is only read. The next
      asset of the job tries the learned recipe first.
 
+FIDELITY (Jake 2026-10-10, TEST v3 — every "resize result" was a new, different bottle, the planner's internal
+description was typed into the composer, and the vision check passed them all):
+  - a tool result ("the result of the app's <tool> on <source>") runs the TOOL: the playbook's produce.tools picks it
+    from the description (data, not the planner); the route opens the source picture in the chat where this job made
+    it and runs the tool's actions; a tool step this video's playbook lacks is onboarded first (P2 explorer); only
+    when the tool route fails every try does it fall back to a described edit (logged);
+  - continuity: a result made from a source is vision-checked WITH the source attached; "different_subject" is its
+    own failure class whose next route is the edit / tool on the source, never a fresh generation;
+  - the look (real | impressive | faithful) is scored by the same check; "wrong_look" rewords the next try (an
+    on-screen prompt stays verbatim);
+  - a picture that is not a picture the video shows (a camera move) never reaches the app (onboard.not_a_picture).
+
 Nothing app-specific lives in this file: selectors, roles, progress/limit/refusal texts and the hint recipes come from
 the app's playbook ("produce" section), so the same agent runs Claude, Gemini or Canva with a different playbook.
 
@@ -49,12 +61,17 @@ from pathlib import Path
 from . import config, genledger, llm, playbook, skill
 
 CLASSES = ("text_answer", "refusal", "limit_wall", "still_generating", "upload_missing", "wrong_mode", "mismatch",
-           "no_progress", "ui_step_failed", "logged_out")
+           "no_progress", "ui_step_failed", "logged_out", "different_subject", "wrong_look", "not_clean")
 CLASS_WORDS = {"text_answer": "answered in text", "refusal": "refused the request",
                "limit_wall": "showed a limit / wall message", "still_generating": "was still generating",
                "upload_missing": "did not attach the upload", "wrong_mode": "was not in the right mode",
                "mismatch": "made a picture that does not match", "no_progress": "showed no image and no progress",
-               "ui_step_failed": "a step did not land", "logged_out": "is not logged in (the session, not a limit)"}
+               "ui_step_failed": "a step did not land", "logged_out": "is not logged in (the session, not a limit)",
+               "different_subject": "made a different subject than its source picture",
+               "wrong_look": "made a picture with the wrong look",
+               "not_clean": "put UI chrome / captions / a collage into the picture"}
+CLEAN_ASK = "One single plain picture: no text, captions, labels, arrows, app interface, before/after split or collage."
+FIDELITY_V = 2            # a stored row checked for look + continuity + no UI chrome (reuse needs it)
 DEFAULT_REFUSAL = [r"I can(?:'|’)t (?:help|create|make|generate)", r"I(?:'|’)m (?:not able|unable) to", r"content polic"]
 DEFAULT_LIMIT = [r"\blimit\b.{0,40}\b(?:reached|hit)\b", r"\b(?:reached|hit)\b.{0,30}\blimit\b", r"Too many requests"]
 CHAT_RX = re.compile(r"/c/[\w-]+")
@@ -102,6 +119,8 @@ class Producer:
         self.app_name = ctx.pb.get("name") or self.spec.get("name") or ctx.app
         self.chats = []
         self.job = Path(ctx.out).parent.name
+        self.cur = {}                                  # this asset: source, tool, look, wording
+        self.tool_tries = int(r.get("tool_tries", 2))
 
     # ── small helpers ──
     def _log(self, msg):
@@ -128,6 +147,95 @@ class Producer:
 
     def roles(self):
         return self.spec.get("roles") or {}
+
+    # ── the app's own tools (data: playbook produce.tools) ──
+    def tools(self):
+        return self.spec.get("tools") or {}
+
+    def tool_spec(self, tool):
+        return copy.deepcopy(self.tools().get(tool) or {})
+
+    def tool_of(self, desc):
+        """The app tool an asset is the result of, from the playbook's data (first match wins), or None."""
+        d = str(desc or "")
+        for k, t in self.tools().items():
+            for rx in t.get("match") or []:
+                try:
+                    if re.search(rx, d, re.I):
+                        return k
+                except re.error:
+                    continue
+        return None
+
+    def ensure_tool_action(self, tool, i, st, params):
+        """A tool step named by its NEED (not yet an action of this video's playbook) → onboarded once (P2 explorer,
+        on the source's chat) and remembered in this video's playbook (produce.tool_actions). → (action id, why)."""
+        from . import onboard
+        slot = f"{tool}.{i}" + (f".{_slug(params.get(st['per_param']))}" if st.get("per_param") else "")
+        known = ((self.ctx.pb.get("produce") or {}).get("tool_actions") or {}).get(slot)
+        if known and known in (self.ctx.pb.get("actions") or {}):
+            return known, None
+        need = playbook._fill(st["need"], {k: v for k, v in params.items() if isinstance(v, str)})
+        if st.get("text"):
+            need += " (the note text is DATA given at record time: param 'text')"
+        chat = (self.cur.get("source") or {}).get("chat")
+        old = self.ctx.image_chat
+        if chat:
+            self.ctx.image_chat = chat
+            self.ctx.allowed_chats.add(chat)
+        self._log(f"producer: the {tool} tool needs a step this video's playbook does not have yet — onboarding it: {need[:120]}")
+        try:
+            row = onboard.onboard_action(self.ctx, need, {"text": params.get("prompt")} if st.get("text") else None,
+                                         generates=False, generating=bool(st.get("generates")))
+        except Exception as e:  # noqa: BLE001 — BudgetSpent / a broken explorer: the tool route is not available
+            row = {"status": "failed", "why": str(e)}
+        finally:
+            self.ctx.image_chat = old
+        if row.get("status") != "proven":
+            return None, f"step '{need[:80]}' could not be onboarded: {row.get('why') or row.get('status')}"
+        aid = row["action_id"]
+        self.ctx.pb.setdefault("produce", {}).setdefault("tool_actions", {})[slot] = aid
+        self.ctx.pb = onboard.save_job_playbook(self.ctx.pb, self.ctx.out, self.ctx.app)
+        return aid, None
+
+    def tool_route(self, tool, params):
+        """The route that RUNS the app's tool (on the source picture when the tool acts on one). → (route, why)."""
+        t = self.tool_spec(tool)
+        if not t:
+            return None, f"no tool '{tool}' in the playbook"
+        on_source = t.get("on_source", True)
+        src = self.cur.get("source") or {}
+        if on_source and not src.get("chat"):
+            return None, "the source picture has no chat this job made it in (nothing to open it in)"
+        steps = []
+        for i, st in enumerate(t.get("steps") or []):
+            if st.get("action"):
+                steps.append({"action": st["action"], **({"params": dict(st["params"])} if st.get("params") else {})})
+                continue
+            aid, why = self.ensure_tool_action(tool, i, st, params)
+            if not aid:
+                return None, why
+            steps.append({"action": aid, **({"params": {"text": "{prompt}"}} if st.get("text") else {})})
+        acts = self.ctx.pb.get("actions") or {}
+        if steps and not any(self._is_gen(s_) for s_ in steps):
+            return None, f"the {tool} tool's steps start no generation"
+        for s_ in steps:
+            if s_.get("action") and s_["action"] not in acts:
+                return None, f"the {tool} tool's step '{s_['action']}' is not in this video's playbook"
+        return {"name": f"the app's {t.get('label') or tool} tool" + (" on the source picture" if on_source else ""),
+                "start": "source_chat" if on_source else (t.get("start") or "home"), "steps": steps, "via": "tool",
+                "key": f"produce_edit:{tool}", "tool": tool, "no_prompt": not t.get("typed")}, None
+
+    def described_edit(self, why):
+        """The last resort for a tool result: the source uploaded + the change asked in words (logged)."""
+        ro = self.roles()
+        steps = ([{"action": ro["upload"], "params": {"files": "{files}"}}] if ro.get("upload") else []) + \
+            ([{"action": ro["prompt"], "params": {"text": "{prompt}"}}] if ro.get("prompt") else []) + \
+            ([{"action": ro["generate"]}] if ro.get("generate") else [])
+        r = {"name": "a described edit (the tool route failed)", "start": "home", "steps": steps, "via": "fallback",
+             "key": "produce_edit", "prompt": self.cur.get("as_words") or self.cur.get("prompt") or "", "described": True}
+        self._log(f"producer: {why} — falling back to a described edit (the source uploaded + the change in words)")
+        return r
 
     # ── routes ──
     def recipe_key(self, inputs, tool=None):
@@ -167,6 +275,22 @@ class Producer:
                  "via": "fallback", "key": key}
         rephrase = {**copy.deepcopy(img_mode if mode else plain), "name": "a rephrased, visible-only prompt",
                     "rephrase": True}
+        if cls in ("different_subject", "wrong_look", "not_clean") or (inputs and cls == "mismatch" and (last or {}).get("via") == "tool"):
+            # never a fresh generation for a picture made FROM a source: the tool / the edit on the source again
+            src = self.cur.get("source") or {}
+            if self.cur.get("tool") and src.get("chat"):
+                tr, _ = self.tool_route(self.cur["tool"], self.cur.get("params") or {})
+                if tr:
+                    out.append({**tr, "name": tr["name"] + " (again)", "again": 1})
+            if inputs:
+                edit = {"name": "the source uploaded + the change asked (same subject)", "start": "home",
+                        "steps": self._gen_steps(True), "via": "fallback", "key": key, "keep_subject": True}
+                out.append(edit)
+                out.append({**edit, "name": "the source in the image mode + the change asked", "steps": mode + self._gen_steps(True)})
+            elif cls in ("wrong_look", "not_clean"):
+                out += ([img_mode] if mode else []) + [plain]
+            return [dict(r, look_boost=1) if cls == "wrong_look" else dict(r, clean_boost=1) if cls == "not_clean" else r
+                    for r in out if r]
         if cls == "mismatch" and last:
             again = copy.deepcopy(last)
             again.update(name=f"{last.get('name')} + the missing objects named", via="fallback", missing=missing or [])
@@ -188,12 +312,27 @@ class Producer:
 
     def _sig(self, route):
         return json.dumps([route.get("start"), route.get("steps"), route.get("prompt"), route.get("rephrase"),
-                           route.get("prompt_template"), sorted(route.get("missing") or [])], sort_keys=True, default=str)
+                           route.get("prompt_template"), sorted(route.get("missing") or []), route.get("again"),
+                           route.get("look_boost"), route.get("keep_subject"), route.get("clean_boost")], sort_keys=True, default=str)
 
     # ── prompts ──
     def make_prompt(self, route, subject, style, inputs, missing):
-        if route.get("prompt"):
+        from . import onboard
+        if route.get("no_prompt"):
+            return ""                                  # the tool's click: no text at all
+        if route.get("prompt") is not None and route.get("prompt") != "" and (self.cur.get("verbatim") or not route.get("look_boost")):
             p = route["prompt"]
+        elif route.get("look_boost") and not self.cur.get("verbatim"):
+            base = self.cur.get("base") or route.get("prompt") or subject
+            look = self.cur.get("look") or "real"
+            if self.cur.get("new_photo") and not route.get("prompt"):
+                tpl = self.spec.get("prompt_template") or "{style}{subject}"
+                p = tpl.replace("{style}", onboard.look_style(look, boost=1)).replace("{subject}", onboard.with_look(subject, look, cues=False))
+            else:
+                p = onboard.with_look(base, look, boost=1)
+        elif route.get("keep_subject") and inputs:
+            p = (self.cur.get("as_words") or self.cur.get("prompt") or subject or "").strip()
+            p = f"Keep the exact same subject as in the attached picture (same object, same label, same scene); change only this: {p}"
         else:
             tpl = route.get("prompt_template") or (self.spec.get("edit_template") if inputs else None) \
                 or self.spec.get("prompt_template") or "{style}{subject}"
@@ -202,6 +341,8 @@ class Producer:
         miss = [m for m in (missing or route.get("missing") or []) if m]
         if miss:
             p = p.rstrip(". ") + ". It must clearly show " + ", ".join(miss) + "."
+        if route.get("clean_boost") and not self.cur.get("verbatim"):
+            p = p.rstrip(". ") + ". " + CLEAN_ASK
         return p.strip()
 
     # ── one try ──
@@ -210,6 +351,8 @@ class Producer:
         acts = self.ctx.pb.get("actions") or {}
         if st == "result_chat" and self.chats:
             return self.chats[-1]
+        if st == "source_chat" and (self.cur.get("source") or {}).get("chat"):
+            return self.cur["source"]["chat"]
         if st in acts and acts[st].get("kind") == "goto":
             return acts[st]["url"]
         return self.ctx.pb["start_state"]["url"]
@@ -265,7 +408,9 @@ class Producer:
                 d = wd / "upload" / Path(f).name
                 shutil.copyfile(f, d)
                 files.append(f"/w/upload/{d.name}")
-            params = {"prompt": prompt, "files": files}
+            src = self.cur.get("source") or {}
+            params = {**{k: v for k, v in (self.cur.get("params") or {}).items()}, "prompt": prompt, "files": files,
+                      "nth": int(src.get("nth") or 0)}
             if not route.get("wait_only"):
                 done = set()
                 for st in route.get("steps") or []:
@@ -312,7 +457,7 @@ class Producer:
             if aid not in (pb.get("actions") or {}):
                 return {"class": "ui_step_failed", "why": f"no action '{aid}' in this video's playbook"}
             a = pb["actions"][aid]
-            p = {k: (params["prompt"] if v == "{prompt}" else params["files"] if v == "{files}" else
+            p = {k: (params[v[1:-1]] if isinstance(v, str) and re.fullmatch(r"\{\w+\}", v) and v[1:-1] in params else
                      playbook._fill(v, params) if isinstance(v, str) else v) for k, v in (st.get("params") or {}).items()}
             for r in a.get("requires", []):
                 if r not in done and not any(x.get("action") == r for x in [st]):
@@ -406,7 +551,7 @@ class Producer:
         keep.mkdir(parents=True, exist_ok=True)
         dst = keep / f"{aid}-try{n}.png"
         shutil.copyfile(src, dst)
-        return {"file": str(dst)}
+        return {"file": str(dst), "nth": n1 - 1}
 
     # ── the agent: diagnose + pick the next route ──
     PLAN_SYSTEM = """You are the pre-production producer of an automated video factory. You make ONE picture inside a web
@@ -415,7 +560,11 @@ diagnosis, the reply text and the CURRENT screen, then choose the next ROUTE you
 playbook actions (ids), its produce roles, what you see on screen (raw acts with plain CSS selectors from the elements,
 or text=<exact label>). Ideas, not rules: the app's image mode, its dedicated images page, a rephrased prompt
 (visible-only, concrete, no real people, no brands), uploading the input and asking for an edit, the app's own tool on
-the prior result (start "result_chat"), splitting a composite into steps, asking plainly in a fresh chat. Never repeat a
+the prior result (start "result_chat") or on the SOURCE picture where it was made (start "source_chat": the TOOLS listed
+are first-class options), splitting a composite into steps, asking plainly in a fresh chat. A picture made FROM a source
+must keep the source's subject: after "different_subject" choose the tool / an edit on the source (start
+"source_chat", or the source uploaded) — NEVER a fresh generation. Keep every word he narrates; never type internal
+words ("result", "in-app", ids). Never repeat a
 route that already failed the same way. Never: delete, buy, upgrade, billing, publish, share, invite, log out, or open an
 existing chat. Exactly ONE step must start the generation (the playbook's generating action, or Enter in the composer),
 and it is the last step. Use "{prompt}" as the text of the prompt step. Answer with the JSON only."""
@@ -455,21 +604,33 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
             kit = _strip_kit(json.loads(kp.read_text())) if kp.exists() else {}
         except (OSError, ValueError):
             kit = {}
+        tools = {k: {"label": t.get("label"), "on_source": t.get("on_source", True), "typed": t.get("typed"),
+                     "steps": t.get("steps")} for k, t in self.tools().items()}
         static = (f"APP: {self.app_name}. GOAL: {goal}\nTHIS VIDEO'S PLAYBOOK:\n{onboard._pb_summary(self.ctx.pb)}\n"
-                  f"PRODUCE ROLES: {json.dumps(self.roles())}\nUI KIT (summary): {json.dumps(kit)[:2500]}\n"
+                  f"PRODUCE ROLES: {json.dumps(self.roles())}\nTHE APP'S TOOLS (first-class routes; the tool actions "
+                  f"this video has: {json.dumps((self.ctx.pb.get('produce') or {}).get('tool_actions') or {})}): "
+                  f"{json.dumps(tools)[:2500]}\nUI KIT (summary): {json.dumps(kit)[:2500]}\n"
                   "Step shape: {\"action\": \"<playbook id>\", \"params\": {...}, \"act\": {}} or "
                   "{\"action\": \"\", \"params\": {}, \"act\": {\"type\": \"click|type|key|hover|scroll\", \"selector\"|\"target\": ..., \"text\"|\"key\": ...}}. "
-                  "start: home | result_chat | <a goto action id>.")
-        dyn = [{"type": "text", "text": f"FAILED TRY: {json.dumps(diag)[:1500]}\nLAST ROUTE: {json.dumps(_route_view(last))[:1500]}\n"
+                  "start: home | result_chat | source_chat | <a goto action id>.")
+        src = self.cur.get("source") or {}
+        dyn = [{"type": "text", "text": f"FAILURE CLASS: {diag.get('class')}\nSOURCE picture: "
+                + (f"'{src.get('id')}' (" + ("start source_chat to open it where it was made" if src.get("chat") else "upload it")
+                   + ")" if src.get("id") else "none")
+                + (f"; the app tool for this picture: {self.cur.get('tool')}" if self.cur.get("tool") else "")
+                + f"\nFAILED TRY: {json.dumps(diag)[:1500]}\nLAST ROUTE: {json.dumps(_route_view(last))[:1500]}\n"
                                         f"ROUTES TRIED: {json.dumps(tried)[:2500]}\n"
                                         f"SCREEN url={(obs or {}).get('url')}"}]
         if (obs or {}).get("items"):
             dyn.append({"type": "text", "text": "ELEMENTS: " + json.dumps([{k: i.get(k) for k in ("ref", "tag", "text", "box")}
                                                                           for i in obs["items"][:100]])[:7000]})
         from .onboard import _shot_block
+        sb = _shot_block(src.get("file")) if src.get("file") else None
+        if sb:
+            dyn += [{"type": "text", "text": "THE SOURCE PICTURE (its subject must stay):"}, sb]
         img = _shot_block((obs or {}).get("shot"))
         if img:
-            dyn.append(img)
+            dyn += [{"type": "text", "text": "THE CURRENT SCREEN:"}, img]
         msgs = [{"role": "user", "content": [{"type": "text", "text": static, "cache_control": {"type": "ephemeral"}}, *dyn]}]
         try:
             self.ctx.budget.need(llm.estimate(self.model, self.PLAN_SYSTEM, msgs, 3000))
@@ -525,8 +686,14 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
                     if re.search(rf"\b{re.escape(w)}\b", lab, re.I):
                         return f"forbidden word {w!r}"
         st = route.get("start") or "home"
-        if st not in ("home", "result_chat") and (acts.get(st) or {}).get("kind") != "goto":
-            return f"start {st!r} is not home / result_chat / a goto action"
+        if st not in ("home", "result_chat", "source_chat") and (acts.get(st) or {}).get("kind") != "goto":
+            return f"start {st!r} is not home / result_chat / source_chat / a goto action"
+        if st == "source_chat" and not (self.cur.get("source") or {}).get("chat"):
+            return "no source chat to start in"
+        if self.cur.get("needs_source") and st not in ("source_chat", "result_chat") and not any(
+                s_.get("action") == self.roles().get("upload") or (s_.get("act") or {}).get("type") == "upload"
+                for s_ in route["steps"]):
+            return "a picture made from a source must start on the source or upload it (never a fresh generation)"
         return None
 
     def learn(self, route, aid, n, diag_hist):
@@ -545,19 +712,51 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
         return key
 
     # ── the loop ──
-    def produce(self, aid, desc, dst, inputs=(), prompt=None, objects=None, subject=None, style=""):
+    def produce(self, aid, desc, dst, inputs=(), prompt=None, objects=None, subject=None, style="", tool=None,
+                tool_params=None, source=None, look=None, verbatim=False, as_words=None, base=None):
+        """→ an assets.json row. tool = the app tool this asset is the result of (tool_of), source = {id, file, chat,
+        nth} of the picture it is made from, look = real | impressive | faithful, verbatim = the prompt is his on-screen
+        text (never reworded), as_words = the change in words (the described-edit fallback only)."""
+        from . import onboard
         ctx = self.ctx
         inputs = [str(f) for f in inputs or [] if f]
-        key = self.recipe_key(inputs)
+        why_not = onboard.not_a_picture(desc)
+        if why_not:                                    # the guard before ANY generation
+            return {"id": aid, "kind": "app_generation", "desc": desc, "status": "not_a_picture", "file": None,
+                    "source": None, "attempts": [why_not], "checks": [], "tries": [], "why": why_not}
+        params = dict(tool_params or {})
+        if prompt:
+            params.setdefault("prompt", prompt)
+        self.cur = {"needs_source": bool(inputs), "source": dict(source or {}), "tool": tool, "params": params, "look": look, "verbatim": bool(verbatim),
+                    "as_words": as_words, "prompt": prompt, "base": base or prompt,
+                    "new_photo": not inputs and not tool and not prompt}
+        if self.cur["source"].get("chat"):
+            ctx.allowed_chats.add(self.cur["source"]["chat"])
+        key = self.recipe_key(inputs, tool)
         subject = subject or desc
         row = {"id": aid, "kind": "app_generation", "desc": desc, "status": "needs_asset", "file": None, "source": None,
-               "attempts": [], "checks": [], "tries": [], "prompt": prompt or subject, "made_from": [], "for": "R14 P3",
-               "producer": "producer agent (aieditor/producer.py)"}
+               "attempts": [], "checks": [], "tries": [], "prompt": prompt if prompt is not None else subject, "made_from": [],
+               "for": "R14 P3", "producer": "producer agent (aieditor/producer.py)", "look": look,
+               **({"tool": tool} if tool else {})}
         t0 = self.clock()
         deadline = t0 + self.time_budget
-        route = self.first_route(key)
-        if prompt:
-            route["prompt"] = prompt
+        tool_n, tool_fail = 0, None
+        route = None
+        if tool:
+            # the FIRST choice for a tool result comes from data: the learned tool recipe, else the playbook's tool
+            learned = (ctx.pb.get("recipes") or {}).get(key)
+            if learned and (not self.tool_spec(tool).get("on_source", True) or self.cur["source"].get("chat")):
+                route = {**copy.deepcopy(learned), "via": "learned", "key": key, "tool": tool,
+                         "no_prompt": not self.tool_spec(tool).get("typed")}
+            else:
+                route, tool_fail = self.tool_route(tool, params)
+            if route is None:
+                route = self.described_edit(f"the {tool} tool route is not available ({tool_fail})") if inputs else None
+                row["attempts"].append(f"tool route not available: {tool_fail}"[:300])
+        if route is None:
+            route = self.first_route(key if not tool else self.recipe_key(inputs))
+            if prompt:
+                route["prompt"] = prompt
         tried, seen, diag_hist, missing, last_file = [], set(), [], [], None
         tally = getattr(ctx, "tally", None) or (0, 1)
         for n in range(1, self.max_tries + 1):
@@ -569,29 +768,56 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
             p = self.make_prompt(route, subject, style, inputs, missing)
             use = [last_file] if route.get("use_result") and last_file else inputs
             self._status(f"Making assets: {tally[0]}/{tally[1]} ready ({aid}: try {n}, {route.get('name')})")
+            if route.get("via") == "tool":
+                tool_n += 1
             res = self.attempt(route, aid, n, p, use, deadline)
             diag = res.get("diag")
             if res.get("file"):
-                chk = ctx.check({"id": aid, "desc": desc}, res["file"], objects or [desc])
+                ask = {"id": aid, "desc": desc, **({"look": look} if look else {}),
+                       **({"source_files": inputs[:3], "change": as_words or prompt or desc} if inputs else {})}
+                chk = ctx.check(ask, res["file"], objects or [desc])
                 ctx.budget.add(chk.get("usd"))
+                same = chk.get("same_subject", True) is not False
+                look_ok = chk.get("look_ok", True) is not False
+                clean = chk.get("clean", True) is not False
                 row["checks"].append({"try": n, "route": route.get("name"), "matches": chk.get("matches"),
-                                      "missing": chk.get("missing_objects")})
+                                      "missing": chk.get("missing_objects"),
+                                      **({"same_subject": same, "subject_diff": chk.get("subject_diff")} if inputs else {}),
+                                      **({"look_ok": look_ok, "look_why": chk.get("look_why")} if look else {}),
+                                      "clean": clean, **({"chrome": chk.get("chrome")} if not clean else {})})
                 last_file = res["file"]
-                if chk.get("matches"):
+                if chk.get("matches") and same and look_ok and clean:
                     Path(dst).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(res["file"], dst)
                     k = self.learn(route, aid, n, diag_hist)
+                    row["fidelity"] = {"v": FIDELITY_V, "look": look, "look_ok": True, "clean": True,
+                                       **({"same_subject": True} if inputs else {})}
                     row.update(status="ready", file=str(dst), source={
                         "type": "in-app generation (off camera, producer agent)", "app": ctx.app, "route": route.get("name"),
-                        "via": route.get("via"), "recipe": k, "prompt": p, "try": n, "chat_url": res.get("chat_url")})
+                        "via": route.get("via"), "recipe": k, "prompt": p, "try": n, "chat_url": res.get("chat_url"),
+                        "nth": res.get("nth"), **({"tool": tool} if tool else {}),
+                        **({"made_from_chat": self.cur["source"].get("chat")} if self.cur["source"].get("chat") else {}),
+                        **({"fallback": "described edit"} if route.get("described") else {})})
                     row["tries"].append({"try": n, "route": route.get("name"), "via": route.get("via"), "ok": True,
                                          "chat_url": res.get("chat_url")})
                     self._log(f"{aid} try {n}: made in {self.app_name} via {route.get('name')} — the picture matches"
-                              f" (learned as {k} for this video)")
+                              + (" (same subject as its source)" if inputs else "") + (f", {look} look" if look else "")
+                              + f" (learned as {k} for this video)")
                     return row
-                missing = [str(m) for m in chk.get("missing_objects") or []]
-                diag = {"class": "mismatch", "why": "the vision check: missing " + ", ".join(missing or ["the description"]),
-                        "missing": missing}
+                if not same:
+                    diag = {"class": "different_subject", "why": "the vision check against the source: "
+                            + (chk.get("subject_diff") or "not the same subject"), "evidence": chk.get("subject_diff") or ""}
+                    missing = []
+                elif not clean:
+                    diag = {"class": "not_clean", "why": "the vision check: " + (chk.get("chrome") or "UI chrome / captions / a collage"),
+                            "evidence": chk.get("chrome") or ""}
+                elif not chk.get("matches"):
+                    missing = [str(m) for m in chk.get("missing_objects") or []]
+                    diag = {"class": "mismatch", "why": "the vision check: missing " + ", ".join(missing or ["the description"]),
+                            "missing": missing}
+                else:
+                    diag = {"class": "wrong_look", "why": f"the vision check: not a {look} look — {chk.get('look_why') or ''}".strip(" —"),
+                            "evidence": chk.get("look_why") or ""}
             diag = diag or {"class": "no_progress", "why": "nothing came back"}
             diag_hist.append(diag)
             row["tries"].append({"try": n, "route": route.get("name"), "via": route.get("via"), "ok": False,
@@ -613,22 +839,32 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
                 raise genledger.QuotaWait(ctx.app, until, f"{self.app_name} showed a limit / wall message")
             tried.append({"route": route.get("name"), "start": route.get("start"), "failure": diag["class"],
                           "why": diag.get("why"), "prompt": p[:200]})
+            nxt = None
             if diag["class"] == "still_generating" and not route.get("wait_only") and res.get("chat_url"):
                 nxt = {**route, "name": f"{route.get('name')} — waiting longer", "wait_only": True}
-            else:
-                goal = (f"a picture matching: {desc}" + (f" (made from {len(inputs)} input file(s), uploaded)" if inputs else "")
-                        + f". Prompt used: {p[:300]}")
+            elif tool and route.get("via") in ("tool", "learned") and route.get("key") == key:
+                # the tool route again (a step that did not land, a different subject) — then the described edit
+                if tool_n < self.tool_tries:
+                    tr, why_t = self.tool_route(tool, params)
+                    if tr:
+                        nxt = {**tr, "name": tr["name"] + " (again)", "again": tool_n}
+                if nxt is None and inputs:
+                    nxt = self.described_edit(f"the {tool} tool route failed {tool_n}x ({diag['class']})")
+                    row["attempts"].append(f"the {tool} tool route failed {tool_n}x — fell back to a described edit")
+            if nxt is None and diag["class"] not in ("wrong_look", "not_clean"):       # a wrong look: the reworded try first (fallback)
+                goal = (f"a picture matching: {desc}" + (f" (made from {len(inputs)} input file(s): keep their subject)" if inputs else "")
+                        + (f"; look: {look}" if look else "") + f". Prompt used: {p[:300]}")
                 nxt = self.plan_next(goal, diag, tried, route, res.get("obs"), key)
                 if nxt and nxt.get("give_up"):
                     row["attempts"].append(f"the agent gave up: {nxt.get('diagnosis')}"[:300])
                     break
                 if nxt and self._sig(nxt) in seen:
                     nxt = None
-                if nxt is None:
-                    nxt = next((r for r in self.fallback_routes(diag["class"], key, bool(inputs), route, missing)
-                                if self._sig(r) not in seen), None)
-                if nxt and route.get("wait_only"):
-                    nxt.pop("wait_only", None)
+            if nxt is None:
+                nxt = next((r for r in self.fallback_routes(diag["class"], key, bool(inputs), route, missing)
+                            if self._sig(r) not in seen), None)
+            if nxt and route.get("wait_only") and nxt is not route:
+                nxt.pop("wait_only", None)
             if nxt is None:
                 row["attempts"].append("no untried route left")
                 self._log(f"{aid} try {n}: {self.app_name} {CLASS_WORDS[diag['class']]} — no untried route left")
@@ -645,6 +881,10 @@ and it is the last step. Use "{prompt}" as the text of the prompt step. Answer w
 def _wall_class(w):
     """A recorder wall → logged_out (a login page: the session, not the account's limit) or limit_wall."""
     return "logged_out" if re.search(r"\blog ?in\b|sign ?up|'kind': 'login'|\"kind\": \"login\"", str(w), re.I) else "limit_wall"
+
+
+def _slug(v):
+    return re.sub(r"[^a-z0-9]+", "_", str(v or "").lower()).strip("_")[:30]
 
 
 def _route_view(r):
