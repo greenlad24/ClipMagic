@@ -329,6 +329,7 @@ class RecordingPreflight:
         # "agent": the rehearsal agent (aieditor/rehearse.py) performs + proves the beats itself, so the preflight checks
         # every START STATE only (open, set dressing, first frame, the drift repair) — never the beats twice
         self.rehearsal = rehearsal or "playbook"
+        self.progress = None                   # progress(msg) — the Lab's status line (run 20: 30 silent minutes)
 
     def session(self, app, kind, fresh=False):
         key = (app, kind)
@@ -420,9 +421,14 @@ class RecordingPreflight:
                 continue
             pb = self.playbooks.get(seg.get("app"))
             k = _start_key(seg, pb)
-            if k in first and not first[k]["ok"] and first[k]["stage"] == "first_frame":
-                results[i] = {**first[k], "inherited": first[k].get("seg")}     # the same start state: the same verdict
+            # the same start state: the same verdict. In AGENT mode only the start state is checked, so an OK verdict is
+            # shared too — one check per distinct opening screen, not one per screencast (run 20: 33 screencasts on the
+            # same ChatGPT home took ~30 min of first-frame checks before the agent could start)
+            if k in first and first[k]["stage"] == "first_frame" and (not first[k]["ok"] or self.rehearsal == "agent"):
+                results[i] = {**first[k], "inherited": first[k].get("seg")}
                 continue
+            if self.progress:
+                self.progress(f"Checking opening screens: {len(first) + 1} (screencast {i + 1} of {len(self.segs)})")
             r = self.check_segment(i, seg, pb)
             r["seg"] = i
             first.setdefault(k, r)
@@ -435,10 +441,18 @@ class RecordingPreflight:
             rep = self.repair(cl, results)
             repairs.append(rep)
             if rep.get("accepted"):
+                again = {}
                 for j in cl["segments"]:
                     seg = self.segs[j]
-                    results[j] = {**self.check_segment(j, seg, self.playbooks.get(seg.get("app"))), "seg": j,
-                                  "after_repair": rep["verdict"]}
+                    pbj = self.playbooks.get(seg.get("app"))
+                    kj = _start_key(seg, pbj)
+                    if self.rehearsal == "agent" and kj in again:      # agent mode: one recheck per opening screen
+                        results[j] = {**again[kj], "seg": j, "inherited": again[kj].get("seg")}
+                        continue
+                    if self.progress:
+                        self.progress(f"Checking opening screens after the repair: screencast {j + 1}")
+                    results[j] = {**self.check_segment(j, seg, pbj), "seg": j, "after_repair": rep["verdict"]}
+                    again.setdefault(kj, results[j])
         failed = {i: r for i, r in results.items() if not r["ok"]}
         rep_doc = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "took_s": round(time.time() - t0, 1),
                    "segments": {str(i): {k: v for k, v in r.items() if k not in ("state", "start_state")} for i, r in results.items()},

@@ -429,6 +429,7 @@ def run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scou
         # only the screencasts about to be recorded are rehearsed (the others are recorded already / held)
         keep = set(todo)
         pf.only = keep
+        pf.progress = lambda m: progress(m, 0.1)
         rep = pf.run()                      # its browsers stay open: the recorder takes them over (new_session)
         rep["failed"] = [i for i in rep.get("failed", []) if i in keep]
         rep["systematic_unrepaired"] = [i for i in rep.get("systematic_unrepaired", []) if i in keep]

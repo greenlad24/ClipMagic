@@ -478,6 +478,19 @@ rep = pf.run()
 check(rep["segments"]["0"]["ok"] and rep["segments"]["0"]["stage"] == "first_frame"
       and not any(a.get("beat_id") for _, a in pp.acts), f"agent mode: the preflight proves the start state only: {rep['segments']}")
 
+# run 20: 33 screencasts on the same opening screen → ONE check in agent mode, the rest share its verdict; progress shown
+wp2 = TMP / "pf2"
+pp2 = Page(wp2)
+_checked, _prog = [], []
+pf2 = preflight.RecordingPreflight(wp2, [copy.deepcopy(SEG) for _ in range(5)], {"chatgpt": copy.deepcopy(PBX)}, assets(),
+                                   WORDS, lambda *a: pp2, log=lambda *a: None, pixels=False, rehearsal="agent")
+_orig_cs = pf2._check_start
+pf2._check_start = lambda i, seg, pb: (_checked.append(i), _orig_cs(i, seg, pb))[1]
+pf2.progress = _prog.append
+rep2 = pf2.run()
+check(_checked == [0] and all(rep2["segments"][str(i)]["ok"] for i in range(5)) and _prog,
+      f"agent mode: one opening-screen check per distinct start state, shared by the rest: {_checked} {_prog}")
+
 # a crash in one segment never ends the video (record_all's wrapper holds; the agent path raises nothing else)
 w10 = TMP / "e10"
 
