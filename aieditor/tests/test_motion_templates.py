@@ -27,7 +27,11 @@ def video(text, step=0.4, dur=None):
 
 
 # ── THE SWITCH, per template (Jake 2026-10-10 approved verb_swap + tagline_build; the rest stay off) ──
-check(MT.approved() == {"verb_swap", "tagline_build", "prompt_highlight", "long_prompt_scroll", "prompt_menu"}, f"approved (Jake rounds 2-3): {MT.approved()}")
+check(MT.approved() == {"verb_swap", "tagline_build", "prompt_highlight", "long_prompt_scroll", "prompt_menu",
+                        "prompt_card_3d", "prompt_result"}, f"approved (Jake rounds 2-4): {MT.approved()}")
+# every template is approved now (round 4): the switch itself is tested by pretending two are not
+_real_approved = MT.approved
+MT.approved = lambda: _real_approved() - {"prompt_card_3d", "prompt_result"}
 check(MT.is_on("verb_swap") and MT.is_on("tagline_build") and MT.is_on("prompt_highlight") and MT.is_on("long_prompt_scroll") and MT.is_on("prompt_menu")
       and not MT.is_on("prompt_card_3d") and not MT.is_on("prompt_result"),
       "the unapproved templates are off")
@@ -41,6 +45,7 @@ check("verb_swap" in _enum and "tagline_build" in _enum and "prompt_menu" in _en
       f"the overlay call is offered only the approved motion templates: {_enum}")
 _pr = director.overlay_prompt(_off_v, [], apps=["chatgpt"])
 check("verb_swap" in _pr and "prompt_card_3d (templates/" not in _pr, "the prompt carries only the approved templates' instructions")
+MT.approved = _real_approved
 _U = planfit.units(_off_v)
 for _u in _U:
     _u["label"] = "A"

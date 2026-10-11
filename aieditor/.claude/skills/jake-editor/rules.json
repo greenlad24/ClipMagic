@@ -738,8 +738,10 @@
    "tagline_build",
    "prompt_highlight",
    "long_prompt_scroll",
-   "prompt_menu"
+   "prompt_menu",
+   "prompt_card_3d",
+   "prompt_result"
   ],
-  "approved_src": "Jake 2026-10-10 (round-2 preview): 'Verb swap — Approve as is. Your suggested weight will be the final' (Roboto 500); 'Tagline build — Approve as is'; 'UI kits — Approve as is'. prompt_menu, prompt_card_3d (+ prompt_result), prompt_highlight, long_prompt_scroll: not approved yet. Round 3 (2026-10-10): 'Prompt highlight — Approve as is', 'Long prompt scroll — Approve as is'. Round 3 (2026-10-10, after the jitter fixes): 'Prompt menu — Approve as is'."
+  "approved_src": "Jake 2026-10-10 (round-2 preview): 'Verb swap — Approve as is. Your suggested weight will be the final' (Roboto 500); 'Tagline build — Approve as is'; 'UI kits — Approve as is'. prompt_menu, prompt_card_3d (+ prompt_result), prompt_highlight, long_prompt_scroll: not approved yet. Round 3 (2026-10-10): 'Prompt highlight — Approve as is', 'Long prompt scroll — Approve as is'. Round 3 (2026-10-10, after the jitter fixes): 'Prompt menu — Approve as is'. Round 4 (2026-10-11): '3D prompt card + prompt → result — Approve as is' (prompt_card_3d incl. prompt_result)."
  }
 }
