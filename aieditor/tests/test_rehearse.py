@@ -492,4 +492,11 @@ class Boom(Page):
 o10 = run(w10, Boom(w10), Model(FULL, [CLEAN]))
 check(o10["segments"][0]["status"] == "crashed" and o10["held"], "an exception in the agent path → crashed + fallback")
 
+# run 20: a brush stroke over the viewer picture is not refused for words in the panel around it ('Share', the hint)
+from aieditor import playbook as _pbm  # noqa: E402
+_g20 = RH.Guard(_pbm.load("chatgpt"), "logged_in", [])
+check(_g20.check({"type": "drag", "ref": "r40", "from": [1, 1], "to": [2, 2]},
+                 {"text": "53% Share Brush over what you want to remove Send", "tag": "div"}) is None,
+      "a drag over a surface is judged on what it names, not the panel's text")
+check(_g20.check({"type": "click", "ref": "r9"}, {"text": "Share", "tag": "button"}) is not None, "a click on Share is still refused")
 print(f"test_rehearse: {N} checks passed")

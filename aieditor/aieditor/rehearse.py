@@ -187,7 +187,12 @@ class Guard:
         g = clickguard.check({k: v for k, v in a.items() if k not in ("alt", "ref")}, target or None, self.session)
         if not g.get("ok"):
             return f"click guard: {g.get('why')}"
-        labels = " ".join(str(x) for x in (a.get("target"), a.get("selector"), a.get("url"), (item or {}).get("text"),
+        # a DRAG / DRAW lands on a surface (a picture, a canvas), it presses no button: the deny words are checked on what
+        # it names, not on the surface's whole inner text (run 20: the viewer panel's text holds 'Share' and the Erase
+        # hint, so every Erase brush stroke over the picture was refused as "share is never pressed")
+        own = (item or {}).get("text") if ty not in ("drag", "draw") else \
+            " ".join(str((item or {}).get(k) or "") for k in ("aria", "label"))
+        labels = " ".join(str(x) for x in (a.get("target"), a.get("selector"), a.get("url"), own,
                                            (item or {}).get("href")) if x)
         if ty != "type":
             for rx in self.forbid:
