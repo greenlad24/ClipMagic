@@ -380,6 +380,15 @@ def resolve(app, action_id, params=None):
         st = [{"type": "reveal", "asset": p.get("asset"), **({"url": p["url"]} if "url" in p else {})}]
     else:  # pragma: no cover - validate() refuses other kinds
         raise PlaybookError(f"unknown kind {k}")
+    # a multi-question flow (the Logo template asks "1 of 3": after the name, the rest are skipped): then_skip =
+    # {"texts": ["Skip"], "max": 2} — data; each skip click is optional (no more questions = nothing to click)
+    sk = a.get("then_skip") if isinstance(a.get("then_skip"), dict) else None
+    if sk:
+        labels = [str(x) for x in (sk.get("texts") or ["Skip"]) if str(x).strip()]
+        for _ in range(max(0, min(int(sk.get("max") or 2), 5))):
+            st.append({"type": "click", "target": labels[0], "exact": True, "optional_step": True,
+                       **({"alt": [{"target": x, "exact": True} for x in labels[1:]]} if labels[1:] else {}),
+                       **({"selector": sk["selector"]} if sk.get("selector") else {})})
     for s in st:
         s.update(extra)
         if a.get("exact") and s["type"] == "click" and "target" in s:
@@ -470,10 +479,12 @@ class RecorderSession:
         why = None
         for s in tries:
             s = {k: v for k, v in s.items() if k not in ("alt", "playbook")}
-            r = self.t.send({"cmd": "act", "action": s})
+            r = self.t.send({"cmd": "act", "action": {k: v for k, v in s.items() if k != "optional_step"}})
             if r.get("ok", True) and not r.get("error"):
                 return True, None
             why = r.get("error") or "act failed"
+        if step.get("optional_step") and not (why and "refused" in str(why).lower()):
+            return True, None                          # an optional step (a Skip that is not there any more)
         return False, why
 
     def _text(self):
@@ -528,6 +539,50 @@ def _wait(a):
     return min(15.0, max(2.0, 2 * float(a.get("typical_latency_s") or 1)))
 
 
+AFTER_REPLY_S = 30.0          # a control the app's own REPLY produces (a question card) may take this long to appear
+BUSY_SELECTORS = ('[aria-busy="true"]', 'button[aria-label*="Stop" i]', '[data-testid="stop-button"]',
+                  '[data-testid*="loading" i]')
+
+
+def busy(session, pb=None):
+    """Is the app still working (its reply streaming, a progress line, a spinner)? Data: the playbook's
+    busy_selectors (else generic ones) + produce.progress_patterns on the page text. Never raises."""
+    try:
+        for sel in list((pb or {}).get("busy_selectors") or BUSY_SELECTORS):
+            if (session.t.send({"cmd": "count", "selector": sel}) or {}).get("n", 0) > 0:
+                return True
+        body = (session.t.send({"cmd": "text"}) or {}).get("text", "")
+        for rx in ((pb or {}).get("produce") or {}).get("progress_patterns") or []:
+            try:
+                if re.search(rx, body, re.I):
+                    return True
+            except re.error:
+                continue
+    except Exception:  # noqa: BLE001 — a transport without count/text: not busy
+        return False
+    return False
+
+
+def _poll_pre(session, pb, a, c, polls):
+    """A pre assert. An action marked after_reply (data) waits up to AFTER_REPLY_S for its control; any other waits its
+    short time, and keeps waiting (up to AFTER_REPLY_S) while the app is visibly busy — then it is LEARNED as
+    after_reply in the playbook (re-run 15: the Logo flow's brand-name card appears only after ChatGPT's reply
+    finishes; "pre: no element [placeholder^=Brand name]" failed every proof at 4 s)."""
+    if not polls:
+        return session.check(c)
+    if a.get("after_reply"):
+        return _poll(session, c, AFTER_REPLY_S)
+    t0 = time.monotonic()
+    ok, why = _poll(session, c, 4.0 if a.get("requires") else 0)
+    while not ok and time.monotonic() - t0 < AFTER_REPLY_S and busy(session, pb):
+        time.sleep(0.5)
+        ok, why = session.check(c)
+        if ok:
+            a["after_reply"] = True
+            a.setdefault("learned", []).append("after_reply: its control appeared only after the app's reply")
+    return ok, why
+
+
 def _poll(session, c, wait):
     t0 = time.monotonic()
     while True:
@@ -568,7 +623,7 @@ def _run_once(session, pb, action_id, params):
                 return False, f"requires {r}: post: {why}"
     p = _params(a, dict(params or {}))
     for c in a.get("pre", []):
-        ok, why = _poll(session, _fill_assert(c, p), 4.0 if polls and a.get("requires") else 0)
+        ok, why = _poll_pre(session, pb, a, _fill_assert(c, p), polls)
         if not ok:
             return False, f"pre: {why}"
     for st in resolve(pb, action_id, params):

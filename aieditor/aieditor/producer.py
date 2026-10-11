@@ -199,7 +199,8 @@ class Producer:
         try:
             row = onboard.onboard_action(self.ctx, need, {"text": params.get("prompt")} if st.get("text") else None,
                                          generates=False, generating=bool(st.get("generates")),
-                                         chain=list(getattr(self, "_chain", []) or []))
+                                         chain=list(getattr(self, "_chain", []) or []),
+                                         step_data={k: st.get(k) for k in onboard.STEP_DATA if st.get(k)})
         except Exception as e:  # noqa: BLE001 — BudgetSpent / a broken explorer: the tool route is not available
             row = {"status": "failed", "why": str(e)}
         finally:

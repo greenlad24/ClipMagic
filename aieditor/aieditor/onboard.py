@@ -368,6 +368,9 @@ playbook action that code will replay 3 times from fresh sessions. Rules (code e
   `count` before you rely on it; a drag/draw on an element uses its LARGEST visible match (the viewer image, not the
   chat thumbnail behind it); `observe` refs (r12) work while exploring but never in a proposal
 - the post assert must prove the step LANDED: something that appears only after it (look before and after)
+- a control that appears only after the app's own REPLY (a question card the app asks back): set "after_reply": true
+  in the proposal (its pre check then waits for it); a flow that asks several questions where only the first matters:
+  "then_skip": {"texts": ["Skip"], "max": 2}
 - if the control does not exist anywhere (after looking in the '/' and '+' menus, the toolbar, the page), answer
   "absent" with what you searched
 Answer ONE JSON object per turn, nothing else: {"do": "observe|find|act|propose|absent|give_up", "note": "<short>",
@@ -466,6 +469,10 @@ def normalize_proposal(p, pb, need):
            "intents": [x for x in (p.get("intents") or []) if isinstance(x, str)][:4],
            "typical_latency_s": float(p.get("typical_latency_s") or 1.0), "generates": bool(p.get("generates")),
            "proven": False, "source": f"R14 P2 onboarding (per video): {need[:160]}"}
+    if p.get("after_reply"):
+        act["after_reply"] = True                      # its control appears only after the app's own reply (data)
+    if isinstance(p.get("then_skip"), dict):
+        act["then_skip"] = {k: v for k, v in p["then_skip"].items() if k in ("texts", "max", "selector")}
     if p.get("start") == "chat_with_image":
         act["start_url"] = "{chat_url}"
         act["params"].setdefault("chat_url", {"type": "string", "required": True})
@@ -630,7 +637,11 @@ def recent_proven(app, need, days=RECENT_DAYS, now=None):
 _CONFIRM_RX = re.compile(r"\b(?:check ?mark|tick|submit|attach|done|confirm|apply|save)\b", re.I)
 
 
-def onboard_action(ctx, need, params=None, generates=False, generating=False, presence_only=False, chain=None):
+STEP_DATA = ("after_reply", "then_skip")              # step data a tool's playbook spec may carry onto its learned action
+
+
+def onboard_action(ctx, need, params=None, generates=False, generating=False, presence_only=False, chain=None,
+                   step_data=None):
     """P2 for one needed action: explore → propose → prove 3/3 (fix rounds feed the failures back). → row.
     generating=True: the step STARTS a generation (a tool's submit): the explorer finds it without pressing it, and
     it is proven by presence (its requires + selector + pre asserts), never pressed 3x (3 generations) — the
@@ -640,6 +651,7 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
     rec = recent_proven(ctx.app, need)
     if rec and rec.get("aid") and isinstance(rec.get("action"), dict):
         aid, act = rec["aid"], dict(rec["action"])
+        act.update({k: v for k, v in (step_data or {}).items() if k in STEP_DATA and v})
         ctx.pb["actions"][aid] = act
         p0 = dict(params or {})
         if act.get("start_url") and ctx.image_chat:
@@ -687,6 +699,7 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
             act["requires"] = [r for r in chain if r != aid and r not in (act.get("requires") or [])] + list(act.get("requires") or [])
         if generating:
             act["generates"] = True
+        act.update({k: v for k, v in (step_data or {}).items() if k in STEP_DATA and v})
         ctx.pb["actions"][aid] = act
         p = dict(params or {})
         if act.get("start_url") and ctx.image_chat:
@@ -708,6 +721,17 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
                   "replays": [{"ok": ok, "why": why, "mode": "presence (generating)" if generating else "presence (confirm after data)"}]}
         else:
             pr = prove(ctx, aid, p)
+            fails = [str(x.get("why") or "") for x in pr["replays"] if not x["ok"]]
+            if not pr["proven"] and fails and act.get("requires") and not act.get("after_reply") \
+                    and all(f.startswith("pre: no element") for f in fails):
+                # its control was not there YET after the chain before it ran (re-run 15: the Logo name card appears
+                # only after ChatGPT's reply) — the same proposal, proven again with the after-reply wait (data)
+                act["after_reply"] = True
+                ctx.log(f"onboarding '{need[:60]}': its control was not there yet after the steps before it — "
+                        "proving again with the after-reply wait")
+                pr = prove(ctx, aid, p)
+                if not pr["proven"]:
+                    act.pop("after_reply", None)
         row["attempts"][-1]["replays"] = pr["replays"]
         if pr["proven"]:
             act["video_proof"] = {"mode": "onboarded", "replays": pr["replays"], "ok": pr["ok"], "n": pr["n"]}

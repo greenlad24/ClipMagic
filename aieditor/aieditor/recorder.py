@@ -53,7 +53,8 @@ REPAIR_TURNS = 8
 DROP_KINDS = ("challenge", "account", "error")
 MAX_TAKE_STEPS = 400                     # a compiled take never needs more actions (a runaway script = step exhaustion)
 # compile-time keys the browser never sees
-WIRE_DROP = {"assert", "camera_only", "generates", "result_of", "playbook", "filler", "alt", "payoff_t", "cursor_at"}
+WIRE_DROP = {"assert", "camera_only", "generates", "result_of", "playbook", "filler", "alt", "payoff_t", "cursor_at",
+             "optional_step"}
 
 
 class Retake(RuntimeError):
@@ -196,9 +197,11 @@ def first_frame_check(sess, start_state=None, account=None, pixels=True, outside
     has no account and no app theme to prove — only a loaded, clean, wall-free first frame."""
     ff = _first_frame()
     account = "" if outside else (account or ff.account_of(start_state, getattr(sess, "account", None) or ACCOUNT))
-    st = sess.send({"cmd": "state"})
-    keys = ("h1", "popups", "tooltips", "loading", "blank", "text") if outside else \
-        ("account", "h1", "sidebar", "draft", "attachments", "popups", "tooltips", "mode", "loading", "blank", "dark", "text")
+    allow = (start_state or {}).get("allow") or {}
+    st = sess.send({"cmd": "state", **({"resting": list(allow["resting_selectors"])} if allow.get("resting_selectors") else {})})
+    keys = ("h1", "popups", "popup_texts", "tooltips", "loading", "blank", "text") if outside else \
+        ("account", "h1", "sidebar", "draft", "attachments", "popups", "popup_texts", "tooltips", "mode", "loading", "blank",
+         "dark", "text")
     dom = {k: st.get(k) for k in keys}
     if outside:
         dom["require_account"] = False
@@ -211,7 +214,11 @@ def first_frame_check(sess, start_state=None, account=None, pixels=True, outside
             facts.update(px)
     if outside and (st.get("wall") or {}).get("kind") == "login":
         dom.pop("wall", None)                          # a logged-out page SHOWS log in / sign up: that is the view
-    ok, why = ff.verdict_for(facts, start_state, account)
+    accepted = []
+    ok, why = ff.verdict_for(facts, start_state, account, accepted=accepted)
+    if accepted:
+        st["accepted"] = accepted                       # reasons the playbook's resting-UI allowances accepted (data)
+    st["facts"] = facts
     sels = [a["selector"] for a in (start_state or {}).get("asserts") or [] if a.get("kind") == "selector" and a.get("selector")]
     if sels:
         r = sess.send({"cmd": "assert", "selector_present": sels})
@@ -222,6 +229,23 @@ def first_frame_check(sess, start_state=None, account=None, pixels=True, outside
     if shot and str(shot).startswith("/w/") and ok and getattr(sess, "workdir", None):
         (Path(sess.workdir) / shot[3:]).unlink(missing_ok=True)
     return ok, why, st
+
+
+def run_dismiss(sess, pb, start_state, session="logged_in"):
+    """The start_state's DISMISS steps (data the drift-repair agent wrote into this video's playbook: a new popup /
+    banner the app shows at rest and how it closes). Each is a playbook action id ({"action": id}) or a plain action
+    ({"type": "key"|"click", ...}); every one goes through the click guard; a step that finds nothing is skipped."""
+    from . import playbook as PB
+    for d in (start_state or {}).get("dismiss") or []:
+        if not isinstance(d, dict):
+            continue
+        try:
+            steps = PB.resolve(pb, d["action"], dict(d.get("params") or {})) if d.get("action") else [d]
+        except (PB.PlaybookError, KeyError):
+            continue
+        for step in steps:
+            human_pause(0.2, 0.6)
+            act(sess, wire(step, record=False), session, alt=step.get("alt") or ())
 
 
 def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None, pixels=True, session="logged_in"):
@@ -240,6 +264,7 @@ def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None
             for step in PB.resolve(pb, aid, {}):
                 human_pause(0.3, 0.9)
                 act(sess, wire(step, record=False), session, alt=step.get("alt") or ())
+        run_dismiss(sess, pb, ss, session)
         if session == "logged_in":
             clear_composer(sess, pb, session)
             clear_attachments(sess, session)

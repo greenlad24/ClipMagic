@@ -30,6 +30,7 @@ Legacy free-text intents ("on 'X': do Y", the director before the single plan ca
 regex ledger ONLY when asked (beats_from_intent: offline acceptance on stored jobs); in factory mode a
 segment without plan-schema beats is needs_primitive. Everything here is pure and unit-tested.
 """
+import copy
 import math
 import re
 import statistics
@@ -580,6 +581,16 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     start_state = {"url": seg.get("url") or (pb.get("start_state") or {}).get("url"),
                    "asserts": [] if outside else list((pb.get("start_state") or {}).get("asserts") or []),
                    "set_dressing": [] if outside else list(pb.get("set_dressing") or []), "fingerprint": None}
+    # the app's proven resting UI + dismiss steps (self-healing data in THIS video's playbook): the logged-in start
+    # state's, or the outside view's (a logged-out page SHOWS log in / sign up — that is the view, never a wall)
+    src = (pb.get("outside_view") or {}) if outside else (pb.get("start_state") or {})
+    allow = copy.deepcopy(src.get("allow") or {})
+    if outside:
+        allow["walls"] = sorted(set(allow.get("walls") or []) | {"login"})
+    if allow:
+        start_state["allow"] = allow
+    if src.get("dismiss"):
+        start_state["dismiss"] = copy.deepcopy(src["dismiss"])
     gen_results = []          # (press beat, typed, word_t) awaiting their reveal
 
     def doodle_for(b):

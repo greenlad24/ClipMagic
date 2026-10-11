@@ -132,11 +132,78 @@ def start_state_fails(facts, start_state):
     return fail
 
 
-def verdict_for(facts, start_state=None, account=None):
-    """verdict() with the account from the playbook start_state + its asserts."""
+# ───────────────────────── allowances: the app's resting UI as DATA (self-healing layer) ─────────────────────────
+# An app's UI drifts weekly (ChatGPT's new home-page suggestions under the composer, 2026-10-11; a logged-out page that
+# shows Log in / Sign up). What the drift-repair agent (aieditor/drift.py) PROVED to be the page's resting UI is written
+# into THIS video's playbook start_state.allow — the check reads it, no code change per drift:
+#   {"resting_texts": ["find the latest docs", ...],   popup / suggestion texts that are the page at rest
+#    "resting_selectors": ["[data-testid=...]"],        DOM popups inside these are not counted (agent_rec state)
+#    "resting_popups": 1,                               up to this many DOM popups are the page at rest
+#    "walls": ["login"],                                wall kinds that ARE the view (the outside, logged-out page)
+#    "reasons": ["regex", ...],                         any other first-frame reason proven harmless
+#    "learned": [{"by", "at", "why", "proof"}]}         the audit trail
+# The rules that protect Jake can never be allowed away (SAFE_RX): another account / greeting, Work mode, a draft or an
+# attachment left in the composer, a black / loading frame, an open history sidebar, a challenge or account wall.
+SAFE_RX = re.compile(r"account|greet|work mode|composer not empty|attachment|black/loading|blank or loading|"
+                     r"sidebar|challenge|wall: (?:challenge|account|error)|light theme", re.I)
+_POPUP_TEXT = re.compile(r"popup / suggestion list on screen \('([^']*)'\)", re.I)
+_POPUP_DOM = re.compile(r"^(\d+) popup/menu/suggestion list open", re.I)
+
+
+def _norm_txt(s):
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", str(s or "").lower()).split())
+
+
+def _text_resting(txt, resting):
+    t = _norm_txt(txt)
+    return bool(t) and any(r and (r in t or t in r) for r in (_norm_txt(x) for x in resting or []))
+
+
+def allowed(reason, allow, facts=None):
+    """→ the allowance that accepts this first-frame reason, or None. Pure."""
+    if not allow or SAFE_RX.search(reason) and not reason.lower().startswith("wall: login"):
+        return None
+    m = _POPUP_TEXT.search(reason)
+    if m and _text_resting(m.group(1), allow.get("resting_texts")):
+        return "resting_texts"
+    m = _POPUP_DOM.search(reason)
+    if m:
+        n = int(m.group(1))
+        texts = ((facts or {}).get("dom") or {}).get("popup_texts") or []
+        if texts and len(texts) >= n and all(_text_resting(t, allow.get("resting_texts")) for t in texts[:n]):
+            return "resting_texts"
+        if n <= int(allow.get("resting_popups") or 0):
+            return "resting_popups"
+    if reason.lower().startswith("wall: "):
+        kind = reason[6:].split(":", 1)[0].strip().lower()
+        if kind in [str(w).lower() for w in allow.get("walls") or []] and kind not in ("challenge", "account", "error"):
+            return "walls"
+    for rx in allow.get("reasons") or []:
+        try:
+            if re.search(rx, reason, re.I):
+                return "reasons"
+        except re.error:
+            continue
+    return None
+
+
+def verdict_for(facts, start_state=None, account=None, accepted=None):
+    """verdict() with the account from the playbook start_state + its asserts, minus what the start_state's
+    allowances (the app's proven resting UI, data) accept. accepted: a list that receives [reason, allowance]."""
     acc = account or account_of(start_state)
     ok, why = verdict(facts, acc)
     why = why + [f for f in start_state_fails(facts, start_state) if f not in why]
+    allow = (start_state or {}).get("allow") or {}
+    if allow:
+        keep = []
+        for w in why:
+            a = allowed(w, allow, facts)
+            if a:
+                if accepted is not None:
+                    accepted.append([w, a])
+            else:
+                keep.append(w)
+        why = keep
     return not why, why
 
 

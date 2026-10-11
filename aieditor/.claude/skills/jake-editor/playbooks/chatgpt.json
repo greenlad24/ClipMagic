@@ -2356,7 +2356,15 @@
      },
      {
       "need": "in the Logo template, enter the brand name (the text is DATA given at use time: param 'text')",
-      "text": true
+      "text": true,
+      "after_reply": true,
+      "then_skip": {
+       "texts": [
+        "Skip"
+       ],
+       "max": 2
+      },
+      "src": "measured live 2026-10-11 (re-run 15): 'Try it' starts a chat; ChatGPT REPLIES with a question card ('What's your brand name, exact logo wording…', 1 of 3, placeholder 'Brand name • business or project', Skip) — the card appears only after the reply finishes (after_reply); the other questions are skipped (then_skip)"
      },
      {
       "need": "in the Logo template with the name entered, the control that creates the logo (it starts a generation: find it, never press it)",

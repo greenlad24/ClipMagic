@@ -1466,7 +1466,7 @@ for await (const line of rl) {
     }
     else if (m.cmd === "state") {
       // FIRST-FRAME FACTS (G3; screencast/first_frame.py verdict): what frame 1 would show, read from the DOM
-      const d = await page.evaluate(() => {
+      const d = await page.evaluate((m) => {
         const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
           return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
             && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.15; };
@@ -1477,16 +1477,21 @@ for await (const line of rl) {
         const comp = document.querySelector('[contenteditable="true"]#prompt-textarea, [contenteditable="true"]');
         const draft = comp ? (comp.innerText || "").trim() : "";
         const attachments = [...document.querySelectorAll('button[aria-label^="Remove "]')].filter(vis).length;
-        const popups = [...document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[class*="suggest" i],[class*="autocomplete" i]')]
-          .filter((e) => vis(e) && e.getBoundingClientRect().width > 60).length;
+        // the app's proven resting UI (playbook start_state.allow.resting_selectors, data) is not a popup
+        const rest = (m.resting || []).filter((x) => typeof x === "string" && x);
+        const inRest = (e) => rest.some((sel) => { try { return !!e.closest(sel); } catch { return false; } });
+        const popEls = [...document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[class*="suggest" i],[class*="autocomplete" i]')]
+          .filter((e) => vis(e) && e.getBoundingClientRect().width > 60 && !inRest(e));
+        const popups = popEls.length;
+        const popup_texts = popEls.slice(0, 8).map((e) => (e.innerText || "").replace(/\s+/g, " ").trim().slice(0, 120));
         const tooltips = [...document.querySelectorAll('[role=tooltip]')].filter(vis).length;
         const tg = [...document.querySelectorAll('button,[role=tab],[role=radio]')].filter((e) => vis(e) && /^(Chat|Work)$/.test((e.innerText || "").trim()));
         const on = tg.find((e) => e.getAttribute("aria-selected") === "true" || e.getAttribute("aria-checked") === "true" || e.getAttribute("data-state") === "active" || e.getAttribute("aria-pressed") === "true");
         const mode = on ? on.innerText.trim().toLowerCase() : (h1.some((h) => /what should we work on/i.test(h)) ? "work" : null);
         const busy = !!document.querySelector('[aria-busy="true"], [data-testid="loading"], .animate-spin') && !h1.length;
-        return { url: location.href, h1, sidebar: side, draft, attachments, popups, tooltips, mode, loading: busy,
+        return { url: location.href, h1, sidebar: side, draft, attachments, popups, popup_texts, tooltips, mode, loading: busy,
                  text: (document.body?.innerText || "").slice(0, 3000) };
-      }).catch((e) => ({ error: String(e) }));
+      }, { resting: Array.isArray(m.resting) ? m.resting : [] }).catch((e) => ({ error: String(e) }));
       let lum = null, blank = null;
       try { const g = await tiny(); let sum = 0; for (const v of g) sum += v; lum = Math.round(sum / g.length * 10) / 10; blank = blankish(g); } catch {}
       const who = await accountName(page);
