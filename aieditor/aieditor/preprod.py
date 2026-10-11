@@ -1824,8 +1824,11 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         pdoc = json.loads((out / "plan.json").read_text())
         if (pdoc.get("plan") or {}).get("answer") and not pdoc.get("routed"):
             n_ref = len(llm.refusals())
-            res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
-                              progress=progress, cancelled=stop)
+            try:
+                res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
+                                  progress=progress, cancelled=stop)
+            finally:
+                jdump(assets, out / "assets.json")          # what was made is kept even if routing stops (re-run 14)
             refused = llm.refusals()[n_ref:]
             if refused:
                 # the Claude API cap refused calls DURING routing: its fallbacks are not the real routes — never let the

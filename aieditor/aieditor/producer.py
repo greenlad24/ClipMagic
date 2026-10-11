@@ -519,7 +519,13 @@ class Producer:
                     p.update(rel_from=[0.38, 0.42], rel_to=[0.62, 0.58])
             for r in a.get("requires", []):
                 if r not in done and not any(x.get("action") == r for x in [st]):
-                    for s in playbook.resolve(pb, r, p):
+                    try:
+                        req_steps = playbook.resolve(pb, r, {**params, **p})
+                    except playbook.PlaybookError as e:
+                        # a required step that cannot be built is a failed step, never a crash of pre-production
+                        # (re-run 14: "param 'text' is required" ended the whole route)
+                        return {"class": "ui_step_failed", "why": f"requires {r}: {e}"}
+                    for s in req_steps:
                         sess.act(s)
                     done.add(r)
             try:

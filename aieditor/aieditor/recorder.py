@@ -209,6 +209,8 @@ def first_frame_check(sess, start_state=None, account=None, pixels=True, outside
         px = pixel_facts(sess, st.get("shot"))
         if px:
             facts.update(px)
+    if outside and (st.get("wall") or {}).get("kind") == "login":
+        dom.pop("wall", None)                          # a logged-out page SHOWS log in / sign up: that is the view
     ok, why = ff.verdict_for(facts, start_state, account)
     sels = [a["selector"] for a in (start_state or {}).get("asserts") or [] if a.get("kind") == "selector" and a.get("selector")]
     if sels:
@@ -248,6 +250,16 @@ def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None
             return st
         if (st.get("wall") or {}).get("kind") in DROP_KINDS:
             raise SetupError("first frame: " + "; ".join(why), wall=st["wall"])
+        if why and all(re.search(r"popup|suggestion list|menu", w, re.I) for w in why):
+            # a "popup" that survives Escape and a click on empty space is the page's resting UI (ChatGPT's home-page
+            # suggestions under the composer, 2026-10-11) — accepted, logged; never a dropped screencast
+            sess.send({"cmd": "act", "action": {"type": "key", "key": "Escape"}})
+            sess.send({"cmd": "act", "action": {"type": "click", "x": 40, "y": 400}})
+            ok2, why2, st2 = first_frame_check(sess, ss, account, pixels=pixels, outside=session == "outside")
+            if ok2 or (why2 and all(re.search(r"popup|suggestion list|menu", w, re.I) for w in why2)):
+                log(f"recorder: '{'; '.join(why2 or why)[:120]}' stays after Escape + a click — the page's resting UI, "
+                    "accepted")
+                return st2
         log(f"recorder: first frame not clean ({'; '.join(why)[:300]}) — set-up again ({k + 1}/{tries})")
         if session == "logged_in" and any("account" in w.lower() or "greet" in w.lower() for w in why):
             pin_account(sess, account or getattr(sess, "account", None) or ACCOUNT, log, session)
