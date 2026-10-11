@@ -192,6 +192,23 @@ def pixel_facts(sess, shot):
         return None
 
 
+def wait_loaded(sess, max_s=20.0, poll=1.0):
+    """Off camera, before the first-frame check: the page has FINISHED loading — no loading state, a composer / page
+    heading present (run 22 screencast 24: three set-ups checked a page still loading — blank account avatar,
+    spinning send button — "account name not readable", and the screencast fell back)."""
+    if not callable(getattr(sess, "alive", None)):      # a real browser session only (fakes script their own states)
+        return
+    t0 = time.time()
+    while time.time() - t0 < max_s:
+        try:
+            st = sess.send({"cmd": "state"}) or {}
+        except Exception:  # noqa: BLE001 — the check itself reports a dead page
+            return
+        if not st.get("loading") and (st.get("account") or st.get("h1")) and not st.get("blank"):
+            return
+        time.sleep(poll)
+
+
 def first_frame_check(sess, start_state=None, account=None, pixels=True, outside=False):
     """-> (ok, reasons, state). DOM facts ({"cmd": "state"}) + the pixels of that frame + the playbook
     start_state asserts (selectors checked in the page). The outside view (never logged in, a public page)
@@ -274,6 +291,7 @@ def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None
         if session == "logged_in":
             clear_composer(sess, pb, session)
             clear_attachments(sess, session)
+        wait_loaded(sess)
         ok, why, st = first_frame_check(sess, ss, account, pixels=pixels, outside=session == "outside")
         if ok:
             if k:
