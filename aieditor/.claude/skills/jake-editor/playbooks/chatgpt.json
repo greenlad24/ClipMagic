@@ -2288,12 +2288,15 @@
       "per_param": "target"
      },
      {
-      "need": "in the image viewer's Markup mode after a box is drawn, type the note into the box that opens",
-      "text": true
+      "action": "paste_prompt",
+      "params": {
+       "text": "{prompt}"
+      },
+      "src": "measured live 2026-10-11 (re-run 13): Markup has NO note box — the instruction goes in the composer ('Markup — Add instructions')"
      },
      {
-      "need": "in the image viewer's Markup mode with a note typed, the control that sends the change (it starts a generation: find it, never press it)",
-      "generates": true
+      "action": "send",
+      "src": "the composer's Send (the markup chip + instruction are sent together)"
      }
     ]
    },

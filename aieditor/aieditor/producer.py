@@ -191,6 +191,12 @@ class Producer:
             row = {"status": "failed", "why": str(e)}
         finally:
             self.ctx.image_chat = old
+        if row.get("status") == "absent" and st.get("text") and self.roles().get("prompt") in (self.ctx.pb.get("actions") or {}):
+            # the app has no separate note box for this tool (re-run 13: Markup's instruction goes in the composer) —
+            # its text step IS the app's normal prompt action; generic, any app
+            self._log(f"producer: the {tool} tool has no separate note box — its text goes in the prompt "
+                      f"('{self.roles()['prompt']}')")
+            return self.roles()["prompt"], None
         if row.get("status") != "proven":
             return None, f"step '{need[:80]}' could not be onboarded: {row.get('why') or row.get('status')}"
         aid = row["action_id"]
