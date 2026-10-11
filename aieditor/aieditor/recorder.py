@@ -532,12 +532,15 @@ class DockerMedia:
 
     def _run(self, rec, args):
         name = f"aieditor-assemble-{uuid.uuid4().hex[:8]}"
-        cmd = ["docker", "run", "--rm", "--name", name, "--cpuset-cpus", config.CPUSET, "--memory", "2g", "--network", "none",
+        # 8g, not 2g: a 2560x1440 take re-encoded by libx264 went past 2g — the kernel killed ffmpeg mid-render
+        # ("BrokenPipe" in assemble render — run 16 + run 20 screencasts 3 and 6; the same take renders fine unbounded)
+        cmd = ["docker", "run", "--rm", "--name", name, "--cpuset-cpus", config.CPUSET, "--memory", "8g", "--network", "none",
                "-v", f"{config.CODE / 'screencast'}:/app/screencast:ro", "-v", f"{rec}:/r", "--entrypoint", "python3",
                config.SC_IMAGE, "/app/screencast/assemble.py"] + args
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if r.returncode:
-            raise RuntimeError(f"assemble {args[0]} failed: {r.stderr[-400:]}")
+            raise RuntimeError(f"assemble {args[0]} failed (exit {r.returncode}"
+                               + (", killed — out of memory?" if r.returncode in (137, -9) else "") + f"): {r.stderr[-400:]}")
         return r.stdout
 
     def concat(self, rec, pieces):
