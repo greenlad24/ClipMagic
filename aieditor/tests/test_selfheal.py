@@ -594,6 +594,28 @@ check(okm and "Markup" not in [x for x in mp.presses if x] and mp.markup and any
 mp2 = ModePage(markup_on=False)
 okm2, _ = PB._run_once(mp2, pbm, "ob_mark_box", {})
 check(okm2 and mp2.markup, "Markup off: pressed once as before")
+# a mode action replayed twice in a row stays ON (Markup and Comment — re-run 15 09:11, Comment toggled off)
+
+
+class CommentPage(ModePage):
+    def send(self, m):
+        c = m.get("cmd")
+        if c == "count" and "Image comment surface" in m["selector"]:
+            return {"n": int(self.markup)}
+        if c == "act" and (m["action"].get("selector") == 'button[aria-label="Comment"]' or m["action"].get("target") == "Comment"):
+            self.presses.append("Comment")
+            self.markup = not self.markup
+            return {"ok": True}
+        return super().send(m)
+
+
+pbm["actions"]["ob_pin"] = {"kind": "click", "label": "pin", "selectors": ['[data-testid="generated-image-preview"]'],
+                            "proven": True, "source": "t", "requires": ["viewer_comment"], "pre": [], "post": []}
+for page_, aid_, name_ in ((ModePage(markup_on=False), "ob_mark_box", "Markup"), (CommentPage(markup_on=False), "ob_pin", "Comment")):
+    r1_ = PB._run_once(page_, pbm, aid_, {})
+    r2_ = PB._run_once(page_, pbm, aid_, {})
+    check(r1_[0] and r2_[0] and page_.markup and page_.presses.count(name_) == 1,
+          f"{name_} mode replayed twice stays ON (pressed once): {r1_} {r2_} {page_.presses}")
 aud = {(f["action"], f["rule"]) for f in preflight.audit_playbook(pbd)}
 check(("ob_box", "drag_points_data") in aud and ("ob_pen", "draw_strokes_data") in aud, f"audit_playbook names data drags/draws: {aud}")
 check(("send", "requires_unbuildable") in aud, "audit_playbook: 'send' requires paste_prompt whose 'text' is data — named, "
@@ -763,6 +785,103 @@ check(onboard.classify(row_c) == "D" and onboard.is_camera_need(row_c), "a beat 
 check(onboard.classify({"code": "feature", "why": "No 'Updated' badge exists"}) == "C", "a real missing feature stays C")
 check("if is_camera_need(r):" in src_ob.split("def handle_c")[1][:300], "the P4 route checks it again before handle_c acts")
 
+
+# the observation frame covers the WHOLE recording viewport (re-run 15: the explorer saw only the top-left)
+pins("A-cropped-observation")
+check(preflight.viewport_problem({"w": 2560, "h": 1440, "want": [1536, 864, 1.6667]}).startswith("viewport 2560x1440"),
+      "a layout viewport that is not the recording's is named")
+check(preflight.viewport_problem({"w": 1536, "h": 864, "fixed": True, "want": [1536, 864, 1.6667]}) is None,
+      "a restored viewport passes")
+FF_vp = R.first_frame_check(type("VP", (), {"send": lambda self, m: {**Page().send(m), "vp": {"w": 2560, "h": 1440,
+                            "want": [1536, 864, 1.6667]}} if m.get("cmd") == "state" else Page().send(m), "name": None,
+                            "workdir": None})(), {"asserts": []}, "Jake", pixels=False)
+check(not FF_vp[0] and any("viewport" in w for w in FF_vp[1]), "a cropped frame is never a clean first frame")
+src_ar = (ROOT / "screencast" / "agent_rec.mjs").read_text()
+check("async function ensureViewport()" in src_ar and "width: w, height: h, scale: scale * CSS_W / w" in src_ar,
+      "agent_rec proves the viewport and clips the whole of it")
+if os.environ.get("AIEDITOR_SKIP_DOCKER") != "1":
+    import subprocess  # noqa: E402
+    vpd = TMP / "vp"
+    vpd.mkdir()
+    (vpd / "p.html").write_text('<html><body style="margin:0;background:#222"><div style="position:fixed;right:0;bottom:0;'
+                                'width:200px;height:100px;background:#f00"></div></body></html>')
+    cmds = "\n".join(json.dumps(x) for x in ({"cmd": "open", "url": "file:///w/p.html", "settle": 1}, {"cmd": "observe"},
+                                              {"cmd": "quit"})) + "\n"
+    r_ = subprocess.run(["docker", "run", "-i", "--rm", "--network", "none", "-v", f"{ROOT / 'screencast'}:/app/screencast:ro",
+                         "-v", f"{ROOT / 'motion'}:/app/motion:ro", "-v", f"{vpd}:/w", "aieditor-screencast:0.2", "node",
+                         "/app/screencast/agent_rec.mjs", "/w"], input=cmds, capture_output=True, text=True, timeout=240)
+    obs_ = next((json.loads(x) for x in r_.stdout.splitlines() if '"shot"' in x), {})
+    check(obs_.get("vp", {}).get("w") == 1536 and not preflight.viewport_problem(obs_.get("vp")), f"live observe vp: {obs_.get('vp')}")
+    chk_ = subprocess.run(["docker", "run", "--rm", "--network", "none", "-v", f"{vpd}:/w", "--entrypoint", "python3",
+                           "aieditor-screencast:0.2", "-c", "import cv2;g=cv2.imread('/w/obs-0001.jpg');h,w=g.shape[:2];"
+                           "b,gr,r=g[h-20,w-20];print(w,h,int(r),int(gr))"], capture_output=True, text=True, timeout=120)
+    w_, h_, r_c, g_c = (list(map(int, chk_.stdout.split())) + [0, 0, 0, 0])[:4]
+    check(w_ == 1280 and h_ == 720 and r_c > 180 and g_c < 80, f"the observation shows the bottom-right corner: {chk_.stdout} {chk_.stderr[-200:]}")
+
+# a post check whose element was renamed (UI drift, re-run 15: 'Image comment surface' gone, Comment mode visibly ON):
+# re-derived from the live page, proven absent-before / present-after, re-proven 3/3, written back with repaired_from
+pins("A-post-assert-drift")
+
+
+class CommentNew:
+    def __init__(self):
+        self.on, self.sent = False, []
+
+    def send(self, m):
+        self.sent.append(m)
+        c = m.get("cmd")
+        if c == "open":
+            self.on = False
+            return {"ok": True, "url": m["url"]}
+        if c == "act":
+            a = m["action"]
+            if a.get("selector") == 'button[aria-label="Comment"]' or a.get("target") == "Comment":
+                self.on = True
+            return {"ok": True, "url": "https://chatgpt.com/c/job-a"}
+        if c == "count":
+            sel = m["selector"]
+            n = {'button[aria-label="Close viewer"]': 1, '[contenteditable="true"]': 1,
+                 'div[role="toolbar"][aria-label="Comment mode"]': int(self.on)}.get(sel, 0)
+            return {"ok": True, "n": n}
+        if c == "observe":
+            return {"ok": True, "lum": 12, "shot": None, "items": [{"tag": "div", "text": "Click on the image to add comments"
+                                                                      if self.on else "", "box": [600, 800, 400, 40]}]}
+        if c == "text":
+            return {"ok": True, "text": "Jake Dawson " + ("Click on the image to add comments" if self.on else ""), "draft": ""}
+        if c == "state":
+            return {"ok": True, "account": "Jake Dawson"}
+        return {"ok": True}
+
+    def close(self):
+        pass
+
+
+out_c = TMP / "postdrift" / "preprod"
+out_c.mkdir(parents=True)
+ctx_c = onboard.Ctx(out_c, "chatgpt", "https://chatgpt.com/", onboard.job_playbook(out_c, "chatgpt"), transport_factory=CommentNew,
+                    llm_call=lambda *a, **k: {"text": json.dumps({"visible": True, "kind": "selector", "selector":
+                                              'div[role="toolbar"][aria-label="Comment mode"]', "why": "the comment bar"}),
+                                              "usd": 0.02},
+                    budget=onboard.Budget(9.5), image_chat="https://chatgpt.com/c/job-a",
+                    allowed_chats=["https://chatgpt.com/c/job-a"], log=lambda *a: None)
+ctx_c.pb["actions"]["viewer_comment"]["video_proof"] = None
+res_c = onboard.reprove_existing(ctx_c, ["viewer_comment"])
+vc = ctx_c.pb["actions"]["viewer_comment"]
+check(res_c["viewer_comment"]["ok"] and vc["post"] == [{"kind": "selector", "selector": 'div[role="toolbar"][aria-label="Comment mode"]'}]
+      and vc.get("repaired_from", {}).get("post") and vc["repaired_from"]["proof"] == "3/3",
+      f"the drifted post check is re-derived, replayed 3/3 and kept as data: {res_c} {vc.get('post')} {vc.get('repaired_from')}")
+check(json.loads((out_c / "playbook-chatgpt.json").read_text())["actions"]["viewer_comment"].get("repaired_from"),
+      "written to this video's playbook")
+# vision alone never passes: a proposed check that is not on the page is refused, the old one kept
+out_d = TMP / "postdrift2" / "preprod"
+out_d.mkdir(parents=True)
+ctx_d = onboard.Ctx(out_d, "chatgpt", "https://chatgpt.com/", onboard.job_playbook(out_d, "chatgpt"), transport_factory=CommentNew,
+                    llm_call=lambda *a, **k: {"text": json.dumps({"visible": True, "kind": "selector", "selector": "#made-up"}),
+                                              "usd": 0.02}, budget=onboard.Budget(9.5), image_chat="https://chatgpt.com/c/job-a",
+                    allowed_chats=["https://chatgpt.com/c/job-a"], log=lambda *a: None)
+ok_d, why_d = onboard.repair_post_assert(ctx_d, "viewer_comment")
+check(not ok_d and "not on the page" in why_d and ctx_d.pb["actions"]["viewer_comment"]["post"][0]["selector"]
+      == 'button[aria-label="Image comment surface"]', f"never accepted on vision alone: {why_d}")
 
 # ── 8. D: run control ──
 pins("D-cap-mid-route", "D-cap-mid-assets", "D-playbook-crash", "D-assets-kept")

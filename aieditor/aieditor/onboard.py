@@ -595,6 +595,10 @@ class Explorer:
             img = _shot_block(obs.get("shot"))
             if img:
                 dyn.append(img)
+            from .preflight import viewport_problem
+            vpw = viewport_problem(obs.get("vp"))
+            if vpw or (obs.get("vp") or {}).get("fixed"):
+                self.ctx.log(f"onboarding: {vpw or 'the viewport had drifted — restored before this frame'}")
             try:
                 ans = self._call(static, dyn, f"'{need[:40]}' turn {turn}")
             except BudgetSpent as e:
@@ -868,7 +872,13 @@ def reprove_existing(ctx, ids, params=None):
                 ok, why = False, str(e)
             a["video_proof"] = {"mode": f"replay {n}x", "ok": ok, "why": why or None}
         out[aid] = {"ok": ok, "why": why}
-        if not ok:
+        if not ok and why and re.search(r"(?:^|; )post: no element", str(why)) and not a.get("generates"):
+            # the step works, its PROOF element was renamed (UI drift): re-derive the post check, never re-learn the step
+            ok2, why2 = repair_post_assert(ctx, aid, prm)
+            out[aid].update(ok=ok2, post_repair=why2 or "repaired")
+            if ok2:
+                continue
+        if not out[aid]["ok"]:
             r = onboard_action(ctx, f"{a.get('label')} — the existing '{aid}' step ({a.get('kind')}) no longer replays: "
                                     f"{why}", prm, generates=False)
             out[aid]["reonboarded"] = r
@@ -880,6 +890,88 @@ def reprove_existing(ctx, ids, params=None):
                 out[aid]["ok"] = True
     ctx.pb = save_job_playbook(ctx.pb, ctx.out, ctx.app)
     return out
+
+
+ASSERT_SYSTEM = """A web app's UI changed. A playbook step (a click that turns a MODE on, opens a panel, …) still works, but
+its 'post' check — the element that proves the step LANDED — no longer exists. You see the live page right AFTER the
+step ran (screenshot of the full viewport + the visible elements). Say whether the step's expected state is visibly
+there, and if so give ONE new post check that exists only AFTER the step: prefer a stable CSS selector
+([aria-label="…"], [role="…"][aria-label="…"], [data-testid="…"]), else a short visible text that appears only in
+that state (a mode bar's words). Answer JSON only: {"visible": true|false, "kind": "selector|text", "selector": "",
+"value": "", "why": ""}"""
+
+
+def repair_post_assert(ctx, aid, params=None):
+    """A step whose replay fails ONLY at its post ('post: no element …') while the app may have just renamed the
+    element (re-run 15: 'Image comment surface' / 'Cancel markup' gone, the modes visibly ON). One vision call on the
+    FULL frame after the step proposes a new post check; code proves it appears only AFTER the step (absent before,
+    present after) and then re-proves the step 3/3 — never accepted on vision alone. Written to this video's playbook
+    as data with a 'repaired_from' note. → (ok, why)."""
+    a = ctx.pb["actions"].get(aid)
+    if not a or a.get("generates") or not a.get("post"):
+        return False, "nothing to repair"
+    p = dict(params or {})
+    s = Session(ctx.guarded(allow_generate=False), ctx.pb)
+    try:
+        ok, why = s.open(playbook._fill(a.get("start_url") or ctx.pb["start_state"]["url"], p))
+        if not ok:
+            return False, f"start: {why}"
+        for r in a.get("requires", []):
+            for st in playbook.resolve(ctx.pb, r, p):
+                s.act(st)
+        time.sleep(0.5 if getattr(s, "polls", False) else 0)
+        before = s.t.send({"cmd": "observe"}) or {}
+        for st in playbook.resolve(ctx.pb, aid, p):
+            ok, why = s.act(st)
+            if not ok:
+                return False, f"the step itself fails: {why}"
+        time.sleep(1.5 if getattr(s, "polls", False) else 0)
+        obs = s.t.send({"cmd": "observe"}) or {}
+        content = [{"type": "text", "text": f"STEP: {a.get('label')} ({aid}); OLD post check: {json.dumps(a.get('post'))}\n"
+                                            f"ELEMENTS AFTER THE STEP: " + json.dumps([{k: i.get(k) for k in ('tag', 'text', 'box')}
+                                                                                      for i in (obs.get('items') or [])[:120]])[:7000]}]
+        img = _shot_block(obs.get("shot"))
+        if img:
+            content.append(img)
+        try:
+            ctx.budget.need(0.15)
+            r = ctx.llm(config.VISION_MODEL, ASSERT_SYSTEM, None, 1200, effort="low", msgs=[{"role": "user", "content": content}],
+                        stage=f"preprod.onboard.{ctx.app}", purpose=f"repair the post check of {aid}")
+            ctx.budget.add((r or {}).get("usd"))
+            m = re.search(r"\{.*\}", str((r or {}).get("text") or ""), re.S)
+            j = json.loads(m.group(0)) if m else {}
+        except Exception as e:  # noqa: BLE001
+            return False, f"the vision call failed: {e}"
+        if not j.get("visible"):
+            return False, f"the expected state is not visible after the step ({str(j.get('why'))[:120]})"
+        if j.get("kind") == "selector" and str(j.get("selector") or "").strip():
+            new = {"kind": "selector", "selector": str(j["selector"]).strip()}
+            after_n = (s.t.send({"cmd": "count", "selector": new["selector"]}) or {}).get("n", 0)
+            if not after_n:
+                return False, f"the proposed {new['selector']} is not on the page after the step"
+        elif str(j.get("value") or "").strip():
+            new = {"kind": "text", "value": str(j["value"]).strip()[:80]}
+            if new["value"] not in str((s.t.send({"cmd": "text"}) or {}).get("text", "")):
+                return False, f"'{new['value']}' is not on the page after the step"
+            if new["value"] in " ".join(str(i.get("text") or "") for i in before.get("items") or []):
+                return False, f"'{new['value']}' was there BEFORE the step too (proves nothing)"
+        else:
+            return False, "no new check proposed"
+    finally:
+        s.close()
+    old = a.get("post")
+    a["post"] = [new]
+    pr = prove(ctx, aid, p, n=int(onboarding_rules().get("replays_required", 3)))
+    if not pr["proven"]:
+        a["post"] = old
+        return False, "the repaired check did not replay 3/3: " + "; ".join(str(x.get("why")) for x in pr["replays"] if not x["ok"])[:200]
+    a["repaired_from"] = {"post": old, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "why": str(j.get("why"))[:200],
+                          "proof": f"{pr['ok']}/{pr['n']}"}
+    a["video_proof"] = {"mode": "post repaired + replayed", "ok": True, "replays": pr["replays"]}
+    ctx.pb = save_job_playbook(ctx.pb, ctx.out, ctx.app)
+    ctx.log(f"P2: {aid}'s post check drifted ({json.dumps(old)[:100]}) — repaired to {json.dumps(new)} and replayed "
+            f"{pr['ok']}/{pr['n']}")
+    return True, None
 
 
 def presence(ctx, aid, params=None):

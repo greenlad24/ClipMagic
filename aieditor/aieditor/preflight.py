@@ -182,6 +182,19 @@ COVERAGE = [
      "detector": "onboard.failed_prereq (this run)", "repair": "one self-repair of the prerequisite; then every dependent "
                                                                "step is skipped straight to its fallback, logged",
      "test": "tests/test_selfheal.py::D-prereq-failed"},
+    {"id": "A-cropped-observation", "when": "2026-10-11 09:07 re-run 15", "cls": "A",
+     "failure": "the explorer's 1280x720 observation showed only the top-left of the page (the viewer's Markup toolbar "
+                "out of frame) while live.jpg showed all of it — proposals and proofs were blind",
+     "detector": "agent_rec ensureViewport on every off-camera observe / state (vp in the reply) + preflight.viewport_problem",
+     "repair": "the viewport is re-applied when it drifted; the clip covers the WHOLE layout viewport, downscaled, never cropped",
+     "test": "tests/test_selfheal.py::A-cropped-observation"},
+    {"id": "A-post-assert-drift", "when": "2026-10-11 09:13 re-run 15", "cls": "A",
+     "failure": "viewer_comment / viewer_markup post checks ('Image comment surface', 'Cancel markup') fail from a clean "
+                "state while the modes are visibly ON — ChatGPT renamed the elements (3/3 on 2026-10-09)",
+     "detector": "reprove_existing: a replay failing only at 'post: no element'",
+     "repair": "onboard.repair_post_assert: one vision call on the full frame → a new check, proven absent before / present "
+               "after, replayed 3/3, written with repaired_from — never on vision alone",
+     "test": "tests/test_selfheal.py::A-post-assert-drift"},
     {"id": "A-required-step-drift", "when": "2026-10-11 re-run 15", "cls": "A",
      "failure": "every Markup-stroke proof failed inside a REQUIRED step: \"requires viewer_markup: post: no element "
                 "button[aria-label='Cancel markup']\" (its post assert drifted)",
@@ -447,6 +460,18 @@ class RecordingPreflight:
             rep["why"] = (rep.get("why") or "") + " — not proven on 2 screencasts, reverted"
             self.log(f"preflight: the {dec.get('verdict')} fix did not hold on 2 screencasts — reverted")
         return rep
+
+
+def viewport_problem(vp):
+    """agent_rec's off-camera viewport proof ({w, h, fixed, want: [w, h, scale]}) → a reason or None. Re-run 15: the
+    explorer's frames showed only the top-left of the page (the layout viewport was not the recording's) — the
+    agent and the proofs were blind to the right / bottom of the screen (the viewer's Markup toolbar)."""
+    if not isinstance(vp, dict) or not vp.get("want"):
+        return None
+    w0, h0 = vp["want"][0], vp["want"][1]
+    if vp.get("w") and vp.get("h") and (abs(vp["w"] - w0) > 2 or abs(vp["h"] - h0) > 2):
+        return f"viewport {vp['w']}x{vp['h']} is not the recording's {w0}x{h0} (frames would be cropped)"
+    return None
 
 
 # ───────────────────────── B: the asset audit (before reuse / before recording) ─────────────────────────

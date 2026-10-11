@@ -145,10 +145,39 @@ async function recover() {
 // page captures the top of the document, whose tiles are no longer painted = BLACK (2026-10-06:
 // every "scrolled into a black section" of linearity.io/pricing was this, not the page). The
 // clip starts at the current scroll offset.
+// ⚠️ 2026-10-11 (re-run 15): the onboarding agent's 1280×720 observation showed only the TOP-LEFT of the page (the
+// image viewer cut at the right, its Markup toolbar below the frame) while live.jpg showed all of it: the page's
+// layout viewport was no longer CSS_W×CSS_H (the device-metrics emulation was lost — the window's own size laid it
+// out), so a CSS_W×CSS_H clip cropped it. Every shot first PROVES the viewport (ensureViewport re-applies it when it
+// drifted), and the clip always covers the WHOLE layout viewport, downscaled — never cropped.
+let vpFixes = 0;
+async function viewportNow(withDpr = false) {
+  try {
+    const m = await cdp.send("Page.getLayoutMetrics");
+    const l = m.cssLayoutViewport || m.layoutViewport || {}, v = m.cssVisualViewport || m.visualViewport || {};
+    const dpr = withDpr ? await page.evaluate(() => window.devicePixelRatio).catch(() => null) : null;
+    return { w: l.clientWidth || null, h: l.clientHeight || null, x: v.pageX || 0, y: v.pageY || 0, zoom: v.zoom || 1, dpr };
+  } catch { return { w: null, h: null, x: 0, y: 0, zoom: 1, dpr: null }; }
+}
+async function ensureViewport() {
+  let vp = await viewportNow(true);
+  // (window.devicePixelRatio is NOT compared: the Mac identity reports its own — macchrome.mjs)
+  const off = (vp.w && Math.abs(vp.w - CSS_W) > 2) || (vp.h && Math.abs(vp.h - CSS_H) > 2);
+  if (off) {
+    vpFixes += 1;
+    process.stderr.write(`viewport drifted (${vp.w}x${vp.h} @${vp.dpr}) — restored to ${CSS_W}x${CSS_H} @${SCALE.toFixed(3)}\n`);
+    await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE }).catch(() => {});
+    await sleep(300);
+    vp = await viewportNow(true);
+  }
+  return { ...vp, fixed: off, fixes: vpFixes, want: [CSS_W, CSS_H, +SCALE.toFixed(4)] };
+}
 async function vclip(scale) {
-  let x = 0, y = 0;
-  try { const m = await cdp.send("Page.getLayoutMetrics"); const v = m.cssVisualViewport || m.visualViewport || {}; x = v.pageX || 0; y = v.pageY || 0; } catch {}
-  return { x, y, width: CSS_W, height: CSS_H, scale };
+  const vp = await viewportNow();
+  const w = vp.w || CSS_W, h = vp.h || CSS_H;
+  // the whole layout viewport, scaled so the output keeps the size the caller expects (CSS_W × scale) — downscaled,
+  // never cropped, when the page is laid out wider than CSS_W
+  return { x: vp.x, y: vp.y, width: w, height: h, scale: scale * CSS_W / w };
 }
 // ⚠️ 2026-10-08: under paused virtual time Chrome paints only when something changes — on a STATIC page the
 // 2nd captureScreenshot never returned (the recorder hung for good: the old 30 s guard covered only the
@@ -623,6 +652,7 @@ async function observe() {
     return { url: location.href, title: document.title, items };
   }), new Promise((_, rej) => { otimer = setTimeout(() => { crashed = true; rej(new Error("the page did not answer — it was reopened; observe again")); }, 90000); })])
     .finally(() => clearTimeout(otimer));
+  const vp = rec ? null : await ensureViewport();          // off camera: the frame covers the WHOLE viewport
   const shot = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`);
   // ⚠️ the timeout must be CLEARED when the shot returns: a bare sleep().then() fired 30 s
   // after every observation and marked a healthy page as crashed (2026-10-06)
@@ -638,7 +668,8 @@ async function observe() {
   // GUARD: a bot check / login wall is never recorded — reported to agentrec.py, which drops the segment
   const w = await wall(page);
   if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); }
-  return { t: t(), ...info, shot, lum, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)], wall: w };
+  return { t: t(), ...info, shot, lum, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)], wall: w,
+           ...(vp ? { vp } : {}) };
 }
 
 async function boxOf(ref, tight = false) {
@@ -1466,6 +1497,7 @@ for await (const line of rl) {
     }
     else if (m.cmd === "state") {
       // FIRST-FRAME FACTS (G3; screencast/first_frame.py verdict): what frame 1 would show, read from the DOM
+      const vp = rec ? null : await ensureViewport();
       const d = await page.evaluate((m) => {
         const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
           return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
@@ -1500,7 +1532,8 @@ for await (const line of rl) {
       try { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90, clip: await vclip(1 / SHOT_F) }); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
       let fp = null; try { fp = await fingerprint(); } catch {}
       const priv = await privacyBoxes(page, privateSelectors(), 1);          // C7: private boxes in this frame (CSS px)
-      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot, fp, private: priv });
+      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot, fp, private: priv,
+            ...(vp ? { vp } : {}) });
     }
     else if (m.cmd === "fp") { let fp = null; try { fp = await fingerprint(); } catch {} out({ ok: fp != null, fp, url: page.url() }); }
     else if (m.cmd === "assert") {

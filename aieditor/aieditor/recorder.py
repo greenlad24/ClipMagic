@@ -216,6 +216,10 @@ def first_frame_check(sess, start_state=None, account=None, pixels=True, outside
         dom.pop("wall", None)                          # a logged-out page SHOWS log in / sign up: that is the view
     accepted = []
     ok, why = ff.verdict_for(facts, start_state, account, accepted=accepted)
+    from .preflight import viewport_problem
+    vpw = viewport_problem(st.get("vp"))
+    if vpw:                                             # the frame would be cropped: never a clean first frame
+        ok, why = False, why + [vpw]
     if accepted:
         st["accepted"] = accepted                       # reasons the playbook's resting-UI allowances accepted (data)
     st["facts"] = facts
