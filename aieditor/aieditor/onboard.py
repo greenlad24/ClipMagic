@@ -1693,6 +1693,16 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     by_asset = {a["id"]: a for a in assets.get("assets", [])}
     usable = {k for k, a in by_asset.items() if a.get("status") in ("ready", "pending_in_app")}
     ctx.asset_files.update({k: a["file"] for k, a in by_asset.items() if a.get("file")})
+    # every picture an earlier run of THIS job already made and checked (incl. sources a merge made: person, stall) is
+    # known to the source step, so it is reused, never made again under a new name (re-run 10: person_portrait existed,
+    # the source step named a new 'person_photo' and generated it again)
+    for side in sorted((Path(ctx.out) / "assets").glob("*.produced.json")):
+        try:
+            row_ = json.loads(side.read_text())
+        except (OSError, ValueError):
+            continue
+        if row_.get("status") == "ready" and Path(row_.get("file") or "").exists() and side.name.split(".")[0] not in ctx.asset_files:
+            _remember(ctx, side.name.split(".")[0], row_)
     for k, a in by_asset.items():
         if a.get("file") and a.get("status") == "ready":
             _remember(ctx, k, a) if str((a.get("source") or {}).get("type", "")).startswith("in-app generation") \
