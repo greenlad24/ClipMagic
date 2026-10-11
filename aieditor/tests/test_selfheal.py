@@ -1108,4 +1108,26 @@ check(_FakeRec.calls == {0: 2, 1: 1} and res["segments"][0]["status"] == "crashe
 _src = (ROOT / "screencast" / "agent_rec.mjs").read_text() if "ROOT" in globals() else ""
 check(not _src or 'SESSION === "outside" && w0.kind === "login"' in _src,
       "the outside (never-logged-in) view's login header is not a wall at a beat assert (re-run 16, pricing page)")
+# run 18: a picture the audit set aside comes BACK when its remake fails (never worse off than before)
+import tempfile as _tf2  # noqa: E402
+from aieditor import onboard as _OB, preflight as _PF  # noqa: E402
+with _tf2.TemporaryDirectory() as _d:
+    _out = Path(_d)
+    (_out / "assets").mkdir()
+    (_out / "assets" / "erase_result.png").write_bytes(b"\x89PNG old")
+    (_out / "assets" / "erase_result.produced.json").write_text(json.dumps({"id": "erase_result", "status": "ready",
+                                                                             "file": str(_out / "assets" / "erase_result.png")}))
+    class _C:
+        pass
+    _c = _C()
+    _c.out, _c.asset_files, _c.asset_descs, _logs2 = _out, {}, {}, []
+    _c.log = _logs2.append
+    _moved = _PF.set_aside(_out, "erase_result", "tool_not_tool")
+    _c._set_aside = {"erase_result": {"moved": _moved, "problems": ["tool_not_tool"]}}
+    _dst = _out / "assets" / "erase_result.png"
+    check(not _dst.exists(), "set aside before the remake")
+    _back = _OB.restore_set_aside(_c, "erase_result", _dst, _dst.with_suffix(".produced.json"))
+    check(_back and _back["status"] == "ready" and _dst.read_bytes() == b"\x89PNG old" and _back["fallback"]["audit"] == ["tool_not_tool"]
+          and _c.asset_files.get("erase_result") == str(_dst) and any("used again" in x for x in _logs2),
+          f"the remake failed → the earlier picture is back, as a fallback with its warning: {_back}")
 print(f"test_selfheal: {N} checks passed")

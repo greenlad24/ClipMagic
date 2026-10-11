@@ -378,6 +378,9 @@ SESSIONS = ("logged_in", "outside")
 ONBOARD_ACTION = "onboard.action"
 MOTION_FEATURE = "motion.feature"
 NEED_ACTIONS = (ONBOARD_ACTION, MOTION_FEATURE)
+# agent mode (Jake 2026-10-11): a beat whose control the REHEARSAL AGENT finds on screen (its need kept in words) — a
+# valid action of every app, never a need to route (aieditor/rehearse.py: any action not in the playbook is the agent's)
+AGENT_ACTION = "agent.find"
 NEED_KINDS = ("action", "asset", "feature", "other")
 ROUTED_CODES = ("onboard", "feature", "new_asset")    # filled by pre-production (P2/P3/P4), never re-asked
 PLAN_SYSTEM = """You are the edit planner of Jake Dawson's automated YouTube editing factory (AI tools for business
@@ -946,7 +949,7 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False, p4=None):
                              word_ids=[s["start_word"], s["end_word"]]))
             continue
         allowed = set(app["actions"]) | set(CAMERA_ACTIONS) | (set(OUTSIDE_ACTIONS) if s["session"] == "outside" else set())
-        allowed |= set(NEED_ACTIONS)
+        allowed |= set(NEED_ACTIONS) | {AGENT_ACTION}
         for bt in s["beats"]:
             k = pos.get(bt["word_id"])
             sent = _sentence_of(sents, bt["word_id"])

@@ -34,6 +34,7 @@ for k in ("AIEDITOR_API_LEDGER", "AIEDITOR_API_JOB_CAP_USD", "AIEDITOR_API_DAILY
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import os as _os, tempfile as _tf  # noqa: E401
+_os.environ.setdefault("AIEDITOR_REHEARSAL", "playbook")   # these tests cover the P2 playbook path (agent mode skips P2)
 _os.environ.setdefault("AIEDITOR_PROVEN_LIB", _tf.mkstemp(suffix="-proven.jsonl")[1])  # never the real recent-proofs ledger
 from aieditor import apiledger, beatscript, director, llm, onboard, planfit, playbook, preprod, skill  # noqa: E402
 
@@ -461,6 +462,7 @@ def test_route():
     codes = sorted({e["code"] for e in errs})
     check({"onboard", "feature", "new_asset"} <= set(codes), f"the plan's needs are routed codes: {codes}")
     rows = list(answer["needs_primitive"]) + director.as_needs_primitive([e for e in errs if e["code"] in director.ROUTED_CODES])
+    answer0, rows0 = json.loads(json.dumps(answer)), json.loads(json.dumps(rows))
     plan = {"answer": answer, "needs_primitive": rows, "warnings": []}
     out = TMP / "jobR" / "preprod"
     made = []
@@ -493,6 +495,22 @@ def test_route():
     check(sha(skill.playbook_path("chatgpt")) == shared_before, "the shared playbook untouched")
     check(not res["plan"]["needs_primitive"] and not res["plan"]["held"], "the routed plan never holds for needs_primitive")
     print(f"  route: {res['report']} → {st}; onboarding ${res['usd']:.2f}")
+    # AGENT mode (Jake 2026-10-11): nothing is learned up front — the beat keeps its need for the rehearsal agent, and
+    # the routed plan neither holds nor counts it as needs_primitive
+    _os.environ["AIEDITOR_REHEARSAL"] = "agent"
+    try:
+        plan2 = json.loads(json.dumps({"answer": answer0, "needs_primitive": rows0, "warnings": []}))
+        ctx2 = make_ctx(TMP / "jobRA" / "preprod", scripted_llm([]), in_app=in_app)
+        res2 = onboard.route(ctx2, {"plan": plan2, "raw": {"overlays": []}}, video, sites, {"assets": []},
+                             lambda a: planfit.Facts(readiness, a))
+        st2 = {n["route"]: n["status"] for n in res2["needs"]}
+        check(st2.get("P2", "").startswith("left to the rehearsal agent") and res2["held"] == []
+              and not res2["plan"]["needs_primitive"], f"agent mode: P2 left to the agent, nothing held: {st2} {res2['held']}")
+        beats2 = [b for s in res2["plan"]["schema_plan"]["segments"] for b in s["beats"]]
+        check(any(b["action"] == director.AGENT_ACTION and "label" in (b.get("need") or "") for b in beats2),
+              "the beat keeps its need in words for the agent")
+    finally:
+        _os.environ["AIEDITOR_REHEARSAL"] = "playbook"
 
 
 def main():

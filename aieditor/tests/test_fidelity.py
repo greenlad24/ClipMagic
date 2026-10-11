@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import os as _os, tempfile as _tf  # noqa: E401
+_os.environ.setdefault("AIEDITOR_REHEARSAL", "playbook")   # these tests cover the P2 playbook path (agent mode skips P2)
 _os.environ.setdefault("AIEDITOR_PROVEN_LIB", _tf.mkstemp(suffix="-proven.jsonl")[1])  # never the real recent-proofs ledger
 import test_producer as tp  # noqa: E402  (sets the temp work dir + env first)
 from aieditor import director, genledger, onboard, producer  # noqa: E402

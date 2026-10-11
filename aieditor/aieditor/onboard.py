@@ -1117,8 +1117,11 @@ def reuse_ok(ctx, aid, old):
     if probs:
         ctx.log(f"{aid}: the stored picture fails the asset audit (" + "; ".join(x["why"] for x in probs)[:240]
                 + ") — set aside, made again")
-        preflight.set_aside(ctx.out, aid, "; ".join(x["rule"] for x in probs))
+        moved = preflight.set_aside(ctx.out, aid, "; ".join(x["rule"] for x in probs))
         (getattr(ctx, "asset_files", None) or {}).pop(aid, None)   # its picture is gone: nothing may reuse or copy it any more
+        if not hasattr(ctx, "_set_aside"):
+            ctx._set_aside = {}
+        ctx._set_aside[aid] = {"moved": moved, "problems": [x["rule"] for x in probs]}
         return False
     fid = old.get("fidelity") or {}
     if fid.get("v", 0) >= prod_mod.FIDELITY_V and all(fid.get(k, True) for k in ("look_ok", "clean", "same_subject")):
@@ -1299,10 +1302,40 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
         base = verbatim_plus(prompt, look, desc) if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
         row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, base, new_photo, look=look)
     row["look"] = look
+    if row.get("status") != "ready":
+        back = restore_set_aside(ctx, aid, dst, side)
+        if back:
+            return back
     if row.get("status") == "ready":
         _remember(ctx, aid, row)
         side.write_text(json.dumps(row, indent=1, ensure_ascii=False))
     return row
+
+
+def restore_set_aside(ctx, aid, dst, side):
+    """A picture the audit set aside this run comes BACK when its remake fails — a remake never leaves the video worse
+    off (run 18: four tool pictures — markup, comment, erase, logo — were set aside to be made by the app's tool, the
+    remake failed, and their beats lost a picture an earlier run had made and checked). It returns as a FALLBACK, its
+    audit problems kept on the row (warnings), so a later run still tries the real tool first."""
+    info = (getattr(ctx, "_set_aside", None) or {}).get(aid)
+    if not info:
+        return None
+    files = {Path(m).name.split(".set-aside-")[0]: Path(dst).parent / m for m in info.get("moved") or []}
+    pic, row_f = files.get(Path(dst).name), files.get(side.name)
+    if not (pic and pic.exists() and row_f and row_f.exists()):
+        return None
+    try:
+        old = json.loads(row_f.read_text())
+    except (OSError, ValueError):
+        return None
+    shutil.copyfile(pic, dst)
+    old.update(file=str(dst), status="ready", fallback={"why": "the remake failed — the earlier picture is used",
+                                                         "audit": info.get("problems") or []})
+    side.write_text(json.dumps(old, indent=1, ensure_ascii=False))
+    _remember(ctx, aid, old)
+    ctx.log(f"{aid}: the remake failed — the earlier picture is used again (a fallback; the audit's "
+            f"{', '.join(info.get('problems') or [])} is kept as a warning)")
+    return old
 
 
 def _produce_in_app(ctx, aid, desc, dst, made_from, inputs, prompt, new_photo, look="real"):
@@ -2245,6 +2278,36 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         handle_c(r)
 
     # ── A (P2): onboard every missing action, once per distinct need ──
+    # In AGENT mode (Jake 2026-10-11: "the agents finds the way to do the screencast") nothing is learned up front: the
+    # rehearsal agent finds each missing control on screen when it rehearses that screencast (run 18 still spent its
+    # P2 rounds learning Sketch / Markup steps the agent then had to find again). The beat keeps its need in words.
+    from . import rehearse as _RH
+    if _RH.mode() == "agent" and pending_a:
+        for r in pending_a:
+            pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
+            need = pr.get("need") or r.get("need") or str(r.get("why"))
+            wid = pr.get("word_id") or (r.get("word_ids") or [None])[0]
+            hit = False
+            for _, _s, bt in _beats(answer):
+                if bt.get("action") == director.ONBOARD_ACTION and (bt.get("word_id") == wid or (bt.get("need") or "") == need):
+                    bt["action"], bt["need"], hit = director.AGENT_ACTION, bt.get("need") or need[:300], True
+            if not hit and wid is not None:
+                seg = next((s for s in answer.get("segments") or [] if pos.get(s["start_word"], 1e9) <= pos.get(wid, -1)
+                            <= pos.get(s["end_word"], -1)), None)
+                bt = {"word_id": wid, "action": director.AGENT_ACTION, "need": need[:300], "body": need[:140],
+                      "subject": "screen", "text": pr.get("text"), "url": None, "asset_id": None, "live": False,
+                      "wait_end_word": None}
+                if seg is None:
+                    a, b, _ = _sentence_ids(video, wid)
+                    seg = {"start_word": a, "end_word": b, "app": ctx.app, "session": "logged_in", "beats": []}
+                    answer.setdefault("segments", []).append(seg)
+                    answer["segments"].sort(key=lambda s: pos.get(s["start_word"], 1e9))
+                seg["beats"] = sorted(seg["beats"] + [bt], key=lambda x: pos.get(x["word_id"], 1e9))
+            answer["needs_primitive"] = [x for x in answer.get("needs_primitive") or [] if not
+                                         (wid is not None and x.get("word_ids") and wid in x["word_ids"])]
+            note(r, "P2", "left to the rehearsal agent (agent mode: found on screen while rehearsing)")
+        ctx.log(f"P2: {len(pending_a)} missing action(s) left to the rehearsal agent — nothing learned up front (agent mode)")
+        pending_a = []
     seen = {}
     for r in pending_a:
         ctx.check_cancel()
@@ -2314,9 +2377,12 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     # the actions this video uses, re-proven for THIS video (the shared playbook is only a hint)
     used = sorted({bt["action"] for _, _, bt in _beats(answer)
                    if bt.get("action") in ctx.pb["actions"] and not str(bt["action"]).startswith("ob_")})
+    if _RH.mode() == "agent":
+        used = []           # agent mode: the rehearsal agent proves each screencast itself (run 17: 'viewer_markup no
+        #                     longer replays' re-learned a step the agent would find on screen anyway)
     try:
         rep = reprove_existing(ctx, used, {bt["action"]: {"text": bt.get("text")} for _, _, bt in _beats(answer)
-                                           if bt.get("text")})
+                                           if bt.get("text")}) if used else {}
     except BudgetSpent as e:
         rep = {}
         warnings.append(str(e))
