@@ -1616,9 +1616,12 @@ for await (const line of rl) {
       const r = await page.evaluate((m) => {
         const fail = [], url = location.href;
         if (Array.isArray(m.url_allow) && m.url_allow.length && !m.url_allow.some((u) => url.startsWith(u) || new RegExp(u).test(url))) fail.push(`url ${url} not in the whitelist`);
-        const body = document.body?.innerText || "";
-        for (const tx of m.present || []) if (!body.toLowerCase().includes(String(tx).toLowerCase()) && !document.querySelector(`[aria-label="${tx}"]`)) fail.push(`missing "${tx}"`);
-        for (const tx of m.absent || []) if (body.toLowerCase().includes(String(tx).toLowerCase())) fail.push(`unexpected "${tx}"`);
+        // whitespace folded on both sides (run 22: a menu item reads "Sketch\nDraw and attach an image" in the page —
+        // the agent's "Sketch Draw and attach an image" never matched, 25 beat_done claims refused)
+        const fold = (x) => String(x).toLowerCase().replace(/\s+/g, " ").trim();
+        const body = fold(document.body?.innerText || "");
+        for (const tx of m.present || []) if (!body.includes(fold(tx)) && !document.querySelector(`[aria-label="${tx}"]`)) fail.push(`missing "${tx}"`);
+        for (const tx of m.absent || []) if (body.includes(fold(tx))) fail.push(`unexpected "${tx}"`);
         const fld = m.field ? document.querySelector(m.field) : document.activeElement;
         // a mode chip inside the composer ("Create image") is not the field's text (run 20)
         const txt = (e) => { if (e.value != null) return String(e.value); const c = e.cloneNode(true);

@@ -536,7 +536,9 @@ def asset_chat_start(seg, assets):
     made (run 20: screencasts 2, 4, 5 continued work on the bottle photo but opened on the empty ChatGPT home — the agent
     rightly never opens a chat by itself, gave up, and they fell back). A segment that types a prompt before it touches a
     picture starts on the home page as before. Only a chat THIS job created (the picture's own chat_url)."""
-    if _session_kind(seg) == "outside" or seg.get("url") or not assets:
+    # the plan names every ChatGPT segment by the app's HOME url (run 22: so the rule never fired) — only a specific
+    # chat url given by the plan wins over the picture's chat
+    if _session_kind(seg) == "outside" or "/c/" in str(seg.get("url") or "") or not assets:
         return None
     rows = {a.get("id"): a for a in (assets.get("assets") or []) if isinstance(a, dict)}
     for b in sorted([x for x in seg.get("beats") or [] if x.get("t_word") is not None], key=lambda x: x["t_word"]):
@@ -556,10 +558,10 @@ def start_state_for(seg, pb, assets=None):
     dressing to prove, and its logged-out header (Log in / Sign up) is the view, never a wall."""
     outside = _session_kind(seg) == "outside"
     chat = asset_chat_start(seg, assets)
-    start_state = {"url": seg.get("url") or chat or (pb.get("start_state") or {}).get("url"),
+    start_state = {"url": chat or seg.get("url") or (pb.get("start_state") or {}).get("url"),
                    "asserts": [] if outside else list((pb.get("start_state") or {}).get("asserts") or []),
                    "set_dressing": [] if outside else list(pb.get("set_dressing") or []), "fingerprint": None}
-    if chat and not seg.get("url"):
+    if chat:
         # opened ON the picture's chat: the set dressing must not leave it ('new chat') — a chat page is Chat mode
         start_state["set_dressing"] = [x for x in start_state["set_dressing"] if x not in ("new_chat", "chat_mode")]
     src = (pb.get("outside_view") or {}) if outside else (pb.get("start_state") or {})

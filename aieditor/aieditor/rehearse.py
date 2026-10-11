@@ -745,13 +745,15 @@ class SegmentAgent:
                 return "the field does not hold his words verbatim: " + "; ".join(r.get("fail") or [])[:200]
         gen = any(s.get("generates") for s in mine)
         present = [] if gen or b.get("live") else list(b.get("must_text") or [])
-        pt = _norm(done.get("proof_text"))[:80]
-        if pt:
-            present.append(pt)
         if present:
             r = self._send({"cmd": "assert", "present": present})
             if not r.get("ok", True):
                 return "not on screen: " + "; ".join(r.get("fail") or [])[:200]
+        # the agent's OWN proof text is a hint, never a gate: a quote that does not match the page text exactly (line
+        # breaks, an icon's label) refused 25 correct beat_done claims in run 22 — it is only kept when it is on screen
+        pt = _norm(done.get("proof_text"))[:80]
+        if pt and not self._send({"cmd": "assert", "present": [pt]}).get("ok", True):
+            done.pop("proof_text", None)
         return None
 
     def reset_to(self, k, todo):

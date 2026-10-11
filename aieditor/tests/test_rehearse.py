@@ -520,7 +520,7 @@ check('wire["ref"] = a["ref"]' in _src_rh and "len(hits) <= 1" in _src_rh,
 # run 20: a screencast that continues on a picture the video already made OPENS on that picture's job chat
 _as = {"assets": [{"id": "pic", "status": "ready", "source": {"chat_url": "https://chatgpt.com/c/job-pic"}}]}
 _pbs = {"start_state": {"url": "https://chatgpt.com/", "asserts": []}, "set_dressing": ["new_chat", "chat_mode", "hide_sidebar"]}
-_seg_pic = {"app": "chatgpt", "session": "logged_in", "beats": [
+_seg_pic = {"app": "chatgpt", "session": "logged_in", "url": "https://chatgpt.com/", "beats": [
     {"t_word": 1.0, "action": "camera.zoom", "asset_id": "pic"}, {"t_word": 2.0, "action": "open_image_viewer", "asset_id": "pic"}]}
 _ss = B.start_state_for(_seg_pic, _pbs, _as)
 check(_ss["url"] == "https://chatgpt.com/c/job-pic" and "new_chat" not in _ss["set_dressing"]
