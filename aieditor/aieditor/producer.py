@@ -158,14 +158,16 @@ class Producer:
     def tool_of(self, desc):
         """The app tool an asset is the result of, from the playbook's data (first match wins), or None."""
         d = str(desc or "")
-        for k, t in self.tools().items():
+        best = None                                     # the tool NAMED FIRST wins ("Resize result: same bottle cutout…"
+        for k, t in self.tools().items():               # is a resize, not a remove-BG — re-run 13)
             for rx in t.get("match") or []:
                 try:
-                    if re.search(rx, d, re.I):
-                        return k
+                    m = re.search(rx, d, re.I)
                 except re.error:
                     continue
-        return None
+                if m and (best is None or m.start() < best[0]):
+                    best = (m.start(), k)
+        return best[1] if best else None
 
     def ensure_tool_action(self, tool, i, st, params):
         """A tool step named by its NEED (not yet an action of this video's playbook) → onboarded once (P2 explorer,
