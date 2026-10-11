@@ -1059,9 +1059,11 @@ de = canary.enqueue("chatgpt", jobs=jobs_c, now=1_800_001_200)
 apiledger.record({"ts": __import__("time").time(), "job": de.name, "usd": 1.45, "model": "x"})
 rep_e = canary.run(de, json.loads((de / "request.json").read_text()), log=lambda *a: None, ctx_factory=lambda *a: CCtx())
 check(rep_e["classes"]["D"] == "fail" and rep_e["classes"]["B"] == "not run", f"no headroom → nothing runs: {rep_e['classes']}")
-src_lab = (ROOT.parent / "lab" / "server" / "src" / "aieditor" / "factory.ts").read_text()
-check("canary-report.json" in src_lab and "Weekly canary" in (ROOT.parent / "lab" / "src" / "components" / "autoeditor"
-                                                               / "FactoryPanel.tsx").read_text(), "the Lab shows the canary line")
+_lab_ts = ROOT.parent / "lab" / "server" / "src" / "aieditor" / "factory.ts"
+if _lab_ts.exists():      # the Lab lives beside aieditor in the repo; a live-update snapshot carries aieditor only
+    src_lab = _lab_ts.read_text()
+    check("canary-report.json" in src_lab and "Weekly canary" in (ROOT.parent / "lab" / "src" / "components" / "autoeditor"
+                                                                   / "FactoryPanel.tsx").read_text(), "the Lab shows the canary line")
 
 # ── 9. THE COVERAGE TABLE: every past failure has a class, a detector, a repair and a REAL test ──
 for row in preflight.COVERAGE:
