@@ -366,8 +366,11 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     from . import preflight
     recs = {i: recorder._load(w / f"seg-{i:02d}" / "recording.json", None) or {"status": "not_recorded", "why": "no recording"}
             for i in range(len(sched))}
+    # the script rides along: a fallback finds the prompt the narration reads in its stretch (verbatim, his words)
+    _req = recorder._load(d / "request.json", None) or {}
     fb_evs, fb_rows = preflight.fallbacks(sched, recs, recorder._load(d / "preprod" / "assets.json", None) or {"assets": []},
-                                          video, out_dir=w, log=lambda m: log(f"edit {k}: {m}"))
+                                          {**video, "script": _req.get("script") or ""}, out_dir=w,
+                                          log=lambda m: log(f"edit {k}: {m}"))
     for r in fb_rows:
         ev_log.emit("log", f"edit {k}: screencast {r['screencast']} fallback — {r['fallback']} ({r['why'][:120]})", level="warn")
     progress("Rendering the overlays…", 0.88)

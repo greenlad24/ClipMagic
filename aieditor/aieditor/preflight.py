@@ -712,8 +712,10 @@ def fallback_event(seg, assets, video, why):
     → (event | None, note)."""
     from . import director, motiontemplates as MT
     beats = seg.get("beats") or []
-    prompt = next((str((b.get("params") or {}).get("text") or "") for b in beats
-                   if b.get("action") in ("paste_prompt", "type_prompt", "paste", "type") and (b.get("params") or {}).get("text")), "")
+    # his on-screen words, wherever the plan keeps them (run 22: the plan's beats carry "text" / "typed_text", not
+    # params.text — every fallback found no prompt and fell to the bare presenter, nothing demonstrated)
+    prompt = next((str(t) for b in beats for t in ((b.get("params") or {}).get("text"), b.get("typed_text"), b.get("text"))
+                   if isinstance(t, str) and len(t.split()) >= 2), "")
     by = {a.get("id"): a for a in (assets or {}).get("assets") or []}
     res = None
     for b in beats:
@@ -723,6 +725,32 @@ def fallback_event(seg, assets, video, why):
     app = seg.get("app")
     words = [w for w in video.get("words") or [] if seg["t0"] - 0.05 <= w["start"] < seg["t1"]]
     start, end = (words[0]["i"], words[-1]["i"]) if words else (None, None)
+    if not prompt and words:
+        # the narration READS his prompt here: the script prompt whose words this stretch of narration carries
+        try:
+            from . import onboard as _ob
+            said = " ".join(str(w.get("w") or w.get("word") or w.get("text") or "") for w in words)
+            cand = _ob.script_prompts(video.get("script") or "")
+            sw = set(_ob._content_words(said))
+            best = max(cand, key=lambda c: len([x for x in _ob._content_words(c) if x in sw]) / max(1, len(_ob._content_words(c))),
+                       default="")
+            cw = _ob._content_words(best)
+            if cw and len([x for x in cw if x in sw]) / len(cw) >= 0.6:
+                prompt = best
+        except Exception:  # noqa: BLE001 — a fallback never breaks the edit
+            pass
+    if not prompt and res is not None:
+        # a step on a picture with no typed words here (a viewer tool, a reveal): the words that MADE that picture,
+        # verbatim, then the real picture — the closest honest demonstration
+        made = str(((res.get("source") or {}).get("prompt")) or res.get("prompt") or "").strip()
+        # only when those words are HIS (a prompt of the script, verbatim) — never an internal prompt that made a photo
+        # he brings (run 22 screencast 7 would have shown "Create an image: Casual smartphone photo…" making his photo)
+        try:
+            from . import onboard as _ob
+            mine = [c for c in _ob.script_prompts(video.get("script") or "") if c and c.lower()[:40] in made.lower()]
+        except Exception:  # noqa: BLE001
+            mine = []
+        prompt = mine[0] if mine else ""
     cands = []
     if res is not None and prompt and MT.is_on("prompt_result"):
         cands.append("prompt_result")
@@ -762,7 +790,7 @@ def fallbacks(segs, recordings, assets, video, out_dir=None, log=print):
     evs, rows = [], []
     for i, seg in enumerate(segs):
         doc = (recordings or {}).get(i) or (recordings or {}).get(str(i))
-        if doc is None or doc.get("status") == "ok":
+        if doc is None or doc.get("status") in ("ok", "timing"):     # "timing" = recorded, a press a frame or two off
             continue
         why = f"{doc.get('status')}: {str(doc.get('why') or '')[:200]}"
         ev, note = fallback_event(seg, assets, video, why)

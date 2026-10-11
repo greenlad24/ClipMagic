@@ -1177,4 +1177,21 @@ check(_s2 is not _s1 and len(_made) == 2 and any("fresh one" in x for x in _rl),
 from aieditor import cloud as _CL  # noqa: E402
 check(_CL.logged_in_job({"workflow": "creative"}, "render") and not _CL.logged_in_job({"workflow": "creative"}, "final"),
       "render carries the login (it re-records); final does not")
+# run 22 / Jake: a fallback demonstrates the narration — the plan's "text" is his prompt, a picture step shows the
+# words that made it only when they are HIS (a script prompt); "timing" recordings are real and never replaced
+_as22 = {"assets": [{"id": "r", "status": "ready", "file": __file__, "source": {"prompt": "Drop this sun lower — golden hour."}},
+                    {"id": "ph", "status": "ready", "file": __file__, "source": {"prompt": "Create an image: Casual smartphone photo"}}]}
+_v22 = {"words": [{"word": "x", "start": 0.0, "end": 1.0, "i": 0}], "duration": 9.0,
+        "script": 'THE PROMPT: "Drop this sun lower — golden hour."'}
+_ev, _note = preflight.fallback_event({"t0": 0.0, "t1": 5.0, "app": "chatgpt", "beats": [{"action": "agent.find", "asset_id": "r"}]},
+                                      _as22, _v22, "t")
+check(_ev and _ev["fields"]["prompt"].startswith("Drop this sun lower"), f"a picture step shows his words + the picture: {_note}")
+_ev2, _n2 = preflight.fallback_event({"t0": 0.0, "t1": 5.0, "app": "chatgpt", "beats": [{"action": "x", "asset_id": "ph"}]},
+                                     _as22, _v22, "t")
+check(_ev2 is None, "an internal prompt that made his own photo is never shown")
+_ev3, _n3 = preflight.fallback_event({"t0": 0.0, "t1": 5.0, "app": "chatgpt", "beats": [{"action": "agent.find", "text": "make it gold now"}]},
+                                     {"assets": []}, _v22, "t")
+check(_ev3 and "make it gold" in _ev3["fields"]["prompt"], "the plan beat's text is his prompt")
+_evs, _rows = preflight.fallbacks([{"t0": 0, "t1": 5, "app": "chatgpt", "beats": []}], {0: {"status": "timing"}}, {"assets": []}, _v22)
+check(_rows == [], "a 'timing' recording is real — never covered by a fallback")
 print(f"test_selfheal: {N} checks passed")
