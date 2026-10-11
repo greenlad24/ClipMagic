@@ -1112,17 +1112,19 @@ async function act(a) {
     }
     case "type": {
       process.stderr.write(`act type: start (${String(a.text || "").length} chars, rec=${!!rec})\n`);
-      if (b) { await moveTo(...c); await page.mouse.click(cx, cy).catch(() => {}); }
+      // ⚠️ run 22: on the paused recording clock a mouse click / focus awaited alone waits for a frame forever —
+      // ticked like the key presses (keyTicking)
+      if (b) { await moveTo(...c); await keyTicking(() => page.mouse.click(cx, cy)); }
       // pre-production / set dressing: focus a field by CSS selector (a rich-text composer has no ref/text)
       else if (a.selector) {
         const el = await page.$(a.selector).catch(() => null);
         if (!el) return { ok: false, error: `no element for selector ${a.selector}` };
-        await el.click().catch(() => {}); await el.focus().catch(() => {});
+        await keyTicking(() => el.click()); await keyTicking(() => el.focus());
       }
       const popups = () => page.evaluate(() => [...document.querySelectorAll('[role=listbox],[role=option],[class*="suggest" i],[class*="autocomplete" i]')]
         .filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 40 && r.height > 12 && st.visibility !== "hidden" && st.display !== "none" && +st.opacity > 0.2; }).length).catch(() => 0);
-      const nPop = await popups();
-      // RULEBOOK C3: the field is EMPTY when the typing beat starts. Any leftover draft is cleared (not only
+      process.stderr.write("act type: focused\n"); const nPop = await popups();
+      process.stderr.write("act type: popups counted\n"); // RULEBOOK C3: the field is EMPTY when the typing beat starts. Any leftover draft is cleared (not only
       // when the agent asks: "Colorize this black and white photTurn this into…" reached an edit,
       // 2026-10-09). ⚠️ The browser now says it is a Mac, so apps map select-all to ⌘A and ignore Ctrl+A:
       // the editing commands are used first (work in inputs and rich-text composers alike), keys as backup.
@@ -1150,9 +1152,9 @@ async function act(a) {
       }
       // a compiled beat (G3): the field is focused and cleared BEFORE the word; the paste itself lands on it.
       // A field that is still not empty here aborts the take (RULEBOOK C3 — never append to a stale draft)
-      if (a.beat && a.clear !== false && (await fieldText())) return { ok: false, error: `field not empty before typing: "${(await fieldText()).slice(0, 60)}"` };
+      process.stderr.write("act type: cleared\n"); if (a.beat && a.clear !== false && (await fieldText())) return { ok: false, error: `field not empty before typing: "${(await fieldText()).slice(0, 60)}"` };
       if (rec && a.beat && a.at != null) await holdUntil(Math.max(t(), a.at));
-      const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
+      process.stderr.write("act type: at its word, typing\n"); const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
       e.press = t();
       if (a.paste) {
         // Jake #8: an address / a name goes in WHOLE, at once (a paste), never letter by letter
@@ -1173,7 +1175,7 @@ async function act(a) {
           while (rec && acc >= 1) { await step(); acc -= 1; }
         }
       }
-      e.end = t();
+      process.stderr.write("act type: typed\n"); e.end = t();
       // what the field holds now (QA: a stale draft + the new text = a garbled prompt, review v12 #18)
       e.value = await page.evaluate(() => { const x = document.activeElement; return x ? (x.value ?? x.innerText ?? "") : ""; }).catch(() => null);
       Object.assign(e, await seen(b));
