@@ -184,9 +184,12 @@ class Session:
         return json.loads(line)
 
     def alive(self):
-        return self.p.poll() is None
+        # closed = dead, even while the docker client is still exiting (run 22: a retry right after a timeout reused
+        # the half-killed session — "the agent recorder stopped" at once)
+        return not getattr(self, "_closed", False) and self.p.poll() is None
 
     def close(self):
+        self._closed = True
         self.recording = False
         try:
             self.p.stdin.write(json.dumps({"cmd": "quit"}) + "\n")

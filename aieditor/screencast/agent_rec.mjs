@@ -1111,6 +1111,7 @@ async function act(a) {
       break;
     }
     case "type": {
+      process.stderr.write(`act type: start (${String(a.text || "").length} chars, rec=${!!rec})\n`);
       if (b) { await moveTo(...c); await page.mouse.click(cx, cy).catch(() => {}); }
       // pre-production / set dressing: focus a field by CSS selector (a rich-text composer has no ref/text)
       else if (a.selector) {
@@ -1160,13 +1161,14 @@ async function act(a) {
         // hung on the paused virtual clock (2026-10-07 v12 seg-02, twice)
         // real key events (the JS value setter did not render in Linearity's field, v12c 1:02), each
         // acknowledged by a SILENT clock tick: the page sees typing, the recording sees it all at once
-        for (const ch of a.text) { await page.keyboard.type(ch); if (rec) await step(true); }
+        // ⚠️ run 22: a key event awaited ALONE on the paused clock can wait forever — the clock ticks while it is typed
+        for (const ch of a.text) { if (rec) await keyTicking(() => page.keyboard.type(ch)); else await page.keyboard.type(ch); }
         if (rec) { for (let j = 0; j < 3; j++) await step(true); await hold(a.after ?? 0.4); }   // "after": how long the pasted state shows
       } else {
         const perChar = FPS / (a.cps ?? 16);
         let acc = 0;
         for (const ch of a.text) {
-          await page.keyboard.type(ch);
+          if (rec) await keyTicking(() => page.keyboard.type(ch)); else await page.keyboard.type(ch);
           acc += perChar;
           while (rec && acc >= 1) { await step(); acc -= 1; }
         }
