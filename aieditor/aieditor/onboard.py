@@ -876,6 +876,8 @@ def reprove_existing(ctx, ids, params=None):
             # the step works, its PROOF element was renamed (UI drift): re-derive the post check, never re-learn the step
             ok2, why2 = repair_post_assert(ctx, aid, prm)
             out[aid].update(ok=ok2, post_repair=why2 or "repaired")
+            if not ok2:      # never silent (re-run 16: 'Close dialog' stayed broken and the log never said why)
+                ctx.log(f"P2: {aid}'s post check could not be repaired — {str(why2)[:240]}")
             if ok2:
                 continue
         if not out[aid]["ok"]:
