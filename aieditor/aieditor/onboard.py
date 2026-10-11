@@ -644,6 +644,13 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
         ctx.pb["actions"].pop(aid, None)
         row["attempts"][-1]["proposal"] = act             # what was proposed, for the log when it is not proven
         feedback = "; ".join(str(x.get("why")) for x in pr["replays"] if not x["ok"])[:600]
+        if "start_state: no element" in feedback or "could not load" in feedback.lower():
+            # the start chat does not load any more (a chat that grew too big: "Could not load this conversation" —
+            # re-run 13): the next round starts from ANOTHER chat this job created, never one of Jake's
+            others = [c for c in sorted(getattr(ctx, "allowed_chats", set()) or []) if c and c != ctx.image_chat]
+            if others:
+                ctx.log(f"onboarding: the start chat {ctx.image_chat} does not load — switching to {others[-1]}")
+                ctx.image_chat = others[-1]
         ctx.log(f"onboarding '{need[:60]}': proposal not proven — WHY: {feedback[:400]} — PROPOSAL: "
                 f"{json.dumps({k: v for k, v in act.items() if k not in ('replays', 'intents', 'source')})[:1400]}")
     row["why"] = f"not proven after {len(row['attempts'])} round(s): {feedback}"
