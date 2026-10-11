@@ -807,8 +807,14 @@ class Recorder:
 
     def __init__(self, w, playbooks, assets, video, *, new_session, verdict=None, media=None, log=print,
                  cancelled=lambda: False, sleep=time.sleep, pixels=True, repair_call=None, expect_p=None,
-                 account=ACCOUNT, progress=None, outside_env=None):
+                 account=ACCOUNT, progress=None, outside_env=None, rehearsal="playbook", rehearse_call=None):
         self.w = Path(w)
+        # "agent": the rehearsal agent writes each screencast's script (aieditor/rehearse.py); "playbook": the compiled
+        # playbook path (the fallback when the switch is off). longedit passes rehearse.mode().
+        self.rehearsal = rehearsal or "playbook"
+        self.rehearse_call = rehearse_call
+        self.rehearsal_turns = {}
+        self._rbudget = None
         self.playbooks = playbooks or {}
         self.assets = assets if assets is not None else {"assets": []}
         self.video = video
@@ -828,6 +834,13 @@ class Recorder:
         self.sessions = {}
         self.budget = RepairBudget(self.w / "repair-budget.json")
         self.usd = 0.0
+
+    @property
+    def rehearsal_budget(self):
+        if self._rbudget is None:
+            from . import rehearse
+            self._rbudget = rehearse.Budget(self.w / "rehearsal-budget.json")
+        return self._rbudget
 
     # sessions: one browser per (app, session kind); a wall -> a FRESH one after a cooldown
     def session(self, app, kind, fresh=False):
@@ -944,6 +957,8 @@ class Recorder:
             return self._status(sd, B.NEEDS_PRIMITIVE, seg, "the plan names no playbook beats for this screencast "
                                 "(single plan call; the regex intent ledger is off in factory mode)")
         sess = self.session(app, kind)
+        if self.rehearsal == "agent":
+            return self.record_segment_agent(i, seg, pb, sess, kind)
         walls = 0
         sc = None
         for _ in range(MAX_TAKE_RESTARTS):
@@ -958,6 +973,71 @@ class Recorder:
         if sc is None:
             st = bad["status"] if bad["status"] != "wall" else "challenge"
             return self._status(sd, st, seg, bad["why"], beats=bad.get("beats", []))
+        return self.record_compiled(i, seg, pb, sess, kind, sc, walls=walls)
+
+    def record_segment_agent(self, i, seg, pb, sess, kind):
+        """The rehearsal agent's path (aieditor/rehearse.py): agent pass → distilled script → fresh off-camera replay →
+        the recording through record_compiled, unchanged. A replay or a recording that diverges → one more agent pass
+        from the divergence point → record again; after rules.json rehearsal.attempts failures the segment returns a
+        non-ok status (preflight.fallbacks then shows its approved motion template — logged, never silent)."""
+        from . import rehearse as RH
+        sd = self.w / f"seg-{i:02d}"
+        app = seg.get("app")
+        attempts = int(RH.rules()["attempts"])
+        fails, walls, feedback, prior, from_beat = 0, 0, None, None, None
+        history = []
+        while True:
+            out = RH.rehearse_segment(self, i, seg, pb, sess, kind, feedback=feedback, prior=prior, from_beat=from_beat)
+            if not out["ok"]:
+                if out["status"] == "wall":
+                    walls += 1
+                    if walls >= MAX_TAKE_RESTARTS:
+                        return self._status(sd, "challenge", seg, out["why"], rehearsal={"by": "agent", "history": history})
+                    self.log(f"recorder: {app} wall while the agent rehearsed screencast {i + 1} ({str(out['why'])[:120]}) — "
+                             "fresh session after a cooldown")
+                    self.sleep(WALL_COOLDOWN_S * walls)
+                    sess = self.session(app, kind, fresh=True)
+                    continue
+                fails += 1
+                history.append({"stage": out["status"], "why": str(out.get("why"))[:300], "beat": out.get("beat")})
+                if out.get("final") or fails >= attempts:
+                    st = out["status"] if out["status"] in (B.NEEDS_ASSET, "rehearsal_capped", "held") else "rehearsal_failed"
+                    return self._status(sd, st, seg, f"rehearsal agent: {str(out.get('why'))[:300]}" +
+                                        (f" (after {fails} attempts)" if fails > 1 else ""),
+                                        rehearsal={"by": "agent", "history": history})
+                feedback, from_beat = out.get("why"), out.get("beat")
+                prior = {"run": out["run"], "kept": out["kept"]} if out.get("run") and from_beat else None
+                self.log(f"recorder: screencast {i + 1}: {out['status']} ({str(out.get('why'))[:140]}) — one more agent pass"
+                         + (f" from {from_beat}" if from_beat else ""))
+                continue
+            doc = self.record_compiled(i, out["seg"], out["pb"], sess, kind, out["script"], walls=walls)
+            doc["rehearsal"] = {"by": "agent", "history": history, "kept": out["kept"]["keep"]}
+            if doc.get("status") in ("ok", "timing"):
+                self._status(sd, doc["status"], seg, doc.get("why", ""), **{k: v for k, v in doc.items()
+                                                                              if k not in ("status", "why", "t0", "t1", "url", "app", "session")})
+                return doc
+            fails += 1
+            bid = next((b.get("beat") for b in doc.get("beats") or [] if isinstance(b, dict) and b.get("beat")), None)
+            history.append({"stage": "record", "why": str(doc.get("why"))[:300], "beat": bid})
+            live = bid and any(b["id"] == bid and b.get("live") for b in out["script"]["beats"])
+            if fails >= attempts or live:
+                # a failed live generation is never pressed a second time (<= 1 live generation per video)
+                self._status(sd, doc["status"], seg, doc.get("why", ""), rehearsal={"by": "agent", "history": history},
+                             beats=doc.get("beats", []))
+                return {**doc, "rehearsal": {"by": "agent", "history": history}}
+            from_beat = RH.plan_beat_of(bid, seg)
+            feedback = f"the recording diverged at {bid}: {str(doc.get('why'))[:300]}"
+            prior = {"run": out["run"], "kept": out["kept"]} if from_beat else None
+            self.log(f"recorder: screencast {i + 1}: {feedback[:160]} — the agent repairs the script off camera")
+            sess = self.session(app, kind)
+
+    def record_compiled(self, i, seg, pb, sess, kind, sc, walls=0):
+        """Record a script that passed its off-camera rehearsal (the playbook compile or the rehearsal agent's script,
+        aieditor/rehearse.py): the take + per-beat retakes, the verdict, the elastic assembler -> the recording doc."""
+        sd = self.w / f"seg-{i:02d}"
+        rec = sd / "rec"
+        app = seg.get("app")
+        dur = float(seg["t1"]) - float(seg["t0"])
         windows = beat_windows(sc, dur)
         state = {"beat_retakes": {}, "takes": 0, "remedies": []}
         shutil.rmtree(rec, ignore_errors=True)
@@ -1136,7 +1216,8 @@ class Recorder:
 
 def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, media=None, log=print,
                cancelled=lambda: False, sleep=time.sleep, pixels=True, repair_call=None, expect_p=None,
-               allow_intent=None, only=None, progress=None, held=None, skip_done=True):
+               allow_intent=None, only=None, progress=None, held=None, skip_done=True, rehearsal="playbook",
+               rehearse_call=None):
     """Every screencast segment of the plan, logged-in and outside alike. -> {"segments": {i: recording doc},
     "held": [{reason, detail}], "usd"}. A segment that cannot be shown honestly is HELD with its reason
     (needs_primitive / needs_asset / challenge / timing) — never quietly left as A-roll."""
@@ -1144,7 +1225,7 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
     segs = schema_segments(plan, video["words"], playbooks, allow_intent=allow_intent)
     r = Recorder(w, playbooks, assets, video, new_session=new_session, verdict=verdict, media=media, log=log,
                  cancelled=cancelled, sleep=sleep, pixels=pixels, repair_call=repair_call, expect_p=expect_p,
-                 progress=progress)
+                 progress=progress, rehearsal=rehearsal, rehearse_call=rehearse_call)
     out, hold = {}, []
     try:
         for i, seg in enumerate(segs):
@@ -1184,11 +1265,13 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
             if doc["status"] != "ok":
                 reason = {"needs_primitive": "needs_primitive", "needs_asset": "needs_asset",
                           "challenge": "challenge page", "timing": "timing", "held": "beat failed",
-                          "crashed": "recording crashed"}.get(doc["status"], doc["status"])
+                          "crashed": "recording crashed", "rehearsal_failed": "rehearsal failed",
+                          "rehearsal_capped": "rehearsal cap"}.get(doc["status"], doc["status"])
                 hold.append({"reason": reason, "detail": f"screencast {i + 1} ({seg.get('app')}): {str(doc.get('why'))[:300]}"})
                 if held:
                     held(reason, hold[-1]["detail"])
     finally:
         r.close()
     return {"segments": out, "held": hold, "usd": round(r.usd, 6), "live_used": 1 - r.live_left,
-            "repair_usd": r.budget.video_usd}
+            "repair_usd": r.budget.video_usd, "rehearsal": getattr(r, "rehearsal", None),
+            "rehearsal_usd": getattr(getattr(r, "_rbudget", None), "video_usd", 0.0)}

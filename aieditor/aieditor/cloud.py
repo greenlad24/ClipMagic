@@ -712,15 +712,25 @@ def api_env(jid, workflow):
             shutil.copyfile(main_lib, config.JOBS / jid / "proven-actions.jsonl")
     except OSError:
         pass
+    # the rehearsal agent's hints ledger (what worked / what not to do, aieditor/rehearse.py) rides along the same way
+    main_hints = config.WORK / "ledger" / "rehearsal-hints.jsonl"
+    try:
+        if main_hints.exists():
+            shutil.copyfile(main_hints, config.JOBS / jid / "rehearsal-hints.jsonl")
+    except OSError:
+        pass
     return {"AIEDITOR_API_LEDGER": str(config.JOBS / jid / "api-ledger.jsonl"),
             "AIEDITOR_PROVEN_LIB": str(config.JOBS / jid / "proven-actions.jsonl"),
+            "AIEDITOR_REHEARSAL_HINTS": str(config.JOBS / jid / "rehearsal-hints.jsonl"),
             # the in-app generation ledger (daily cap per app across jobs, walls): this box's last 24 h + the job's own
             genledger.ENV_LEDGER: str(config.JOBS / jid / "gen-ledger.jsonl"), genledger.ENV_PRIOR: genledger.prior_env(),
             apiledger.ENV_JOB_CAP: f"{job_cap:.4f}", apiledger.ENV_DAILY_CAP: f"{day_cap:.4f}",
             apiledger.ENV_CAPS_FILE: str(config.JOBS / jid / "caps.json"),
             apiledger.ENV_PRIOR_DAY: f"{apiledger.daily_total():.6f}",
             apiledger.ENV_PRIOR_JOB: f"{apiledger.job_total(jid):.6f}",
-            apiledger.ENV_DAY_START: f"{time.time():.0f}"}
+            apiledger.ENV_DAY_START: f"{time.time():.0f}",
+            # the rehearsal switch (agent | playbook) set on this box reaches the job's factory server
+            **({"AIEDITOR_REHEARSAL": os.environ["AIEDITOR_REHEARSAL"]} if os.environ.get("AIEDITOR_REHEARSAL") else {})}
 
 
 def push_caps(ip, rjob, workflow, sent=None):
@@ -765,6 +775,16 @@ def merge_ledger(job_dir, log=print):
             with open(main_lib, "a") as f:
                 f.write("\n".join(new) + "\n")
             log(f"{len(new)} newly proven action(s) added to the recent-proofs ledger")
+    rh = Path(job_dir) / "rehearsal-hints.jsonl"
+    if rh.exists():
+        main_h = config.WORK / "ledger" / "rehearsal-hints.jsonl"
+        main_h.parent.mkdir(parents=True, exist_ok=True)
+        have = set(main_h.read_text().splitlines()) if main_h.exists() else set()
+        new = [ln for ln in rh.read_text().splitlines() if ln.strip() and ln not in have]
+        if new:
+            with open(main_h, "a") as f:
+                f.write("\n".join(new) + "\n")
+            log(f"{len(new)} rehearsal lesson(s) added to the hints ledger")
 
 
 def run_remote(job_dir, action, log, cancelled):

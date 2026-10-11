@@ -209,6 +209,24 @@ COVERAGE = [
      "detector": "onboard.is_camera_need (FRAMES_RX on the plan-check line) before the C route",
      "repair": "D: the edit's zoom on the picture on screen — no feature, no motion graphic",
      "test": "tests/test_selfheal.py::D-camera-as-feature"},
+    {"id": "A-agent-rehearsal", "when": "2026-10-11 re-run 16 (5 of 35 screencasts rehearsed clean)", "cls": "A",
+     "failure": "compiled playbook scripts failed live: two controls with one label (Markup toolbar vs composer chip), a "
+                "viewer reopening in its last mode, rotating suggestion chips, renamed aria-labels, slow page loads",
+     "detector": "rehearse.SegmentAgent — a vision agent performs every beat off camera, seeing the screen",
+     "repair": "its distilled script (stable selectors / exact labels, beat anchors) proven by a fresh off-camera replay, "
+               "then recorded by code; the playbook is a hint only",
+     "test": "tests/test_rehearse.py::the agent's script is recorded"},
+    {"id": "C-improvised-script", "when": "2026-10-11 (Jake: 'just the pure flow')", "cls": "C",
+     "failure": "an agent's trial and error (dead ends, wrong clicks, retries, a menu opened to look) would be recorded",
+     "detector": "rehearse.distill (one model call, by step index) + rehearse.prune (code)",
+     "repair": "the minimal clean path; a path that fails its FRESH replay is distilled again with the failure; the full "
+               "log is kept as audit + hints, never in the script",
+     "test": "tests/test_rehearse.py::dead end"},
+    {"id": "D-agent-rehearsal-fails", "when": "class", "cls": "D",
+     "failure": "a screencast whose replay / recording diverges from the agent's script",
+     "detector": "Recorder.record_segment_agent (replay, take verdicts)",
+     "repair": "one more agent pass from the divergence point; after 2 failures a non-ok status → the approved fallback",
+     "test": "tests/test_rehearse.py::2 failures"},
     {"id": "D-silent-drop", "when": "class", "cls": "D",
      "failure": "a screencast that fails after preflight + repair was dropped to the presenter silently",
      "detector": "fallback_events after record_all", "repair": "an approved motion template (real result if any), logged",
@@ -289,7 +307,8 @@ class RecordingPreflight:
     this video's playbook → proven on 2 screencasts (reverted when it does not hold)."""
 
     def __init__(self, w, segs, playbooks, assets, words, new_session, *, repairer=None, reonboard=None, save_pb=None,
-                 log=print, pixels=True, account=None, cancelled=lambda: False, allowed_chats=(), doodles=None):
+                 log=print, pixels=True, account=None, cancelled=lambda: False, allowed_chats=(), doodles=None,
+                 rehearsal="playbook"):
         self.w = Path(w)
         self.segs, self.playbooks, self.assets, self.words = segs, dict(playbooks or {}), assets or {"assets": []}, words
         self.new_session, self.repairer, self.reonboard = new_session, repairer, reonboard
@@ -300,6 +319,9 @@ class RecordingPreflight:
         self.sessions = {}
         self.only = None                       # the screencast indexes to rehearse (None = all)
         self.min_systematic = 2                # a cluster on this many screencasts goes to the repair agent (canary: 1)
+        # "agent": the rehearsal agent (aieditor/rehearse.py) performs + proves the beats itself, so the preflight checks
+        # every START STATE only (open, set dressing, first frame, the drift repair) — never the beats twice
+        self.rehearsal = rehearsal or "playbook"
 
     def session(self, app, kind, fresh=False):
         key = (app, kind)
@@ -327,6 +349,8 @@ class RecordingPreflight:
             return {"ok": False, "stage": "playbook", "reasons": [f"no playbook for {seg.get('app')!r}"]}
         if not seg.get("beats"):
             return {"ok": False, "stage": "compile", "reasons": ["needs_primitive: the plan names no beats"]}
+        if self.rehearsal == "agent":
+            return self._check_start(i, seg, pb)
         try:
             sc = B.compile_segment(seg, self.words, pb, i, assets=self.assets, live_left=1, doodles=self.doodles)
         except B.CompileError as e:
@@ -353,6 +377,23 @@ class RecordingPreflight:
             return {"ok": False, "stage": "beat", "reasons": [re.sub(r"^beat \S+ \([^)]*\) ", "", e.why)], "beat": e.beat,
                     "wall": e.wall, "start_state": sc.get("start_state")}
         return {"ok": True, "stage": "beats", "reasons": []}
+
+    def _check_start(self, i, seg, pb):
+        """Agent mode: the start state only (the beats are the rehearsal agent's — rehearsed, distilled and replayed
+        there). No compile: an action the shared playbook lacks is not a failure here."""
+        from . import beatscript as B, recorder as R
+        kind = seg.get("session") or "logged_in"
+        sess = self.session(seg.get("app"), kind)
+        ss = B.start_state_for(seg, pb)
+        try:
+            st = R.open_clean(sess, pb, seg, ss, lambda *a: None, tries=1, account=self.account, pixels=self.pixels,
+                              session=kind, accept_resting=False)
+        except R.SetupError as e:
+            msg = str(e)
+            body = msg.split(": ", 1)[1] if msg.startswith(("first frame never clean", "first frame", "wall on open")) else msg
+            return {"ok": False, "stage": "first_frame", "reasons": [x.strip() for x in body.split("; ") if x.strip()] or [msg],
+                    "wall": getattr(e, "wall", None), "start_state": ss}
+        return {"ok": True, "stage": "first_frame", "reasons": [], "state": st}
 
     def _fails(self, results):
         out = []
@@ -735,6 +776,12 @@ and **pinned by a regression test**.
 | B | asset fidelity | `preflight.audit_asset` (pure code) before any stored picture is reused (`onboard.reuse_ok`) | set aside (renamed, never deleted) → made again by the producer |
 | C | onboarding / proof gaps | `preflight.audit_playbook`, the replay rules in `playbook.py` (points / strokes as data, after-reply waits, idempotent mode steps), `onboard_action` (chains, presence proofs, chat rotation, a drifted required step) | data in this video's playbook |
 | D | run control | `preflight.headroom` (the Claude cap must fit routing before it starts), route/cap rules, finish mode | wait / held 'API cap' before starting; `preflight.fallbacks` — never a silent drop |
+
+**Screencast scripts (2026-10-11).** By default the rehearsal agent (`aieditor/rehearse.py`) writes each screencast's
+script: it performs the beats off camera on the live page (capped: rules.json `rehearsal` — turns, $ per screencast and
+per video, the cheaper model first), the full trial log is distilled to the pure flow, the script is proven by a fresh
+off-camera replay and then recorded by code. The preflight then proves start states only. `AIEDITOR_REHEARSAL=playbook`
+(or rules.json `rehearsal.mode`) switches back to the compiled playbook path.
 
 **Where the data lives.** `job/preprod/playbook-<app>.json` (this video's playbook). `start_state.allow` =
 `{resting_texts, resting_selectors, resting_popups, walls, reasons, learned[]}`; `start_state.dismiss` = click/key

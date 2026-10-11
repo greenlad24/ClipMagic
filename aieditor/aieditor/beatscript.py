@@ -531,11 +531,32 @@ def _expected_end(pb, aid, params, beat):
     return out
 
 
+def start_state_for(seg, pb):
+    """The start state a segment's recording opens on (url, the playbook's asserts, set dressing, the proven resting-UI
+    allowances + dismiss steps). The outside view (never logged in, RULEBOOK L4) has no account / app theme / set
+    dressing to prove, and its logged-out header (Log in / Sign up) is the view, never a wall."""
+    outside = _session_kind(seg) == "outside"
+    start_state = {"url": seg.get("url") or (pb.get("start_state") or {}).get("url"),
+                   "asserts": [] if outside else list((pb.get("start_state") or {}).get("asserts") or []),
+                   "set_dressing": [] if outside else list(pb.get("set_dressing") or []), "fingerprint": None}
+    src = (pb.get("outside_view") or {}) if outside else (pb.get("start_state") or {})
+    allow = copy.deepcopy(src.get("allow") or {})
+    if outside:
+        allow["walls"] = sorted(set(allow.get("walls") or []) | {"login"})
+    if allow:
+        start_state["allow"] = allow
+    if src.get("dismiss"):
+        start_state["dismiss"] = copy.deepcopy(src["dismiss"])
+    return start_state
+
+
 def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehearsal=None, doodles=None,
-                    allow_unproven=None, url_allow=None):
+                    allow_unproven=None, url_allow=None, outside_actions=False):
     """One plan-schema segment -> {"steps", "beats", "live", "assets", "url_allow", "start_state", ...}.
     Step times are SEGMENT seconds (what agent_rec.mjs "at" means). Raises NeedsPrimitive listing EVERY beat
-    whose action the playbook lacks / has not proven, CompileError for an impossible beat."""
+    whose action the playbook lacks / has not proven, CompileError for an impossible beat. outside_actions: the
+    outside view may run this playbook's actions too (the rehearsal agent's script, aieditor/rehearse.py — every one
+    proven by its off-camera replay and click-guarded with the outside rules); default: only outside.goto + camera."""
     t0 = float(seg["t0"])
     dur = float(seg["t1"]) - t0
     rel = lambda x: round(float(x) - t0, 6)
@@ -557,7 +578,7 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
             elif not (b.get("params") or {}).get("url"):
                 raise CompileError(f"{b.get('id')}: outside.goto without a url")
             continue
-        if outside_seg:
+        if outside_seg and not outside_actions:
             # the outside view is a fresh, never-logged-in browser: only the code primitives run there
             missing.append({"beat": b.get("id"), "action": a, "status": "missing", "t_word": b["t_word"],
                             "why": f"'{a}' is an in-app action; the outside session only runs outside.goto + camera.zoom"})
@@ -576,21 +597,8 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     pool = [dict(d) for d in (doodles or [])]
     steps, out_beats = [], []
     prev_typed, used_live, last_target = None, 0, None
-    outside = _session_kind(seg) == "outside"
-    # the outside view (never logged in, RULEBOOK L4) has no account / app theme / set dressing to prove
-    start_state = {"url": seg.get("url") or (pb.get("start_state") or {}).get("url"),
-                   "asserts": [] if outside else list((pb.get("start_state") or {}).get("asserts") or []),
-                   "set_dressing": [] if outside else list(pb.get("set_dressing") or []), "fingerprint": None}
-    # the app's proven resting UI + dismiss steps (self-healing data in THIS video's playbook): the logged-in start
-    # state's, or the outside view's (a logged-out page SHOWS log in / sign up — that is the view, never a wall)
-    src = (pb.get("outside_view") or {}) if outside else (pb.get("start_state") or {})
-    allow = copy.deepcopy(src.get("allow") or {})
-    if outside:
-        allow["walls"] = sorted(set(allow.get("walls") or []) | {"login"})
-    if allow:
-        start_state["allow"] = allow
-    if src.get("dismiss"):
-        start_state["dismiss"] = copy.deepcopy(src["dismiss"])
+    # the start state + the app's proven resting UI / dismiss steps (self-healing data in THIS video's playbook)
+    start_state = start_state_for(seg, pb)
     gen_results = []          # (press beat, typed, word_t) awaiting their reveal
 
     def doodle_for(b):

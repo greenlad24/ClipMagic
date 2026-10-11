@@ -743,5 +743,22 @@
    "prompt_result"
   ],
   "approved_src": "Jake 2026-10-10 (round-2 preview): 'Verb swap — Approve as is. Your suggested weight will be the final' (Roboto 500); 'Tagline build — Approve as is'; 'UI kits — Approve as is'. prompt_menu, prompt_card_3d (+ prompt_result), prompt_highlight, long_prompt_scroll: not approved yet. Round 3 (2026-10-10): 'Prompt highlight — Approve as is', 'Long prompt scroll — Approve as is'. Round 3 (2026-10-10, after the jitter fixes): 'Prompt menu — Approve as is'. Round 4 (2026-10-11): '3D prompt card + prompt → result — Approve as is' (prompt_card_3d incl. prompt_result)."
+ },
+ "rehearsal": {
+  "src": "Jake 2026-10-11: 'the agent finds the way to do the screencast and writes the code to present the screencast in the best way' + 'just the pure flow of what needs to be recorded — after he got to that answer' (aieditor/rehearse.py). Agents act OFF camera, code records.",
+  "mode": "agent",
+  "mode_src": "agent = the rehearsal agent writes each screencast's script (default); playbook = the old compiled playbook path. Env AIEDITOR_REHEARSAL=agent|playbook overrides.",
+  "model": "claude-sonnet-5-5",
+  "escalate_model": "claude-opus-5-5",
+  "effort": "medium",
+  "max_turns_per_segment": 25,
+  "stuck_after": 3,
+  "max_redo_per_segment": 2,
+  "segment_usd": 0.75,
+  "video_usd": 8.0,
+  "attempts": 2,
+  "redistill": 1,
+  "hint_rows": 6,
+  "caps_src": "a Sonnet turn (screenshot + element list) ~ $0.02-0.03, an Opus turn ~ $0.05: 25 turns + the distill call fit $0.75; ~35 screencasts a video at a typical ~$0.20 fit $8"
  }
 }

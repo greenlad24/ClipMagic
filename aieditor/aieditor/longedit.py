@@ -323,6 +323,9 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             if fresh or key not in _shared:
                 _shared[key] = _make(app, kind, fresh)
             return _shared[key]
+        from . import rehearse
+        log(f"edit {k}: screencast scripts by the {'rehearsal agent' if rehearse.mode() == 'agent' else 'playbook compiler'} "
+            f"(rules.json rehearsal.mode / {rehearse.ENV_MODE})")
         if os.environ.get("AIEDITOR_PREFLIGHT", "1") != "0":
             pf = run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scouts, log, cancelled, progress)
             playbooks.update(pf.get("playbooks") or {})
@@ -334,7 +337,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             plan, playbooks, assets, w=w, video=video, new_session=new_session,
             verdict=lambda w_, i, sc: recorder.docker_verdict(w_, i, w / "expect.json", recorder.ACCOUNT, cancelled),
             media=recorder.DockerMedia(cancelled), log=log, cancelled=cancelled, only=set(todo) - skip,
-            allow_intent=recorder.intent_ledger_allowed(),
+            allow_intent=recorder.intent_ledger_allowed(), rehearsal=rehearse.mode(),
             progress=lambda m, f: progress(m, f), held=lambda reason, detail: add_held(d, reason, f"edit {k} {detail}"))
         usd += res["usd"]
         if lock:
@@ -378,7 +381,7 @@ def run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scou
     were made already), the playbook audit (C), every screencast rehearsed off camera + clustered (A) and a systematic
     drift repaired as data in THIS video's playbook (drift.Repairer; a moved control re-onboarded) and proven on 2.
     Never raises (a broken preflight leaves recording exactly as before). → the preflight report."""
-    from . import drift, onboard, preflight
+    from . import drift, onboard, preflight, rehearse
     out = Path(d) / "preprod"
     try:
         progress("Preflight: rehearsing every screencast off camera…", 0.1)
@@ -416,7 +419,7 @@ def run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scou
         pf = preflight.RecordingPreflight(
             w, [sched[i] for i in range(len(sched))], playbooks, assets, video["words"], new_session,
             repairer=drift.Repairer(log=log), reonboard=reonboard, save_pb=save_pb, log=log, account=None,
-            cancelled=cancelled, allowed_chats=chats)
+            cancelled=cancelled, allowed_chats=chats, rehearsal=rehearse.mode())
         # only the screencasts about to be recorded are rehearsed (the others are recorded already / held)
         keep = set(todo)
         pf.only = keep

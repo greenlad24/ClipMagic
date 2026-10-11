@@ -15,6 +15,12 @@ and **pinned by a regression test**.
 | C | onboarding / proof gaps | `preflight.audit_playbook`, the replay rules in `playbook.py` (points / strokes as data, after-reply waits, idempotent mode steps), `onboard_action` (chains, presence proofs, chat rotation, a drifted required step) | data in this video's playbook |
 | D | run control | `preflight.headroom` (the Claude cap must fit routing before it starts), route/cap rules, finish mode | wait / held 'API cap' before starting; `preflight.fallbacks` — never a silent drop |
 
+**Screencast scripts (2026-10-11).** By default the rehearsal agent (`aieditor/rehearse.py`) writes each screencast's
+script: it performs the beats off camera on the live page (capped: rules.json `rehearsal` — turns, $ per screencast and
+per video, the cheaper model first), the full trial log is distilled to the pure flow, the script is proven by a fresh
+off-camera replay and then recorded by code. The preflight then proves start states only. `AIEDITOR_REHEARSAL=playbook`
+(or rules.json `rehearsal.mode`) switches back to the compiled playbook path.
+
 **Where the data lives.** `job/preprod/playbook-<app>.json` (this video's playbook). `start_state.allow` =
 `{resting_texts, resting_selectors, resting_popups, walls, reasons, learned[]}`; `start_state.dismiss` = click/key
 steps; `outside_view.allow` for the never-logged-in page (its login view is always allowed). The rules that protect
@@ -96,4 +102,7 @@ fails when it is out of date, or when a row's test does not exist).
 | A-required-step-drift | 2026-10-11 re-run 15 | A | every Markup-stroke proof failed inside a REQUIRED step: "requires viewer_markup: post: no element button[aria-label='Cancel markup']" (its post assert drifted) | onboard_action: all replays fail inside the same required step | that step re-proven for this video (re-onboarded as data when it no longer replays), then the proof again | tests/test_selfheal.py::A-required-step-drift |
 | D-finish-mode | 2026-10-11 07:20 | D | a test run must end in a finished edit | request finish_video | holds → warnings.json; every fallback listed | tests/test_selfheal.py::D-finish-mode |
 | D-camera-as-feature | 2026-10-11 08:48 re-run 15 | D | 'Close on the bottle's label' (a beat that only frames, camera.zoom) was routed to P4 as a missing feature | onboard.is_camera_need (FRAMES_RX on the plan-check line) before the C route | D: the edit's zoom on the picture on screen — no feature, no motion graphic | tests/test_selfheal.py::D-camera-as-feature |
+| A-agent-rehearsal | 2026-10-11 re-run 16 (5 of 35 screencasts rehearsed clean) | A | compiled playbook scripts failed live: two controls with one label (Markup toolbar vs composer chip), a viewer reopening in its last mode, rotating suggestion chips, renamed aria-labels, slow page loads | rehearse.SegmentAgent — a vision agent performs every beat off camera, seeing the screen | its distilled script (stable selectors / exact labels, beat anchors) proven by a fresh off-camera replay, then recorded by code; the playbook is a hint only | tests/test_rehearse.py::the agent's script is recorded |
+| C-improvised-script | 2026-10-11 (Jake: 'just the pure flow') | C | an agent's trial and error (dead ends, wrong clicks, retries, a menu opened to look) would be recorded | rehearse.distill (one model call, by step index) + rehearse.prune (code) | the minimal clean path; a path that fails its FRESH replay is distilled again with the failure; the full log is kept as audit + hints, never in the script | tests/test_rehearse.py::dead end |
+| D-agent-rehearsal-fails | class | D | a screencast whose replay / recording diverges from the agent's script | Recorder.record_segment_agent (replay, take verdicts) | one more agent pass from the divergence point; after 2 failures a non-ok status → the approved fallback | tests/test_rehearse.py::2 failures |
 | D-silent-drop | class | D | a screencast that fails after preflight + repair was dropped to the presenter silently | fallback_events after record_all | an approved motion template (real result if any), logged | tests/test_selfheal.py::D-silent-drop |
