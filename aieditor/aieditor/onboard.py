@@ -1277,6 +1277,49 @@ def _param_defaults(ctx, tspec, desc, sentence):
     return out
 
 
+# a tool step's per-param target is the OBJECT only (a short noun phrase), never the narration clause around it
+# (re-run 15: target "highlight the napkin, and click the send button so it is highlighted as the selection" made the
+# step to onboard "brush … AND click Send" — the explorer refused (Send generates) and the tool route failed)
+_LEAD_VERBS = re.compile(r"^(?:(?:just|then|now|and|also|please|quickly|simply)\s+)*(?:(?:brush(?:es|ed)?|paint(?:s|ed)?|"
+                         r"highlight(?:s|ed)?|select(?:s|ed)?|circl(?:e|es|ed)|mark(?:s|ed)?|erase[sd]?|remove[sd]?|"
+                         r"rub(?:s|bed)? out|click(?:s|ed)?|tap(?:s|ped)?|pick(?:s|ed)?|choose|drag(?:s|ged)? a box|"
+                         r"draw(?:s)? a box|box(?:es|ed)?|put(?:s)? a pin|pin(?:s|ned)?|place(?:s|d)? a pin|over|on|onto|"
+                         r"around|across|at|in)\s+)+", re.I)
+_ACT_VERBS = (r"click|clicks|clicking|press|presses|pressing|tap|taps|hit|hits|type|types|typing|paste|pastes|send|sends|"
+              r"sending|submit|submits|enter|select|choose|open|opens|drag|drags|brush|draw|make|makes|turn|turns|ask|"
+              r"asks|generate|generates|hold|wait|scroll|upload|uploads|attach|go|goes")
+_CLAUSE_CUT = re.compile(r"\s*(?:[,;:()\[\]—–]|\.\s|\bthen\b|\bso (?:it|that|the)\b|\bso\b|\bwhich\b|\buntil\b|"
+                         r"\bbefore\b|\bafter\b|\bwhile\b|\bto (?:make|turn|get|see|show)\b|\b(?:and|or)\s+(?:then\s+)?"
+                         r"(?=(?:" + _ACT_VERBS + r")\b)|\b(?:" + _ACT_VERBS + r")\b)", re.I)
+
+
+def object_phrase(text, max_words=8):
+    """The OBJECT a tool step acts on, from narration-ish text: lead verbs dropped ("highlight the napkin" → "the
+    napkin"), cut at the first clause break or action verb ("…, and click send …" never rides along), <= max_words.
+    Generic (any app, any tool). An empty result falls back to the first words of the input."""
+    raw = " ".join(str(text or "").split()).strip(" .,'\"“”‘’")
+    t = _LEAD_VERBS.sub("", raw)
+    m = _CLAUSE_CUT.search(t)
+    if m and m.start() > 0:
+        t = t[:m.start()]
+    elif m and m.start() == 0:
+        t = ""
+    t = " ".join(t.split()[:max_words]).strip(" .,;:'\"“”‘’")
+    return t or " ".join(raw.split()[:3])
+
+
+def clean_tool_params(tspec, params):
+    """Every narration-sourced param of a tool (playbook produce.tools.<t>.params.<p>.from == "narration", and any
+    per_param of its steps) → its object phrase. Other params (enums, prompts) are untouched."""
+    out = dict(params or {})
+    keys = {k for k, v in ((tspec or {}).get("params") or {}).items() if isinstance(v, dict) and v.get("from") == "narration"}
+    keys |= {st.get("per_param") for st in ((tspec or {}).get("steps") or []) if st.get("per_param")}
+    for k in keys:
+        if isinstance(out.get(k), str) and out[k].strip():
+            out[k] = object_phrase(out[k])
+    return out
+
+
 _PROMPT_RX = re.compile(r"THE\s+PROMPT\s*:?\s*[\"“]([^\"”]{8,600})[\"”]|[\"“]([^\"”]{24,600})[\"”]", re.I | re.S)
 
 
@@ -1389,7 +1432,9 @@ def person_request(ctx, desc, sentence=None, window=None, tool=None, tool_spec=N
         for r_ in (base, out) if out is not None else (base,):
             r_.update(typed=said, as_words=said, on_screen=True, narrated=said)
     if out is None:
+        base["params"] = clean_tool_params(tspec, base["params"])
         return base
+    out["params"] = clean_tool_params(tspec, out["params"])       # a target is the object, never a clause (re-run 15)
     if tool and not tspec.get("typed"):
         out["typed"], out["on_screen"] = "", False
     if out["on_screen"] and out["narrated"] and missing_words(out["narrated"], out["typed"]):

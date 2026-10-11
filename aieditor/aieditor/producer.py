@@ -173,11 +173,20 @@ class Producer:
         """A tool step named by its NEED (not yet an action of this video's playbook) → onboarded once (P2 explorer,
         on the source's chat) and remembered in this video's playbook (produce.tool_actions). → (action id, why)."""
         from . import onboard
+        # the per-param target is the OBJECT only — action verbs from the narration ("…, and click send") are never
+        # folded into a step's need (re-run 15: the erase brush need became "brush … AND click Send")
+        params = onboard.clean_tool_params(self.tool_spec(tool), params)
         slot = f"{tool}.{i}" + (f".{_slug(params.get(st['per_param']))}" if st.get("per_param") else "")
         known = ((self.ctx.pb.get("produce") or {}).get("tool_actions") or {}).get(slot)
         if known and known in (self.ctx.pb.get("actions") or {}):
             return known, None
         need = playbook._fill(st["need"], {k: v for k, v in params.items() if isinstance(v, str)})
+        reuse = self.proven_for(tool, i, need)
+        if reuse:
+            self._log(f"producer: the {tool} tool's step {i} is already proven in this video's playbook ('{reuse}') — reused")
+            self.ctx.pb.setdefault("produce", {}).setdefault("tool_actions", {})[slot] = reuse
+            self.ctx.pb = onboard.save_job_playbook(self.ctx.pb, self.ctx.out, self.ctx.app)
+            return reuse, None
         if st.get("text"):
             need += " (the note text is DATA given at record time: param 'text')"
         chat = (self.cur.get("source") or {}).get("chat")
@@ -207,6 +216,28 @@ class Producer:
         self.ctx.pb.setdefault("produce", {}).setdefault("tool_actions", {})[slot] = aid
         self.ctx.pb = onboard.save_job_playbook(self.ctx.pb, self.ctx.out, self.ctx.app)
         return aid, None
+
+    def proven_for(self, tool, i, need):
+        """A step of this tool already PROVEN in this video's playbook that serves this need: the same need text (the
+        action's onboarding source), or the same tool step whose target is data at use time (a drag / draw / brush:
+        the located points are passed in, so one proven action serves every object). → action id or None."""
+        from . import onboard
+        acts = self.ctx.pb.get("actions") or {}
+        key = onboard._need_key(need)
+
+        def proven(aid):
+            a = acts.get(aid) or {}
+            vp = a.get("video_proof") or {}
+            return bool(a) and (vp.get("ok") or vp.get("mode") in ("onboarded",) or str(vp.get("mode", "")).startswith("reused")
+                                or a.get("proven"))
+        for aid, a in acts.items():
+            src = str(a.get("source") or "")
+            if src.startswith("R14 P2 onboarding") and onboard._need_key(src.split(":", 1)[-1]) == key and proven(aid):
+                return aid
+        for slot, aid in ((self.ctx.pb.get("produce") or {}).get("tool_actions") or {}).items():
+            if slot.split(".")[:2] == [tool, str(i)] and proven(aid) and (acts.get(aid) or {}).get("kind") in ("drag", "draw"):
+                return aid
+        return None
 
     def tool_route(self, tool, params):
         """The route that RUNS the app's tool (on the source picture when the tool acts on one). → (route, why)."""
