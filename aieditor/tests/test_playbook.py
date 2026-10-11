@@ -445,9 +445,67 @@ def test_docker_fixture():
         shutil.rmtree(work, ignore_errors=True)
 
 
+def test_pre_contradicted_by_requires():
+    """Re-run 16: entering Markup mode itself adds the composer's 'Markup' chip; a proposal said "pre: Remove markup
+    absent" after requiring that mode — every proof failed. A pre that held before the requires and is made false by
+    them is dropped (noted, removed from the action) and the proof can pass."""
+    class S:
+        polls = False
+        def __init__(self):
+            self.mode = self.chip = self.box = False
+            self.notes = []
+        def open(self, url):
+            return True, None
+        def act(self, st):
+            if st.get("target") == "Markup" or st.get("selector") == "#markup":
+                self.mode = self.chip = True
+            elif st["type"] == "drag":
+                if not self.mode:
+                    return False, "not in markup"
+                self.box = True
+            return True, None
+        def check(self, c):
+            sel = c.get("selector")
+            if c["kind"] == "absent":
+                ok = not (sel == "#remove-markup" and self.chip)
+                return ok, None if ok else f"{sel} still present"
+            ok = {"#cancel-markup": self.mode, "#box": self.box}.get(sel, False)
+            return ok, None if ok else f"no element {sel}"
+        def close(self):
+            pass
+    pb = {"app": "fakeapp", "start_state": {"url": "x", "asserts": []}, "actions": {
+        "mode": {"kind": "click", "selectors": ["#markup"], "post": [{"kind": "selector", "selector": "#cancel-markup"}],
+                 "label": "Markup", "source": "t", "proven": True},
+        "stroke": {"kind": "drag", "label": "box", "source": "t", "proven": False, "requires": ["mode"],
+                   "pre": [{"kind": "absent", "selector": "#remove-markup"}],
+                   "post": [{"kind": "selector", "selector": "#box"}]}}}
+    orig = playbook._pb
+    playbook._pb = lambda app: pb
+    try:
+        r = playbook.replay(S, "fakeapp", "stroke", n=3)
+    finally:
+        playbook._pb = orig
+    check(r["proven"] and r["ok"] == 3, f"a pre made false by the action's own requires does not fail the proof: {r}")
+    check(pb["actions"]["stroke"]["pre"] == [] and "pre_contradicted" not in pb["actions"]["stroke"],
+          "the contradicted pre is removed from the action (learned)")
+    # a pre that was ALREADY false before the requires is a real precondition: still fails
+    pb["actions"]["stroke"]["pre"] = [{"kind": "absent", "selector": "#remove-markup"}]
+    class S2(S):
+        def __init__(self):
+            super().__init__()
+            self.chip = True                      # a leftover chip from before: not made by the requires
+    playbook._pb = lambda app: pb
+    try:
+        r = playbook.replay(S2, "fakeapp", "stroke", n=3)
+    finally:
+        playbook._pb = orig
+    check(not r["proven"] and "still present" in (r["replays"][0]["why"] or ""), f"a real precondition still fails: {r}")
+
+
 def main():
     test_load_and_proven()
     test_replay_fake()
+    test_pre_contradicted_by_requires()
     test_harness_rules()
     test_guard_and_outside()
     test_failed_job_beats()

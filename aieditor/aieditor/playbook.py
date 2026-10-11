@@ -660,6 +660,15 @@ def _run_once(session, pb, action_id, params):
         if not ok:
             return False, f"start_state: {why}"
     polls = getattr(session, "polls", False)
+    p = _params(a, dict(params or {}))
+    # an "absent" pre that already holds BEFORE the requires: if a require then makes it false, the pre contradicts
+    # the action's own requires (re-run 16: entering ChatGPT's Markup mode itself adds the 'Markup' reply chip, and the
+    # proposed markup stroke said "pre: Remove markup absent" — every proof failed). Such a pre is dropped, noted.
+    absent_before = set()
+    if a.get("requires"):
+        for i, c in enumerate(a.get("pre", [])):
+            if c.get("kind") == "absent" and session.check(_fill_assert(c, p))[0]:
+                absent_before.add(i)
     for r in a.get("requires", []):
         if already(session, pb, r, params):
             _note(session, f"requires {r}: state already reached — not pressed again")
@@ -676,9 +685,13 @@ def _run_once(session, pb, action_id, params):
             ok, why = _poll(session, _fill_assert(c, rp), _wait(ra) if polls else 0)
             if not ok:
                 return False, f"requires {r}: post: {why}"
-    p = _params(a, dict(params or {}))
-    for c in a.get("pre", []):
+    for i, c in enumerate(a.get("pre", [])):
         ok, why = _poll_pre(session, pb, a, _fill_assert(c, p), polls)
+        if not ok and i in absent_before:
+            _note(session, f"pre {c.get('selector')} absent: made false by the action's own requires — not a "
+                           f"precondition, dropped")
+            a.setdefault("pre_contradicted", []).append(c.get("selector"))
+            continue
         if not ok:
             return False, f"pre: {why}"
     # (the action UNDER PROOF is always pressed — a proof that skips it proves nothing; only its requires are idempotent)
@@ -729,6 +742,9 @@ def replay(session_factory, app, action_id, n=None, params=None, save_to=None, a
         rows.append({"ts": (now or datetime.datetime.now(datetime.timezone.utc)).isoformat(timespec="seconds"),
                      "ok": ok, "why": why})
     a.setdefault("replays", []).extend(rows)
+    gone = set(a.pop("pre_contradicted", None) or [])
+    if gone:                                       # learned: never a precondition of this action again
+        a["pre"] = [c for c in a.get("pre", []) if not (c.get("kind") == "absent" and c.get("selector") in gone)]
     a["proven"] = all(r["ok"] for r in rows) and len(rows) == n
     if save_to:
         save(pb, None if save_to is True else save_to)
