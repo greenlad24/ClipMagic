@@ -1923,6 +1923,13 @@ def make_ctx(job, out, app, readiness, assets, say=log, progress=None, cancelled
                        status=lambda m: _status(progress, m), cancelled=cancelled,
                        image_chat=chats[-1] if chats else None, asset_files=files, log=say, allowed_chats=chats,
                        kit_app=pid, kit_capture=lambda a, dst, url: onboard.capture_kit_live(a, dst, url, sc.get("profile")))
+    from . import rehearse
+    if ctx.producer is not None and rehearse.mode() == "agent":
+        # Jake 2026-10-11: "Getting the pictures right — should only be made by an agent not by code": the asset agent
+        # (aieditor/assetagent.py) makes each picture in the app's UI; the producer's code routes are the fallback
+        # when the switch is off (rules.json rehearsal.mode / AIEDITOR_REHEARSAL=playbook)
+        from . import assetagent
+        ctx.producer = assetagent.AssetAgent(ctx)
     ctx.locate = locate_region                       # a markup box / erase brush region: vision on the picture
     ctx.script = str((job.request or {}).get("script") or "")   # the prompts he reads on screen, used verbatim
     return ctx

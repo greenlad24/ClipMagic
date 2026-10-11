@@ -109,6 +109,13 @@ COVERAGE = [
     {"id": "B-duplicate-asset", "when": "2026-10-11 00:38", "cls": "B",
      "failure": "a source the job already had was made again under a new name ('person_photo')",
      "detector": "the source step knows every checked picture", "repair": "reused", "test": "tests/test_selfheal.py::B-duplicate-asset"},
+    {"id": "B-asset-agent", "when": "2026-10-11 (Jake: 'pictures … should only be made by an agent not by code')", "cls": "B",
+     "failure": "pictures made by code routes (recipes, route planning, described-edit fallbacks) missed what the UI showed",
+     "detector": "assetagent.AssetAgent — the agent makes each picture in the app's UI; the verifier after every result "
+                 "(vision fidelity + audit_asset, a tool result pressed with the tool)",
+     "repair": "the rejection reason → another try, capped per asset (tries + $) → needs_asset → the beats fall back; "
+               "his prompt typed verbatim by code, genledger spacing / limit, no temporary chat, reuse unchanged",
+     "test": "tests/test_assetagent.py::a collage is rejected"},
     # C — onboarding / proof gaps
     {"id": "C-points-text", "when": "2026-10-11 00:22 re-run 9", "cls": "C",
      "failure": "the agent's drag points arrived as text: 'drag needs from/to [x, y]'", "detector": "onboard.norm_points",

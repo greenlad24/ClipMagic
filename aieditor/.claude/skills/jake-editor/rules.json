@@ -760,5 +760,12 @@
   "redistill": 1,
   "hint_rows": 6,
   "caps_src": "a Sonnet turn (screenshot + element list) ~ $0.02-0.03, an Opus turn ~ $0.05: 25 turns + the distill call fit $0.75; ~35 screencasts a video at a typical ~$0.20 fit $8"
+ },
+ "assets_agent": {
+  "src": "Jake 2026-10-11: 'Getting the pictures right — should only be made by an agent not by code' (aieditor/assetagent.py; the same switch as rehearsal.mode). The verifier (vision fidelity + preflight.audit_asset) rejects → another try; after the cap the asset is needs_asset.",
+  "max_tries": 4,
+  "max_turns_per_try": 12,
+  "asset_usd": 1.5,
+  "caps_src": "a picture: up to 4 tries x 12 Sonnet turns, capped at $1.50 of agent + check calls; the onboarding_app_usd cap still applies on top"
  }
 }
