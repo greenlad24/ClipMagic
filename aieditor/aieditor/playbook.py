@@ -361,6 +361,10 @@ def resolve(app, action_id, params=None):
             ((a.get("points") or [None, None])[-1] if len(a.get("points") or []) >= 2 and _ok(a["points"][-1]) else None)
         if rf is None and isinstance(a.get("rel"), dict):
             rf, rt = _pt("from", "start"), rt or (list(a["rel"]["to"]) if _ok(a["rel"].get("to")) else None)
+        if (rf is None or rt is None) and "selector" in tgt and not (_pt("from", "drag_from", "start") and _pt("to", "drag_to", "end")):
+            # no points anywhere (a required drag replayed inside another step's proof — re-run 13): a neutral centre
+            # box on the element, never a drag that cannot run
+            rf, rt = [0.38, 0.42], [0.62, 0.58]
         if rf is not None and rt is not None and "selector" in tgt:
             # element-relative (R14 P2): fractions of the selector's box, measured on the live page (agent_rec.mjs)
             st = [{"type": "drag", "selector": tgt["selector"], "rel_from": list(rf), "rel_to": list(rt)}]
