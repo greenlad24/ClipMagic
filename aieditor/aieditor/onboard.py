@@ -586,7 +586,10 @@ def prove(ctx, aid, params=None, n=None):
     return playbook.replay(factory, ctx.pb, aid, n=n, params=params or {}, allow_generate=gen)
 
 
-def onboard_action(ctx, need, params=None, generates=False, generating=False):
+_CONFIRM_RX = re.compile(r"\b(?:check ?mark|tick|submit|attach|done|confirm|apply|save)\b", re.I)
+
+
+def onboard_action(ctx, need, params=None, generates=False, generating=False, presence_only=False):
     """P2 for one needed action: explore → propose → prove 3/3 (fix rounds feed the failures back). → row.
     generating=True: the step STARTS a generation (a tool's submit): the explorer finds it without pressing it, and
     it is proven by presence (its requires + selector + pre asserts), never pressed 3x (3 generations) — the
@@ -624,9 +627,12 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False):
             # strokes are data at use time (the doodle): the proof draws one short sample stroke (a box's worth) —
             # it checks that ink lands (re-run 13: no strokes → "Undo never enabled" on every proof)
             p["strokes"] = [[[410, 460], [512, 410], [614, 460], [563, 563], [461, 563], [410, 460]]]   # 1024-unit space
-        if generating:
+        if generating or presence_only:
+            # presence_only: a confirm step whose effect needs content drawn just before it (Sketch's check mark on an
+            # empty canvas attaches nothing — re-run 13): proven by presence, never pressed on an empty surface
             ok, why = presence(ctx, aid, p)
-            pr = {"proven": ok, "ok": int(ok), "n": 1, "replays": [{"ok": ok, "why": why, "mode": "presence (generating)"}]}
+            pr = {"proven": ok, "ok": int(ok), "n": 1,
+                  "replays": [{"ok": ok, "why": why, "mode": "presence (generating)" if generating else "presence (confirm after data)"}]}
         else:
             pr = prove(ctx, aid, p)
         row["attempts"][-1]["replays"] = pr["replays"]
@@ -1887,7 +1893,11 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                             "the strokes are data")
                     seen[key] = onboard_action(ctx, sk["onboard"], sk["params"])
                 else:
-                    seen[key] = onboard_action(ctx, need, {"text": pr.get("text")} if pr.get("text") else None)
+                    # a confirm step on a surface that was just drawn on needs that content: presence proof
+                    after_stroke = any(k_.startswith("stroke:") for k_ in seen) and _CONFIRM_RX.search(need) \
+                        and any(w in need.lower() for w in ("canvas", "sketch", "markup", "erase", "drawing"))
+                    seen[key] = onboard_action(ctx, need, {"text": pr.get("text")} if pr.get("text") else None,
+                                               presence_only=bool(after_stroke))
             except BudgetSpent as e:
                 seen[key] = {"status": "failed", "why": str(e), "budget": True}
         res = seen[key]
