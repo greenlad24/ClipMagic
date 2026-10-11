@@ -477,6 +477,12 @@ def run_preprod(job, req, info, fps):
     held = (jload(d / "preprod" / "gate.json") or {}).get("held") or []
     for kind in ("needs_primitive", "needs_asset", "plan_failed"):          # this run decides afresh
         longedit.clear_held(d, kind)
+    if held and finish_mode(job.req):
+        # request.json "finish_video" (Jake 2026-10-11: "I want this run's outcome to be a finished video edited"):
+        # every pre-production hold is a logged WARNING; the beats it affects fall back as designed
+        for h in held:
+            job.log(f"warning (finish mode, not held): {h.get('reason', 'held')} — {h.get('detail', '')}"[:400])
+        held = []
     if held:
         # the plan needs an action no playbook has proven, or an asset failed its generation check: held
         # before anything is recorded (decision 5 default — never an A-roll substitute)
@@ -746,6 +752,13 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
                                           for k in range(1, len(e["videos"]) + 1)))
         step("graphics", do_graphics_long, graphics_ready, rerun=(action != "run"))
         held = longedit.held_reasons(d)
+        if held and finish_mode(job.req):
+            for h in held:
+                job.log(f"warning (finish mode, not held): {h.get('reason', 'held')} — {h.get('detail', '')} — "
+                        "that moment stays on the presenter"[:400])
+            for kind in {h.get("reason") for h in held if h.get("reason")}:
+                longedit.clear_held(d, kind)
+            held = []
         if held:
             # never compose a video with holes quietly filled by A-roll (recommendation §4)
             job.stage("compose", "skipped", "held — see the job message")
@@ -994,6 +1007,11 @@ def held_failures(d):
             for r in gates.held_doc(d)["reasons"]] + out
 
 
+def finish_mode(req):
+    """request.json "finish_video": true — the run ends in a FINISHED edit; holds become logged warnings."""
+    return bool((req or {}).get("finish_video"))
+
+
 def finish_held(job, failures):
     """The job ends HELD: held.json lists every failure, the Lab shows a Held badge with the list, the
     edit is never offered as finished or as a creative source — and nobody is notified with notes."""
@@ -1025,6 +1043,16 @@ def execute(job, action):
             # a stage swallowed the refusal ("route, don't fail") — the job is still held
             raise Held(longedit.add_held(job.d, apiledger.BudgetExceeded.reason, llm.refusals()[0]))
         held = held_failures(job.d)
+        if held and finish_mode(job.req):
+            # finished, not shipped silently: the issues are kept as warnings next to the finished edit
+            gates.write_held(job.d, [])
+            (job.d / "warnings.json").write_text(json.dumps({"finish_mode": True, "issues": held[:200]}, indent=1))
+            msg = f"Finished (finish mode) — {len(held)} issue(s) below the ship bar, listed in warnings.json"
+            job.log(msg)
+            job.save(state="done", held=False, held_failures=None, warnings=held[:200], message=msg, progress=1,
+                     finished_at=now())
+            events.emit("stage", "job finished (finish mode) — ready to review, with its issue list", stage="job")
+            return
         if held:
             finish_held(job, held)
             return
