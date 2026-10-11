@@ -314,7 +314,8 @@ def resolve(app, action_id, params=None):
     if action_id not in pb["actions"]:
         raise PlaybookError(f"{pb['app']}: no action '{action_id}' (needs_primitive)")
     a = pb["actions"][action_id]
-    p = _params(a, dict(params or {}))
+    raw = dict(params or {})                            # undeclared data (a drag's located points) — see the drag branch
+    p = _params(a, raw)
     sels = [_fill(s, p) for s in a.get("selectors", [])]
     tgt = _target(sels[0], p) if sels else {}
     alt = [_target(s, p) for s in sels[1:]]
@@ -347,7 +348,9 @@ def resolve(app, action_id, params=None):
             return isinstance(v, (list, tuple)) and len(v) >= 2 and all(isinstance(x, (int, float)) for x in v[:2])
 
         def _pt(*keys):                                   # params first, then the action; every common spelling
-            for src in (p, a, a.get("rel") if isinstance(a.get("rel"), dict) else {}):
+            # raw params too: located points are data given at use time and an onboarded action rarely DECLARES them
+            # (re-run 12: _params dropped them → "drag needs from/to [x, y]" on every proof)
+            for src in (p, raw, a, a.get("rel") if isinstance(a.get("rel"), dict) else {}):
                 for k in keys:
                     if _ok(src.get(k)):
                         return list(src[k])[:2]

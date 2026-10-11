@@ -615,6 +615,11 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False):
         p = dict(params or {})
         if act.get("start_url") and ctx.image_chat:
             p.setdefault("chat_url", ctx.image_chat)
+        if act.get("kind") == "drag" and not any(isinstance(act.get(k), list) for k in ("rel_from", "from", "points")) \
+                and not any(isinstance(p.get(k), list) for k in ("rel_from", "from")):
+            # a drag whose points are DATA at use time (a located region): proven with a neutral centre box — the
+            # proof checks that a box lands, the producer passes the real located points when it uses the action
+            p.update(rel_from=[0.38, 0.42], rel_to=[0.62, 0.58])
         if generating:
             ok, why = presence(ctx, aid, p)
             pr = {"proven": ok, "ok": int(ok), "n": 1, "replays": [{"ok": ok, "why": why, "mode": "presence (generating)"}]}

@@ -477,6 +477,22 @@ class Producer:
             a = pb["actions"][aid]
             p = {k: (params[v[1:-1]] if isinstance(v, str) and re.fullmatch(r"\{\w+\}", v) and v[1:-1] in params else
                      playbook._fill(v, params) if isinstance(v, str) else v) for k, v in (st.get("params") or {}).items()}
+            if a.get("kind") == "drag" and not any(isinstance(p.get(k), list) for k in ("rel_from", "from")) \
+                    and not any(isinstance(a.get(k), list) for k in ("rel_from", "from", "points")):
+                # a drag whose points are data (a box over the label, a brush over the napkin): locate the target on
+                # the source picture (vision), else a centre box — never a drag without points (re-run 12)
+                box, src_file = None, (self.cur.get("source") or {}).get("file")
+                tgt = str(params.get("target") or (self.cur.get("params") or {}).get("target") or "")
+                if tgt and src_file and callable(getattr(self.ctx, "locate", None)):
+                    try:
+                        box = self.ctx.locate(src_file, tgt)
+                    except Exception:  # noqa: BLE001 — the centre box
+                        box = None
+                if box and len(box) == 4:
+                    x0, y0, x1, y1 = [max(0.0, min(1.0, float(v))) for v in box]
+                    p.update(rel_from=[x0, y0], rel_to=[x1, y1])
+                else:
+                    p.update(rel_from=[0.38, 0.42], rel_to=[0.62, 0.58])
             for r in a.get("requires", []):
                 if r not in done and not any(x.get("action") == r for x in [st]):
                     for s in playbook.resolve(pb, r, p):
