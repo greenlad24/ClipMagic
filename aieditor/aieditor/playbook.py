@@ -341,11 +341,14 @@ def resolve(app, action_id, params=None):
     elif k == "scroll":
         st = [{"type": "scroll", "by": p.get("by", 0)}]
     elif k == "drag":
-        if p.get("rel_from") is not None and p.get("rel_to") is not None and "selector" in tgt:
+        # points may be params (given per use) OR fixed on the onboarded action itself (re-run 10: the proposal kept
+        # rel_from/rel_to on the action, the replay read only params → "drag needs from/to [x, y]" on every proof)
+        rf, rt = p.get("rel_from", a.get("rel_from")), p.get("rel_to", a.get("rel_to"))
+        if rf is not None and rt is not None and "selector" in tgt:
             # element-relative (R14 P2): fractions of the selector's box, measured on the live page (agent_rec.mjs)
-            st = [{"type": "drag", "selector": tgt["selector"], "rel_from": list(p["rel_from"]), "rel_to": list(p["rel_to"])}]
+            st = [{"type": "drag", "selector": tgt["selector"], "rel_from": list(rf), "rel_to": list(rt)}]
         else:
-            st = [{"type": "drag", "from": p.get("from"), "to": p.get("to")}]
+            st = [{"type": "drag", "from": p.get("from", a.get("from")), "to": p.get("to", a.get("to"))}]
     elif k == "draw":
         st = [{"type": "draw", "strokes": p.get("strokes", []), **({"box": p["box"]} if "box" in p else {})}]
     elif k == "reveal":
