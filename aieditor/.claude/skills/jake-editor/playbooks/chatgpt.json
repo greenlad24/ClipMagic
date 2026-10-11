@@ -2362,6 +2362,9 @@
      }
     ]
    }
-  }
+  },
+  "overlay_close": [
+   "button[aria-label=\"Close viewer\"]"
+  ]
  }
 }

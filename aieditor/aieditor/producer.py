@@ -434,6 +434,17 @@ class Producer:
                 if not res["generated"]:
                     res["diag"] = {"class": "ui_step_failed", "why": "the route has no step that starts a generation"}
                     return res
+            # a tool run from an overlay (the image viewer) shows its result IN the overlay while the thread — where
+            # results are counted and progress is read — is hidden behind it: close the overlay after the generating
+            # press (re-run 12: Remove BG's cutout was misread as "a text reply" 3x). Data, per app: produce.overlay_close
+            for oc in (self.spec.get("overlay_close") or []):
+                try:
+                    if (tr.send({"cmd": "count", "selector": oc}) or {}).get("n"):
+                        self.sleep(1.5)
+                        tr.send({"cmd": "act", "action": {"type": "click", "selector": oc}})
+                        self.sleep(1.0)
+                except Exception:  # noqa: BLE001 — the wait still runs
+                    pass
             out = self._wait(tr, sel, n0, text0, prompt, deadline, wd, aid, n)
             res.update(out)
             if not res.get("file"):
