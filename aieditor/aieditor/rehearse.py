@@ -460,7 +460,9 @@ class SegmentAgent:
                 n = self._send({"cmd": "count", "selector": sel}).get("n")
                 if n == 1:
                     return {"selector": sel}, "selector"
-            if typ != "type" and len(text) <= 60:
+            if typ != "type" and len(text) <= 60 and len(hits) <= 1:
+                # a label is a stable target only when it is UNIQUE (run 20: two pictures both labelled "Generated image
+                # 1", one off screen — the label always hit that one, the viewer never opened, 25 turns lost)
                 return {"target": text, "exact": True}, "label"
         if typ == "type":
             for sel in self._composer_sels():
@@ -563,6 +565,12 @@ class SegmentAgent:
                     self.sleep(wait)
             else:
                 wire["press"] = False                   # a DRY press: the cursor clicks, the page is not pressed
+        if a.get("ref") and ty in ("click", "dblclick", "type", "drag", "draw"):
+            # LIVE the element the agent named is pressed (its ref) — the derived stable target is what the SCRIPT
+            # keeps, proven by the fresh replay. Run 20: the derived label hit an off-screen duplicate 20 times while
+            # the agent kept naming the visible one.
+            wire = {k: v for k, v in wire.items() if k not in ("selector", "target", "exact", "x", "y")}
+            wire["ref"] = a["ref"]
         r = self._send({"cmd": "act", "action": wire})
         if not r.get("ok", True) and a.get("ref") and how in ("selector", "label", "point"):
             # the derived target did not resolve: the element the agent named, by ref — then its own hint

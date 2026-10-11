@@ -512,4 +512,9 @@ check(_g20.check({"type": "drag", "ref": "r40", "from": [1, 1], "to": [2, 2]},
                  {"text": "53% Share Brush over what you want to remove Send", "tag": "div"}) is None,
       "a drag over a surface is judged on what it names, not the panel's text")
 check(_g20.check({"type": "click", "ref": "r9"}, {"text": "Share", "tag": "button"}) is not None, "a click on Share is still refused")
+# run 20: two pictures share the label "Generated image 1" — LIVE the agent's own element (ref) is pressed, and an
+# ambiguous label is never the script's stable target
+_src_rh = (ROOT / "aieditor" / "rehearse.py").read_text()
+check('wire["ref"] = a["ref"]' in _src_rh and "len(hits) <= 1" in _src_rh,
+      "live presses use the agent's ref; a label is a stable target only when unique")
 print(f"test_rehearse: {N} checks passed")
