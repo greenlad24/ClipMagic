@@ -1354,8 +1354,13 @@ def dry_run(job, sl, assets, setd, app, out, max_gens=1):
                     a.update(status="ready", file=str(gfile))
                     a["source"].update(chat_url=url, generation_s=gen_s, grabbed=f"recorder grab ({g.get('via')}, {g.get('w')}x{g.get('h')})")
 
-        # B. replay every screencast shot's set dressing, then rehearse its beats
-        for seg in setd["segments"]:
+        # B. replay every screencast shot's set dressing, then rehearse its beats — the PLAYBOOK path only: in agent
+        # mode the rehearsal agent proves each screencast itself (run 20: this walkthrough of 35 screencasts took ~10 min
+        # and reported "target not on screen" for steps the agent finds on screen anyway)
+        from . import rehearse as _RH
+        if _RH.mode() == "agent":
+            log("dry run: the shot walkthrough is skipped (agent mode — the rehearsal agent proves every screencast)")
+        for seg in (setd["segments"] if _RH.mode() != "agent" else []):
             t0 = time.time()
             slog, all_ok = [], True
             for st in seg["steps"]:
