@@ -250,6 +250,22 @@ class AssetAgent(producer.Producer):
             wd = Path(getattr(getattr(tr, "t", None), "workdir", None) or (Path(ctx.out) / "producer" / "w"))
             sel = self.spec.get("result_selector") or ""
             res.update(self._wait(tr, sel, pending.get("n0", 0), "", typed or "", deadline, wd, aid, n))
+            if not res.get("file"):
+                # run 20: the Markup result was FINISHED on screen (a chili on the label) while the wait kept saying
+                # "still generating" twice — the finished-picture signal did not fire for this kind of result. The
+                # generation was pressed minutes ago in THIS chat: the newest picture in the chat is taken, and the
+                # VERIFIER decides (same subject, the tool's result) — a wrong grab is rejected there, never shipped
+                for bsel in [x for x in (sel, 'img[alt^="Generated image"]', 'div[data-message-author-role="assistant"] img')
+                             if x]:
+                    k = int((tr.send({"cmd": "count", "selector": bsel}) or {}).get("n", 0) or 0)
+                    if k:
+                        g = self._grab(tr, bsel, k, wd, aid, n)
+                        if g.get("file"):
+                            self._log(f"{aid} try {n}: the wait missed the finished picture — took the newest one in "
+                                      f"that chat ({bsel}); the verifier decides")
+                            res.update(g)
+                            res["diag"] = None
+                            break
             return res
         finally:
             tr.close()

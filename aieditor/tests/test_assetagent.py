@@ -215,6 +215,13 @@ c11.producer._wait = _wait11
 row11 = c11.producer.produce("slow", "a jar of chili sauce", c11.out / "assets" / "slow.png", prompt=PROMPT, verbatim=True)
 check(row11["status"] == "ready" and _calls11 == [1, 2] and m11.calls == 1,
       f"a slow generation is collected on the next try without the agent: {_calls11} calls={m11.calls} {row11.get('why')}")
+# ── run 20: the wait never saw the finished picture → the newest one in that chat is taken, the verifier decides ──
+m12 = Model([act({"type": "type", "ref": "r1"}, {"type": "click", "ref": "r2"})])
+c12 = ctx_for("missed", m12, ok_check)
+c12.producer._wait = lambda *a, **k: {"diag": {"class": "still_generating", "why": "no finished image after 241 s"}}
+row12 = c12.producer.produce("missed", "a jar of chili sauce", c12.out / "assets" / "missed.png", prompt=PROMPT, verbatim=True)
+check(row12["status"] == "ready" and m12.calls == 1,
+      f"a finished picture the wait missed is collected from that chat: {row12.get('status')} {row12.get('attempts')}")
 # ── 3. the cap → needs_asset ──
 m3 = Model([act({"type": "type", "ref": "r1"}, {"type": "click", "ref": "r2"})] * 10)
 c3 = ctx_for("cap", m3, lambda a, f, o: {"matches": False, "missing_objects": ["the jar"], "usd": 0.002})
