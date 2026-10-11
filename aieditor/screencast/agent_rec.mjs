@@ -1570,7 +1570,10 @@ for await (const line of rl) {
         for (const sel of m.selector_present || []) if (!document.querySelector(sel)) fail.push(`no ${sel}`);
         return { fail, url, value: val };
       }, m).catch((e) => ({ fail: [String(e)] }));
-      const w = await wall(page);
+      const w0 = await wall(page);
+      // the OUTSIDE view is a never-logged-in page: its "Log in / Sign up" header IS the view, not a wall (re-run 16:
+      // every beat on chatgpt.com/pricing failed "assertion: login: log in / sign up buttons")
+      const w = w0 && SESSION === "outside" && w0.kind === "login" ? null : w0;
       if (w) r.fail.push(`${w.kind}: ${w.why}`);
       out({ ok: !r.fail.length, ...r, wall: w });
     }

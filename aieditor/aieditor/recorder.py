@@ -1160,13 +1160,31 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
                                                 f"({seg['t1'] - seg['t0']:.0f} s)", 0.1 + 0.75 * i / max(1, len(segs)))
             events.set_sub(f"screencast {i + 1}/{len(segs)}")
             try:
-                doc = r.record_segment(i, seg)
+                doc = None
+                for attempt in (1, 2):
+                    try:
+                        doc = r.record_segment(i, seg)
+                        break
+                    except (InterruptedError, KeyboardInterrupt):
+                        raise
+                    except Exception as e:  # noqa: BLE001 — ONE screencast that crashes never ends the whole video
+                        if type(e).__name__ in ("BudgetExceeded", "Cancelled", "QuotaWait"):
+                            raise
+                        # (re-run 16: ffmpeg died mid-render on the server — BrokenPipe — and the job FAILED with 34
+                        # screencasts still to go; the same take rendered fine again): tried once more, then this one
+                        # screencast is not recorded and falls back like any other
+                        r.log(f"recorder: screencast {i + 1} crashed ({type(e).__name__}: {str(e)[-200:]})"
+                              + (" — trying it once more" if attempt == 1 else " — not recorded, it falls back"))
+                        doc = {"status": "crashed", "why": f"{type(e).__name__}: {str(e)[-300:]}", "seg": i}
+                        sd.mkdir(parents=True, exist_ok=True)
+                        (sd / "recording.json").write_text(json.dumps(doc, indent=1))
             finally:
                 events.set_sub(None)
             out[i] = doc
             if doc["status"] != "ok":
                 reason = {"needs_primitive": "needs_primitive", "needs_asset": "needs_asset",
-                          "challenge": "challenge page", "timing": "timing", "held": "beat failed"}.get(doc["status"], doc["status"])
+                          "challenge": "challenge page", "timing": "timing", "held": "beat failed",
+                          "crashed": "recording crashed"}.get(doc["status"], doc["status"])
                 hold.append({"reason": reason, "detail": f"screencast {i + 1} ({seg.get('app')}): {str(doc.get('why'))[:300]}"})
                 if held:
                     held(reason, hold[-1]["detail"])

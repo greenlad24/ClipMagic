@@ -1075,4 +1075,37 @@ doc = (ROOT / "docs" / "SELF-HEALING.md").read_text()
 check(preflight.coverage_markdown() in doc, "docs/SELF-HEALING.md carries the current coverage table "
       "(regenerate: python3 -c 'from aieditor import preflight; print(preflight.coverage_markdown())')")
 
+# re-run 16: ffmpeg died mid-render (BrokenPipe) and the WHOLE job failed — one screencast that crashes is tried once
+# more, then falls back; the others are still recorded
+import tempfile as _tf  # noqa: E402
+from aieditor import recorder as _R  # noqa: E402
+class _FakeRec:
+    calls = {}
+    def __init__(self, *a, **k):
+        self.log = k.get("log") or print
+        self.progress, self.usd, self.live_left = None, 0.0, 1
+        self.budget = type("B", (), {"video_usd": 0})()
+    def record_segment(self, i, seg):
+        _FakeRec.calls[i] = _FakeRec.calls.get(i, 0) + 1
+        if i == 0:
+            raise BrokenPipeError(32, "Broken pipe")
+        return {"status": "ok", "seg": i}
+    def close(self):
+        pass
+_orig = (_R.Recorder, _R.schema_segments)
+_R.Recorder = _FakeRec
+_R.schema_segments = lambda plan, words, pbs, allow_intent=None: [{"t0": 0, "t1": 5, "app": "x"}, {"t0": 5, "t1": 9, "app": "x"}]
+_logs = []
+try:
+    with _tf.TemporaryDirectory() as _w:
+        res = _R.record_all({}, {}, {}, w=_w, video={"words": []}, new_session=None, log=_logs.append, allow_intent=set(),
+                            skip_done=False)
+finally:
+    _R.Recorder, _R.schema_segments = _orig
+check(_FakeRec.calls == {0: 2, 1: 1} and res["segments"][0]["status"] == "crashed" and res["segments"][1]["status"] == "ok"
+      and res["held"] and res["held"][0]["reason"] == "recording crashed" and any("once more" in x for x in _logs),
+      f"a crashed screencast: retried once, then held to fall back; the next one still recorded: {_FakeRec.calls} {res}")
+_src = (ROOT / "screencast" / "agent_rec.mjs").read_text() if "ROOT" in globals() else ""
+check(not _src or 'SESSION === "outside" && w0.kind === "login"' in _src,
+      "the outside (never-logged-in) view's login header is not a wall at a beat assert (re-run 16, pricing page)")
 print(f"test_selfheal: {N} checks passed")
