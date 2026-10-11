@@ -287,4 +287,579 @@ check(pz[1].get("after_reply") is True and pz[1].get("then_skip") == {"texts": [
 logo = PB.playbook_copy("chatgpt")["produce"]["tools"]["logo_template"]["steps"][2]
 check(logo.get("after_reply") and logo.get("then_skip"), "the shared Logo hint carries after_reply + then_skip")
 
+
+# ── 4. THE PREFLIGHT: rehearse off camera, cluster, a systematic drift → the repair agent → data → proven on 2 ──
+pins("A-new-popup", "A-moved-control", "A-real-problem")
+from aieditor import drift, preflight  # noqa: E402
+
+NEW_COMPOSER = "#composer-2026"
+
+
+class DriftPage(Page):
+    """The app after a UI change: new resting suggestions / a new banner / a moved composer / a challenge."""
+
+    def __init__(self, popup_texts=(), banner=False, moved=False, wall=None):
+        super().__init__(popup_texts=popup_texts, banner=banner, wall=wall)
+        self.moved, self.banner_always = moved, banner
+
+    def send(self, m):
+        if m.get("cmd") == "open" and self.banner_always:
+            self.banner = True                          # the banner is back on every fresh load
+        if m.get("cmd") == "act" and m["action"].get("type") == "type" and self.moved \
+                and m["action"].get("selector") != NEW_COMPOSER:
+            self.sent.append(m)
+            return {"ok": False, "error": "no element for the target"}
+        if m.get("cmd") == "observe":
+            return {"ok": True, "url": self.url, "items": [{"ref": "r1", "tag": "div", "text": "Find the latest docs",
+                                                             "box": [400, 600, 300, 40]}], "shot": None}
+        if m.get("cmd") == "find":
+            return {"ok": True, "found": {t: [] for t in m.get("texts", [])}}
+        return super().send(m)
+
+
+def plan_segs(n=3, prompt=True):
+    out = []
+    for i in range(n):
+        t0 = 1.0 + i * 1.0
+        bts = [{"id": f"s{i}b0", "word_id": 1, "t_word": t0 + 0.1, "word": "first", "action": "camera", "subject": "screen"}]
+        if prompt:
+            bts.append({"id": f"s{i}b1", "word_id": 3, "t_word": t0 + 0.5, "word": "paste", "action": "paste_prompt",
+                        "params": {"text": f"make a poster number {i} for my hot sauce stall"}})
+        out.append({"t0": t0, "t1": t0 + 0.9, "url": "https://chatgpt.com/", "app": "chatgpt", "session": "logged_in",
+                    "beats": bts})
+    return out
+
+
+W2 = [{"i": i, "word": w, "start": 1.0 + i * 0.2, "end": 1.15 + i * 0.2} for i, w in
+      enumerate("so first I paste it here and then the next one and the last one now ok".split())]
+
+
+def fake_agent(turns):
+    seq = list(turns)
+    calls = []
+
+    def f(model, system, content, max_tokens, **kw):
+        calls.append(kw.get("purpose"))
+        t = seq.pop(0) if seq else {"do": "decide", "note": "give up", "decision": json.dumps({"verdict": "real_problem"})}
+        return {"text": json.dumps(t), "usd": 0.04}
+    f.calls = calls
+    return f
+
+
+def run_pf(page, turns, reonboard=None, pb=None):
+    saved = {}
+    pf = preflight.RecordingPreflight(TMP / f"pf{len(os.listdir(TMP))}", plan_segs(), {"chatgpt": copy.deepcopy(pb or PBX)},
+                                      {"assets": []}, W2, lambda app, kind, fresh: page,
+                                      repairer=drift.Repairer(call=fake_agent(turns), log=lambda *a: None),
+                                      reonboard=reonboard, save_pb=lambda app, p_: saved.update({app: p_}),
+                                      log=lambda *a: None, pixels=False)
+    return pf.run(), saved
+
+
+# (a) resting UI: the new home suggestions fail all 3 screencasts → ONE systematic cluster → allowance → proven
+pg = DriftPage(popup_texts=["Find the latest docs Summarize recent emails"])
+rep, saved = run_pf(pg, [{"do": "observe", "note": "look"},
+                         {"do": "decide", "note": "chips under the composer are the new resting home page",
+                          "decision": json.dumps({"verdict": "resting_ui", "resting_texts": ["Find the latest docs"],
+                                                  "why": "home-page suggestion chips"})}])
+cl = rep["clusters"][0]
+check(cl["systematic"] and cl["cls"] == "A" and len(cl["segments"]) == 3, f"one systematic A cluster on 3 screencasts: {cl}")
+check(rep["repairs"][0]["accepted"] and rep["repairs"][0]["verdict"] == "resting_ui", f"repair accepted: {rep['repairs']}")
+check(len(rep["repairs"][0]["proofs"]) == 2 and all(p_["ok"] for p_ in rep["repairs"][0]["proofs"]), "proven on 2 screencasts")
+check(saved["chatgpt"]["start_state"]["allow"]["resting_texts"] == ["Find the latest docs"]
+      and saved["chatgpt"]["start_state"]["allow"]["learned"], "the fix is DATA in this video's playbook (with its trail)")
+check(not rep["failed"], f"after the repair every screencast rehearses clean: {rep['failed']}")
+check("allow" not in PBX["start_state"], "the shared playbook is untouched")
+# (b) a new banner → dismiss steps (data), refused if it would press something unsafe
+pg = DriftPage(banner=True)
+rep, saved = run_pf(pg, [{"do": "act", "note": "close it", "action": json.dumps({"type": "click", "target": "Not now"})},
+                         {"do": "decide", "note": "a banner", "decision": json.dumps(
+                             {"verdict": "dismiss", "dismiss": [{"type": "click", "target": "Not now"},
+                                                                {"type": "click", "target": "Upgrade plan"},
+                                                                {"type": "key", "key": "Enter"}]})}])
+check(rep["repairs"][0]["accepted"] and saved["chatgpt"]["start_state"]["dismiss"] == [{"type": "click", "target": "Not now"}],
+      f"the dismiss step is data; 'Upgrade plan' and Enter are refused: {saved.get('chatgpt', {}).get('start_state', {}).get('dismiss')}")
+kept, refused = drift.safe_dismiss([{"type": "click", "target": "Log out"}, {"type": "click", "target": "Delete chat"},
+                                    {"type": "click", "selector": "button.close"}])
+check(len(kept) == 1 and len(refused) == 2, f"log out / delete never become dismiss steps: {refused}")
+# (c) a moved control: every paste fails 'no element' → moved_control → re-onboarded (fake) → proven
+pg = DriftPage(moved=True)
+
+
+def reon(app, ro, pb):
+    new = copy.deepcopy(pb)
+    new["actions"]["paste_prompt"]["selectors"] = [NEW_COMPOSER]
+    reon.need = ro["need"]
+    return new
+
+
+rep, saved = run_pf(pg, [{"do": "count", "note": "composer?", "texts": ['[contenteditable="true"]']},
+                         {"do": "decide", "note": "moved", "decision": json.dumps(
+                             {"verdict": "moved_control", "action_id": "paste_prompt",
+                              "need": "type the prompt into the message box"})}], reonboard=reon)
+check(rep["clusters"][0]["stage"] == "beat" and rep["repairs"][0]["accepted"]
+      and saved["chatgpt"]["actions"]["paste_prompt"]["selectors"] == [NEW_COMPOSER],
+      f"the moved composer is re-onboarded for this video and proven: {rep['repairs']}")
+# (d) a real problem: a challenge on every screencast — never accepted, even if the agent says 'resting_ui'
+pg = DriftPage(wall={"kind": "challenge", "why": "Verify you are human"})
+rep, saved = run_pf(pg, [{"do": "decide", "note": "accept it", "decision": json.dumps(
+    {"verdict": "resting_ui", "reasons": [".*"], "walls": ["challenge"]})}])
+check(not rep["repairs"][0]["accepted"] and rep["repairs"][0]["verdict"] == "real_problem" and not saved,
+      f"a challenge is never allowed away: {rep['repairs']}")
+check(sorted(rep["systematic_unrepaired"]) == [0, 1, 2], "its screencasts go to the fallback, listed")
+# a fix that does not hold on 2 screencasts is reverted
+pg = DriftPage(popup_texts=["Find the latest docs"])
+rep, saved = run_pf(pg, [{"do": "decide", "note": "wrong text", "decision": json.dumps(
+    {"verdict": "resting_ui", "resting_texts": ["something else entirely"]})}])
+check(not rep["repairs"][0]["accepted"] and not saved and "reverted" in rep["repairs"][0]["why"], "unproven → reverted")
+# clustering + classes
+cls = preflight.cluster([{"seg": 0, "stage": "first_frame", "reason": "popup / suggestion list on screen ('a b') — S3"},
+                         {"seg": 1, "stage": "first_frame", "reason": "popup / suggestion list on screen ('c') — S3"},
+                         {"seg": 2, "stage": "beat", "reason": "type failed: no element"}])
+check(cls[0]["systematic"] and len(cls[0]["segments"]) == 2 and not cls[1]["systematic"],
+      "the same reason with other quoted texts is one cluster; a single failure is a segment problem")
+check(preflight.classify("needs_asset: x", "assets") == "B" and preflight.classify("API cap: daily") == "D"
+      and preflight.classify("drag needs from/to [x, y]") == "C", "classes")
+
+
+# ── 5. NO SILENT DROPS: a screencast still not recorded → an approved motion template (+ the real result), listed ──
+pins("D-silent-drop")
+from aieditor import motiontemplates as MT  # noqa: E402
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+(TMP / "res.png").write_bytes(PNG)
+VID = {"words": W2, "duration": 30.0}
+segs = plan_segs(3)
+segs[1]["beats"].append({"id": "s1b2", "word_id": 5, "t_word": 2.8, "word": "and", "action": "reveal_result",
+                         "params": {"asset": "poster"}})
+segs[2]["beats"] = segs[2]["beats"][:1]                         # a camera-only step: no prompt, no result
+assets = {"assets": [{"id": "poster", "status": "ready", "file": str(TMP / "res.png"), "desc": "the poster"}]}
+recs = {0: {"status": "held", "why": "beat failed 3 takes"}, 1: {"status": "preflight", "why": "systematic drift"},
+        2: {"status": "needs_primitive", "why": "x"}}
+evs, rows = preflight.fallbacks(segs, recs, assets, VID, out_dir=TMP / "fb", log=lambda *a: None)
+check(len(rows) == 3 and all(r["why"] for r in rows), f"every screencast that was not recorded is listed: {rows}")
+t = {r["screencast"]: r["template"] for r in rows}
+if MT.is_on("prompt_result"):
+    check(t[2] == "prompt_result" and any(e["params"].get("result") for e in evs if e["template"] == "prompt_result"),
+          f"a step with a real result → prompt → result with the REAL picture: {t}")
+check(t[1] in ("prompt_highlight", "long_prompt_scroll") or not MT.is_on("prompt_highlight"),
+      f"a typed step → the app's prompt box (MO06/MO07): {t}")
+check(t[3] is None and "presenter" in rows[2]["fallback"], "no template fits → the presenter, logged as such (never silent)")
+check(json.loads((TMP / "fb" / "fallbacks.json").read_text())["fallbacks"] == rows, "fallbacks.json")
+check(all(e.get("fallback") and e["t1"] > e["t0"] for e in evs), "each fallback event is marked and timed")
+import importlib.machinery, importlib.util  # noqa: E402
+_ld = importlib.machinery.SourceFileLoader("aieditor_worker", str(ROOT / "bin" / "aieditor-worker"))
+_spec = importlib.util.spec_from_loader("aieditor_worker", _ld)
+WK = importlib.util.module_from_spec(_spec)
+_ld.exec_module(WK)
+(TMP / "job" / "edit-01").mkdir(parents=True)
+(TMP / "job" / "edit-01" / "fallbacks.json").write_text(json.dumps({"fallbacks": rows}))
+pins("D-finish-mode")
+check(WK.finish_mode({"finish_video": True}) and not WK.finish_mode({}), "finish mode is request.json finish_video")
+check(len(WK.fallback_rows(TMP / "job")) == 3 and WK.fallback_rows(TMP / "job")[0]["edit"] == "edit-01",
+      "the worker lists every fallback in the job's warnings")
+
+
+# ── 6. B: the asset audit — by code, before reuse; an unfit picture is set aside and made again ──
+pins("B-verbatim", "B-object-list", "B-one-line", "B-merge-sources", "B-collage", "B-tool-not-tool", "B-wrong-tool")
+SP = ["Use this exact bottle. Put it on a rustic kitchen counter beside fresh chillies, morning light through a window."]
+TOOLS = PB.playbook_copy("chatgpt")["produce"]["tools"]
+
+
+def tool_of(d):
+    pr_ = producer.Producer.__new__(producer.Producer)
+    pr_.spec = {"tools": TOOLS}
+    return pr_.tool_of(d)
+
+
+def rules(row):
+    return [x["rule"] for x in preflight.audit_asset({"status": "ready", **row}, SP, tool_of, TOOLS)]
+
+
+check(rules({"desc": "result", "source": {"prompt": "Use this exact bottle in a single-line prompt naming all objects: "
+                                                    "bottle, glass, wood"}}) == ["verbatim"], "his words rewritten → verbatim")
+check(rules({"desc": "result", "source": {"prompt": "use this exact bottle, put it on a rustic kitchen counter besides "
+                                                    "fresh chili, morning light through the window"}}) == [],
+      "a spoken variant of his words is not a rewrite")
+check(rules({"desc": "x", "source": {"prompt": "Turn this into a photo, with a wood clearly visible, with a glass clearly "
+                                               "visible, with a label clearly visible"}}) == ["object_list"],
+      "the manifest's object list typed → object_list (TEST v3 re-run 3)")
+check(rules({"desc": "x", "source": {"prompt": "in-app result: phone-photo bottle on a rustic kitchen counter"}}) == ["internal"],
+      "internal words typed (rerun_a, found by the audit on TEST v3's stored assets)")
+check(rules({"desc": "x", "source": {"prompt": "a bottle\non a table"}}) == ["one_line"], "a newline in a typed prompt")
+check(rules({"desc": "Three source photos and the merged result", "made_from": ["phone_photo"],
+             "source": {"prompt": "Merge these three photos"}}) == ["merge_sources"], "a merge with one source")
+check(rules({"desc": "x", "source": {"prompt": "A composite view showing three source photos side by side within a clean "
+                                               "app interface layout"}}) == ["collage"], "a fake collage asked (re-run 8)")
+check(rules({"desc": "x", "source": {"prompt": "A photo of a bottle. No text, captions, borders or collage panels."}}) == [],
+      "'No … collage panels' is not a collage request")
+check(rules({"desc": "Markup result: chili on the label", "made_from": [], "source": {
+    "prompt": "Add a chili", "via": "agent", "recipe": "plain_chat", "tool": "markup"}}) == ["tool_not_tool"],
+      "a markup result made as a new picture → tool_not_tool (markup_pepper)")
+check(rules({"desc": "Comment result", "made_from": ["sketch_photo"], "source": {
+    "prompt": "Drop this sun lower", "via": "fallback", "recipe": "produce_edit", "tool": "comment",
+    "fallback": "described edit"}}) == ["tool_not_tool"], "a described edit → tool_not_tool (comment_result)")
+check(rules({"desc": "Resize result: same bottle cutout", "made_from": ["bg_cutout"], "source": {
+    "prompt": "", "via": "tool", "recipe": "produce_edit:remove_bg", "tool": "remove_bg"}}) == ["wrong_tool"],
+      "'Resize result' made with Remove BG → wrong_tool (re-run 13)")
+check(rules({"desc": "Resize result: tall story", "made_from": ["bg_cutout"], "source": {
+    "prompt": "", "via": "tool", "recipe": "produce_edit:resize", "tool": "resize"}}) == [], "a real tool result passes")
+out_ = TMP / "aud" / "preprod"
+(out_ / "assets").mkdir(parents=True)
+(out_ / "assets" / "rerun_a.produced.json").write_text("{}")
+(out_ / "assets" / "rerun_a.png").write_bytes(PNG)
+found = preflight.audit_assets(out_, {"assets": [{"id": "rerun_a", "status": "ready", "desc": "x", "source": {
+    "prompt": "in-app result: x"}}]}, log=lambda *a: None)
+check(found and not (out_ / "assets" / "rerun_a.produced.json").exists()
+      and len(list((out_ / "assets").glob("rerun_a.*.set-aside-*"))) == 2 and not list((out_ / "assets").glob("*.produced.json")), "set aside: kept (renamed), never deleted")
+# reuse_ok runs the audit first: a stored row that fails it is never reused
+ctx_r = _Ctx(out_, PBX)
+ctx_r.script = 'THE PROMPT: "Use this exact bottle. Put it on a rustic kitchen counter beside fresh chillies."'
+ctx_r.producer, ctx_r.check = None, None
+check(onboard.reuse_ok(ctx_r, "rerun_b", {"status": "ready", "desc": "x", "source": {"prompt": "in-app result: x"},
+                                          "fidelity": {"v": 99, "look_ok": True, "clean": True}}) is False,
+      "a stored row that fails the audit is not reused, even with a good fidelity record")
+
+
+# ── 7. C: onboarding / proof gaps (fake transports) ──
+pins("C-points-text", "C-undeclared-points", "C-strokes", "C-chained-requires", "C-confirm-presence", "C-no-such-step",
+     "C-guessed-flow", "C-requires-param", "A-chat-wont-load", "A-library", "B-overlay-hidden", "B-duplicate-asset",
+     "D-camera-as-feature")
+d_ = onboard.norm_points({"rel_from": "0.3, 0.4", "rel_to": "[0.6,0.7]", "at": {"x": 1, "y": 2}})
+check(d_ == {"rel_from": [0.3, 0.4], "rel_to": [0.6, 0.7], "at": [1.0, 2.0]}, f"points written as text → numbers: {d_}")
+pbd = PB.playbook_copy("chatgpt")
+pbd["actions"]["ob_box"] = {"kind": "drag", "label": "box", "selectors": ["img.big"], "proven": True, "source": "t",
+                            "params": {"chat_url": {"type": "string"}}, "rel_from": [0.1, 0.2], "rel_to": [0.5, 0.6]}
+st_ = PB.resolve(pbd, "ob_box", {})
+check(st_[0]["rel_from"] == [0.1, 0.2] and st_[0]["rel_to"] == [0.5, 0.6], "a drag's points on the action itself replay")
+st_ = PB.resolve(pbd, "ob_box", {"rel_from": [0.3, 0.3], "rel_to": [0.4, 0.4]})
+check(st_[0]["rel_from"] == [0.3, 0.3], "undeclared located points (data) win over the action's")
+pbd["actions"]["ob_box"].pop("rel_from"), pbd["actions"]["ob_box"].pop("rel_to")
+st_ = PB.resolve(pbd, "ob_box", {})
+check(st_[0]["rel_from"] == [0.38, 0.42] and st_[0]["rel_to"] == [0.62, 0.58], "no points anywhere → the neutral centre box")
+pbd["actions"]["ob_pen"] = {"kind": "draw", "label": "pen", "selectors": ["canvas"], "proven": True, "source": "t"}
+st_ = PB.resolve(pbd, "ob_pen", {"strokes": [[[1, 2], [3, 4]]]})
+check(st_[0]["strokes"] == [[[1, 2], [3, 4]]], "stroke data (undeclared) passes the replay")
+pins("C-draw-no-strokes")
+st_ = PB.resolve(pbd, "ob_pen", {})
+check(st_[0]["strokes"] and len(st_[0]["strokes"][0]) >= 2, "no strokes anywhere → one sample stroke, never 'draw needs strokes'")
+# a mode / toggle step whose post already holds is not pressed again (re-run 15: Markup already on)
+pins("C-idempotent-mode")
+
+
+class ModePage:
+    polls = False
+
+    def __init__(self, markup_on):
+        self.markup, self.presses, self.notes = markup_on, [], []
+        self.t = self
+
+    def send(self, m):
+        c = m.get("cmd")
+        if c == "count":
+            sel = m["selector"]
+            return {"n": int(("Cancel markup" in sel and self.markup) or "generated-image-preview" in sel
+                             or "Close viewer" in sel or "contenteditable" in sel)}
+        if c == "act":
+            self.presses.append(m["action"].get("target") or m["action"].get("selector"))
+            if m["action"].get("target") == "Markup":
+                self.markup = not self.markup               # a toggle
+            return {"ok": True}
+        if c == "text":
+            return {"text": "Jake Dawson", "draft": ""}
+        if c == "state":
+            return {"account": "Jake Dawson"}
+        if c == "observe":
+            return {"lum": 10}
+        return {"ok": True}
+
+    def check(self, a):
+        return PB.RecorderSession.check(self, a)
+
+    def act(self, st):
+        return PB.RecorderSession.act(self, st)
+
+    def open(self, url):
+        return True, None
+
+
+pbm = PB.playbook_copy("chatgpt")
+pbm["start_state"]["asserts"] = []
+vm = pbm["actions"]["viewer_markup"]
+pbm["actions"]["ob_mark_box"] = {"kind": "drag", "label": "box", "selectors": ['[data-testid="generated-image-preview"]'],
+                                 "proven": True, "source": "t", "requires": ["viewer_markup"], "pre": [], "post": []}
+mp = ModePage(markup_on=True)
+okm, whym = PB._run_once(mp, pbm, "ob_mark_box", {})
+check(okm and "Markup" not in [x for x in mp.presses if x] and mp.markup and any("already reached" in n for n in mp.notes),
+      f"Markup already on: not pressed again (no toggle-off), logged: {whym} {mp.presses} {mp.notes} post={vm.get('post')}")
+mp2 = ModePage(markup_on=False)
+okm2, _ = PB._run_once(mp2, pbm, "ob_mark_box", {})
+check(okm2 and mp2.markup, "Markup off: pressed once as before")
+aud = {(f["action"], f["rule"]) for f in preflight.audit_playbook(pbd)}
+check(("ob_box", "drag_points_data") in aud and ("ob_pen", "draw_strokes_data") in aud, f"audit_playbook names data drags/draws: {aud}")
+check(("send", "requires_unbuildable") in aud, "audit_playbook: 'send' requires paste_prompt whose 'text' is data — named, "
+      "never a crash (re-run 14)")
+logo_steps = PB.playbook_copy("chatgpt")["produce"]["tools"]["logo_template"]["steps"]
+check(sum(1 for x in logo_steps if x.get("need")) >= 3 and not any(x.get("action") == "send" for x in logo_steps),
+      "the Logo flow is learned live (needs), never a guessed paste + send")
+check(not [f for f in preflight.audit_playbook(PB.playbook_copy("chatgpt")) if f["rule"] == "need_folds_send"],
+      "no shared tool need folds a Send into its step")
+
+
+class FakeT:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, m):
+        self.sent.append(m)
+        return {"ok": True, "url": "https://chatgpt.com/", "n": 1}
+
+    def close(self):
+        pass
+
+
+def ob_ctx(name, image_chat="https://chatgpt.com/c/job-a"):
+    out = TMP / name / "preprod"
+    out.mkdir(parents=True, exist_ok=True)
+    c = onboard.Ctx(out, "chatgpt", "https://chatgpt.com/", onboard.job_playbook(out, "chatgpt"), transport_factory=FakeT,
+                    llm_call=lambda *a, **k: {"text": "{}", "usd": 0.0}, budget=onboard.Budget(9.5), image_chat=image_chat,
+                    allowed_chats=["https://chatgpt.com/c/job-a", "https://chatgpt.com/c/job-b"], log=lambda *a: None)
+    return c
+
+
+_run, _prove, _pres = onboard.Explorer.run, onboard.prove, onboard.presence
+proved, presenced = [], []
+try:
+    onboard.Explorer.run = lambda self, need, start, tr, feedback=None, allow_generate=False: {
+        "status": "proposed", "action_id": "ob_name", "turns": 2, "log": [],
+        "action": {"kind": "paste", "label": "name", "selectors": ["#name"], "params": {}, "requires": [], "pre": [],
+                   "post": [], "proven": False, "source": "R14 P2 onboarding (per video): name"}}
+    onboard.prove = lambda ctx, aid, params=None, n=None: proved.append(copy.deepcopy(ctx.pb["actions"][aid])) or \
+        {"proven": True, "ok": 3, "n": 3, "replays": [{"ok": True}] * 3}
+    c1 = ob_ctx("chain")
+    row = onboard.onboard_action(c1, "enter the brand name", chain=["open_images_page", "images_templates_tab"])
+    check(row["status"] == "proven" and proved[-1]["requires"][:2] == ["open_images_page", "images_templates_tab"],
+          f"a tool's later step requires its earlier steps, so its proof replays them first: {proved[-1].get('requires')}")
+    onboard.presence = lambda ctx, aid, params=None: presenced.append(aid) or (True, None)
+    stat = []
+    c1s = ob_ctx("status")
+    c1s.status = stat.append
+    onboard.onboard_action(c1s, "enter the slogan")
+    check(any(x.startswith("Learning: enter the slogan (round 1/") for x in stat), f"the status line follows P2: {stat}")
+    pins("D-status-line")
+    c2 = ob_ctx("confirm")
+    row = onboard.onboard_action(c2, "press the check mark on the sketch", presence_only=True)
+    check(row["status"] == "proven" and presenced, "a confirm right after a stroke is proven by presence, never pressed")
+    # the start chat no longer loads → the next round starts from ANOTHER chat this job created (never Jake's)
+    onboard.prove = lambda ctx, aid, params=None, n=None: {"proven": False, "ok": 0, "n": 3, "replays": [
+        {"ok": False, "why": "start_state: no element [contenteditable] (Could not load this conversation)"}] * 3}
+    c3 = ob_ctx("rotate", image_chat="https://chatgpt.com/c/job-a")
+    onboard.onboard_action(c3, "click the comment pin")
+    check(c3.image_chat == "https://chatgpt.com/c/job-b", f"rotated to another job chat: {c3.image_chat}")
+    # every proof fails inside the SAME required step (its post drifted) → that step is re-proven / re-onboarded for
+    # this video, then the proof runs again (re-run 15: viewer_markup's 'Cancel markup' post)
+    pins("A-required-step-drift")
+    calls_p, rep_ids = [], []
+
+    def prove2(ctx, aid, params=None, n=None):
+        calls_p.append(aid)
+        if len(calls_p) == 1:
+            return {"proven": False, "ok": 0, "n": 3, "replays": [
+                {"ok": False, "why": "requires viewer_markup: post: no element button[aria-label=\"Cancel markup\"]"}] * 3}
+        return {"proven": True, "ok": 3, "n": 3, "replays": [{"ok": True}] * 3}
+    onboard.prove = prove2
+    _rep = onboard.reprove_existing
+    onboard.reprove_existing = lambda ctx, ids, params=None: rep_ids.extend(ids) or {i: {"ok": True} for i in ids}
+    try:
+        c4 = ob_ctx("reqdrift")
+        row = onboard.onboard_action(c4, "drag a box in markup mode", chain=["open_image_viewer", "viewer_markup"])
+    finally:
+        onboard.reprove_existing = _rep
+    check(rep_ids == ["viewer_markup"] and row["status"] == "proven" and len(calls_p) == 2,
+          f"the drifted required step is re-proven, then the proof passes: {rep_ids} {row.get('status')} {calls_p}")
+    # a prerequisite that stays broken after its one self-repair: dependents are skipped, no rounds spent
+    pins("D-prereq-failed")
+    onboard.prove = lambda ctx, aid, params=None, n=None: calls_p.append(aid) or {"proven": False, "ok": 0, "n": 3, "replays": [
+        {"ok": False, "why": "requires viewer_markup: post: no element button[aria-label=\"Cancel markup\"]"}] * 3}
+    onboard.reprove_existing = lambda ctx, ids, params=None: {i: {"ok": False} for i in ids}
+    explored = []
+    _run2 = onboard.Explorer.run
+    onboard.Explorer.run = lambda self, *a, **k: explored.append(a[0]) or _run2(self, *a, **k)
+    try:
+        c5 = ob_ctx("prereq")
+        calls_p.clear()
+        r1 = onboard.onboard_action(c5, "drag a box in markup mode", chain=["open_image_viewer", "viewer_markup"])
+        n_after_first = len(calls_p)
+        r2 = onboard.onboard_action(c5, "type the note into the box after the markup drag",
+                                    chain=["open_image_viewer", "viewer_markup"])
+    finally:
+        onboard.reprove_existing = _rep
+        onboard.Explorer.run = _run2
+    check(r1.get("prereq_failed") == "viewer_markup" and "skipped: prerequisite viewer_markup failed" in r1["why"],
+          f"the first step records the broken prerequisite: {r1.get('why')}")
+    check(r2.get("prereq_failed") == "viewer_markup" and len(calls_p) == n_after_first and len(explored) == 1,
+          f"the dependent step spends no rounds (no explore, no proof): {r2.get('why')} {len(explored)}")
+finally:
+    onboard.Explorer.run, onboard.prove, onboard.presence = _run, _prove, _pres
+# proof rounds never leak into each other: teardown (data) + the generic reset of the onboarding session
+pins("C-round-leak")
+
+
+class LeakT(FakeT):
+    def __init__(self):
+        super().__init__()
+        self.chips = 1                                  # a 'Markup' chip a previous round left in the draft
+
+    def send(self, m):
+        self.sent.append(m)
+        if m.get("cmd") == "count" and "Remove " in m.get("selector", ""):
+            return {"ok": True, "n": self.chips}
+        if m.get("cmd") == "act" and "Remove " in str(m["action"].get("selector")):
+            self.chips -= 1
+        return {"ok": True, "url": "https://chatgpt.com/c/job-a", "n": 1}
+
+
+lt = LeakT()
+pbr = PB.playbook_copy("chatgpt")
+pbr["actions"]["viewer_markup"]["teardown"] = [{"type": "click", "selector": 'button[aria-label="Cancel markup"]'}]
+sr = onboard.Session(onboard.Guarded(lt, pbr, allowed_chats=["https://chatgpt.com/c/job-a"]), pbr)
+sr.open("https://chatgpt.com/c/job-a")
+check(lt.chips == 0 and any(m.get("cmd") == "act" and m["action"].get("key") == "Escape" for m in lt.sent),
+      "a fresh round starts with Escape and the leftover draft chip removed")
+lt.sent.clear()
+PB.teardown(sr, pbr, "ob_mark_box" if "ob_mark_box" in pbr["actions"] else "viewer_markup", {})
+check(any(m.get("cmd") == "act" and "Cancel markup" in str(m["action"].get("selector")) for m in lt.sent),
+      "after a round the action's teardown steps (data) run")
+# Jake's Library is never opened by an agent (data: playbook private_urls)
+g = onboard.Guarded(FakeT(), PB.playbook_copy("chatgpt"))
+check(g.send({"cmd": "open", "url": "https://chatgpt.com/library?tab=images"}).get("refused")
+      and g.check_act({"type": "goto", "url": "https://chatgpt.com/library"}), "the Library is refused (open and goto)")
+src_pp = (ROOT / "aieditor" / "preprod.py").read_text()
+check('"https://chatgpt.com/library?tab=images"' in src_pp and 'AIEDITOR_READINESS_LIBRARY") == "1":\n            p.send' in src_pp,
+      "readiness opens the Library only when explicitly switched on")
+# a tool text step the app does not have → the app's prompt action (Markup has no note box)
+pbn = copy.deepcopy(PBX)
+ctx_n = _Ctx(TMP / "j1" / "preprod", pbn)
+prn = producer.Producer.__new__(producer.Producer)
+prn.ctx, prn.spec, prn.cur = ctx_n, {"tools": {"markup": {"steps": []}}, "roles": {"prompt": "paste_prompt"}}, {"source": {}}
+onboard.onboard_action = lambda *a, **k: {"status": "absent", "why": "no note box"}
+try:
+    aid_n, why_n = prn.ensure_tool_action("markup", 3, {"need": "type the note into the box", "text": True}, {"prompt": "x"})
+finally:
+    onboard.onboard_action = _real
+check(aid_n == "paste_prompt" and not why_n, "no note box → the text goes in the app's prompt action")
+# Remove BG ran in the viewer overlay: the overlay is closed after the press (data: produce.overlay_close)
+check(PB.playbook_copy("chatgpt")["produce"].get("overlay_close") == ['button[aria-label="Close viewer"]'],
+      "overlay_close is data in the app's playbook")
+src_pr = (ROOT / "aieditor" / "producer.py").read_text()
+check('for oc in (self.spec.get("overlay_close") or [])' in src_pr, "the producer closes the overlay after a tool press")
+# every checked picture an earlier run made is known to the source step (never made again under a new name)
+src_ob = (ROOT / "aieditor" / "onboard.py").read_text()
+check('glob("*.produced.json")' in src_ob and "_remember(ctx, side.name.split" in src_ob,
+      "earlier runs' pictures are remembered by the source step")
+# a camera / framing line is D — never a missing feature or a motion graphic (re-run 15, 'Close on the bottle's label')
+row_c = {"code": "ui_state", "why": "beat at 855.5 s on 'label': 'Close on the bottle's label' describes a UI step but "
+                                   "the beat only frames (camera.zoom)"}
+check(onboard.classify(row_c) == "D" and onboard.is_camera_need(row_c), "a beat that only frames is the edit's camera (D)")
+check(onboard.classify({"code": "feature", "why": "No 'Updated' badge exists"}) == "C", "a real missing feature stays C")
+check("if is_camera_need(r):" in src_ob.split("def handle_c")[1][:300], "the P4 route checks it again before handle_c acts")
+
+
+# ── 8. D: run control ──
+pins("D-cap-mid-route", "D-cap-mid-assets", "D-playbook-crash", "D-assets-kept")
+from aieditor import apiledger, llm, preprod  # noqa: E402
+os.environ["AIEDITOR_API_JOB_CAP_USD"], os.environ["AIEDITOR_API_DAILY_CAP_USD"] = "1.0", "100"
+try:
+    preflight.headroom("job-x", 20, per_need_usd=0.25)
+    check(False, "headroom must refuse")
+except apiledger.BudgetExceeded as e:
+    check(e.which == "job", "routing that cannot fit the job cap is refused BEFORE it starts (held 'API cap')")
+check(preflight.headroom("job-x", 2, per_need_usd=0.25) == 0.5, "routing that fits goes on")
+os.environ.pop("AIEDITOR_API_JOB_CAP_USD"), os.environ.pop("AIEDITOR_API_DAILY_CAP_USD")
+
+
+class _Job:
+    def __init__(self, d):
+        self.dir, self.request, self.sites = d, {}, []
+
+
+out8 = TMP / "j8" / "preprod"
+out8.mkdir(parents=True)
+for f, doc in (("readiness.json", {"checks": []}), ("assets.json", {"assets": [{"id": "a1", "status": "ready"}]}),
+               ("plan.json", {"plan": {"answer": {"segments": []}, "needs_primitive": []}})):
+    (out8 / f).write_text(json.dumps(doc))
+
+
+class _App:
+    site = "https://chatgpt.com/"
+
+
+_rn = preprod.route_needs
+
+
+def _route_refused(job, out, app, readiness, assets, pdoc, **kw):
+    assets["assets"].append({"id": "made_before_the_cap", "status": "ready"})
+    llm._refusals.append("API cap: $45.00 spent on the Claude API in the last 24 h of the $45.00 daily cap")
+    return {"usd": 0.0}
+
+
+preprod.route_needs = _route_refused
+try:
+    preprod._flow(_Job(TMP / "j8"), out8, [], _App(), steps=["route"])
+    check(False, "a refused route must raise")
+except apiledger.BudgetExceeded as e:
+    check(e.which == "daily", "the cap during routing ends as the cap (daily → the job waits), never needs_primitive")
+finally:
+    preprod.route_needs = _rn
+    llm._refusals.clear()
+check(any(a["id"] == "made_before_the_cap" for a in json.loads((out8 / "assets.json").read_text())["assets"]),
+      "assets.json keeps what routing made before it stopped")
+
+
+def _route_crash(*a, **k):
+    a[4]["assets"].append({"id": "made_before_the_crash", "status": "ready"})
+    raise RuntimeError("boom")
+
+
+preprod.route_needs = _route_crash
+try:
+    preprod._flow(_Job(TMP / "j8"), out8, [], _App(), steps=["route"])
+except RuntimeError:
+    pass
+finally:
+    preprod.route_needs = _rn
+check(any(a["id"] == "made_before_the_crash" for a in json.loads((out8 / "assets.json").read_text())["assets"]),
+      "assets.json is kept even when routing crashes")
+src_pp_run = src_pp.split("def run(job_dir")[1]
+check("except (InterruptedError, genledger.QuotaWait, apiledger.BudgetExceeded):\n            # cancelled" in src_pp_run
+      and "raise" in src_pp_run.split("apiledger.BudgetExceeded):")[1][:400],
+      "pre-production re-raises the cap (the job waits / is held), never records half-done")
+# a PlaybookError in a step's requires is a failed try, never a crash of pre-production (re-run 14)
+pr8 = producer.Producer.__new__(producer.Producer)
+pr8.ctx, pr8.spec, pr8.cur = _Ctx(TMP / "j1" / "preprod", copy.deepcopy(PBX)), {"roles": {}}, {"source": {}}
+
+
+class _S:
+    polls = False
+
+    def act(self, st):
+        return True, None
+
+
+bad = pr8._step(_S(), FakeT(), {"action": "send"}, {"prompt": "x", "files": []}, set())
+check(bad and bad["class"] == "ui_step_failed" and "requires paste_prompt" in bad["why"],
+      f"'param text is required' in a requires → a failed step: {bad}")
+
+
+# ── 9. THE COVERAGE TABLE: every past failure has a class, a detector, a repair and a REAL test ──
+for row in preflight.COVERAGE:
+    check(row["cls"] in preflight.CLASSES and row["detector"] and row["repair"], f"coverage row complete: {row['id']}")
+    f, _, tok = row["test"].partition("::")
+    check((ROOT / f).is_file() and tok and tok in (ROOT / f).read_text(), f"coverage {row['id']}: test {row['test']} exists")
+    if f.endswith("test_selfheal.py"):
+        check(row["id"] in PINNED or tok in PINNED, f"coverage {row['id']}: pinned by a check in this file")
+check(len({r["id"] for r in preflight.COVERAGE}) == len(preflight.COVERAGE), "coverage ids are unique")
+doc = (ROOT / "docs" / "SELF-HEALING.md").read_text()
+check(preflight.coverage_markdown() in doc, "docs/SELF-HEALING.md carries the current coverage table "
+      "(regenerate: python3 -c 'from aieditor import preflight; print(preflight.coverage_markdown())')")
+
 print(f"test_selfheal: {N} checks passed")

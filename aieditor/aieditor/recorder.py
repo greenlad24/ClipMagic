@@ -248,7 +248,8 @@ def run_dismiss(sess, pb, start_state, session="logged_in"):
             act(sess, wire(step, record=False), session, alt=step.get("alt") or ())
 
 
-def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None, pixels=True, session="logged_in"):
+def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None, pixels=True, session="logged_in",
+               accept_resting=True):
     """Set-dress OFF CAMERA from the playbook start_state, then prove the first frame before any recording.
     A failed check redoes the set-up; after `tries` -> SetupError (nothing recorded)."""
     from . import playbook as PB
@@ -275,7 +276,7 @@ def open_clean(sess, pb, seg, start_state=None, log=print, tries=3, account=None
             return st
         if (st.get("wall") or {}).get("kind") in DROP_KINDS:
             raise SetupError("first frame: " + "; ".join(why), wall=st["wall"])
-        if why and all(re.search(r"popup|suggestion list|menu", w, re.I) for w in why):
+        if accept_resting and why and all(re.search(r"popup|suggestion list|menu", w, re.I) for w in why):
             # a "popup" that survives Escape and a click on empty space is the page's resting UI (ChatGPT's home-page
             # suggestions under the composer, 2026-10-11) — accepted, logged; never a dropped screencast
             sess.send({"cmd": "act", "action": {"type": "key", "key": "Escape"}})

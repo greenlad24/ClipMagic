@@ -1824,6 +1824,12 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         pdoc = json.loads((out / "plan.json").read_text())
         if (pdoc.get("plan") or {}).get("answer") and not pdoc.get("routed"):
             n_ref = len(llm.refusals())
+            # run control (D), before the expensive stage: the job / daily Claude cap must fit routing's estimate NOW —
+            # the job waits (daily) or is held 'API cap' (job) before it starts, never half-routed (re-run 11)
+            from . import onboard as _ob, preflight
+            n_needs = len((pdoc.get("plan") or {}).get("needs_primitive") or [])
+            if n_needs:
+                preflight.headroom(Path(out).parent.name, n_needs, per_need_usd=0.25, cap_usd=min(_ob.app_cap(), 4.0))
             try:
                 res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
                                   progress=progress, cancelled=stop)

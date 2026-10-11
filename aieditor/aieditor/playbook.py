@@ -372,7 +372,9 @@ def resolve(app, action_id, params=None):
             st = [{"type": "drag", "from": _pt("from", "drag_from", "start"), "to": _pt("to", "drag_to", "end")}]
     elif k == "draw":
         # strokes are DATA at use time (the doodle's shapes) and rarely declared: raw params too (as the drag)
-        strokes = p.get("strokes") or raw.get("strokes") or a.get("strokes") or []
+        strokes = p.get("strokes") or raw.get("strokes") or a.get("strokes") or \
+            [[[410, 460], [512, 410], [614, 460], [563, 563], [461, 563], [410, 460]]]   # none anywhere: one sample
+        # stroke (a required draw replayed inside another step's proof — re-run 15: "draw needs strokes")
         box = p.get("box") or raw.get("box") or a.get("box")
         st = [{"type": "draw", "strokes": strokes, **({"box": box} if box else {}),
                **({"selector": tgt["selector"]} if "selector" in tgt else {})}]
@@ -583,6 +585,34 @@ def _poll_pre(session, pb, a, c, polls):
     return ok, why
 
 
+def teardown(session, pb, action_id, params=None):
+    """After a proof round: undo what THIS round left behind, so it never leaks into the next round (re-run 15: a
+    markup stroke left the viewer in Markup mode and a 'Markup' reply chip in the composer — the next round failed
+    "pre: button[aria-label='Remove markup'] still present"). Data first: the action's and its requires' "teardown"
+    steps; then the generic reset (Session.reset when the session has one). Never raises; only touches what the
+    round made (proofs run in chats this job created)."""
+    acts = pb.get("actions") or {}
+    a = acts.get(action_id) or {}
+    for aid in [action_id] + list(a.get("requires") or []):
+        for st in (acts.get(aid) or {}).get("teardown") or []:
+            try:
+                session.act(st if isinstance(st, dict) and "type" in st else resolve(pb, st["action"], params)[0])
+            except Exception:  # noqa: BLE001 — a teardown step that finds nothing is fine
+                pass
+    reset = getattr(session, "reset", None)
+    if callable(reset):
+        try:
+            reset()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _note(session, msg):
+    notes = getattr(session, "notes", None)
+    if isinstance(notes, list):
+        notes.append(msg)
+
+
 def _poll(session, c, wait):
     t0 = time.monotonic()
     while True:
@@ -590,6 +620,28 @@ def _poll(session, c, wait):
         if ok or time.monotonic() - t0 >= wait:
             return ok, why
         time.sleep(0.5)
+
+
+IDEMPOTENT_KINDS = ("click", "key")
+
+
+def already(session, pb, action_id, params=None):
+    """A mode / toggle step whose post ALREADY holds (the viewer is already in Markup mode from the previous proof
+    round): pressing it again can toggle it off or hit another match ('Markup' in the composer's reply chip) —
+    re-run 15 / 2026-10-09: "requires viewer_markup: post: no element Cancel markup". → True = skip the press, the
+    state is already reached. Only clicks / keys that generate nothing and have a post assert; checked once, no wait.
+    Generic: any app."""
+    a = (pb.get("actions") or {}).get(action_id) or {}
+    if a.get("kind") not in IDEMPOTENT_KINDS or a.get("generates") or not a.get("post"):
+        return False
+    p = _params(a, dict(params or {}))
+    try:
+        for c in a.get("pre", []):
+            if not session.check(_fill_assert(c, p))[0]:
+                return False
+        return all(session.check(_fill_assert(c, p))[0] for c in a["post"])
+    except Exception:  # noqa: BLE001 — not checkable: press it
+        return False
 
 
 def _run_once(session, pb, action_id, params):
@@ -609,6 +661,9 @@ def _run_once(session, pb, action_id, params):
             return False, f"start_state: {why}"
     polls = getattr(session, "polls", False)
     for r in a.get("requires", []):
+        if already(session, pb, r, params):
+            _note(session, f"requires {r}: state already reached — not pressed again")
+            continue
         for st in resolve(pb, r, params):          # the replay's params reach its requires too (a prompt to clear, a chat url)
             ok, why = session.act(st)
             if not ok:
@@ -626,6 +681,7 @@ def _run_once(session, pb, action_id, params):
         ok, why = _poll_pre(session, pb, a, _fill_assert(c, p), polls)
         if not ok:
             return False, f"pre: {why}"
+    # (the action UNDER PROOF is always pressed — a proof that skips it proves nothing; only its requires are idempotent)
     for st in resolve(pb, action_id, params):
         ok, why = session.act(st)
         if not ok:
@@ -665,6 +721,8 @@ def replay(session_factory, app, action_id, n=None, params=None, save_to=None, a
         except Exception as e:  # noqa: BLE001 - a crashed session is a failed replay, not a crashed harness
             ok, why = False, f"session error: {e}"
         finally:
+            if s is not None:
+                teardown(s, pb, action_id, params)
             close = getattr(s, "close", None)
             if close:
                 close()

@@ -310,15 +310,40 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
                 for a in ((playbooks.get(app) or {}).get("start_state") or {}).get("asserts", []))
             return agentrec.Session(w, x["profile"], cancelled, dark=dark, profile_name=pname)
 
+        # THE PREFLIGHT (self-healing layer, aieditor/preflight.py): every screencast rehearsed OFF CAMERA first; a
+        # systematic UI drift (the same reason on >= 2 screencasts) is repaired as DATA in this video's playbook by the
+        # drift agent and proven on 2 screencasts — before any take is recorded
+        skip = set()
+        # ONE browser per (app, session kind) for the preflight and the recording alike (the recorder takes over the
+        # preflight's sessions; a wall still gets a fresh one)
+        _shared, _make = {}, new_session
+
+        def new_session(app, kind, fresh):
+            key = (app, kind)
+            if fresh or key not in _shared:
+                _shared[key] = _make(app, kind, fresh)
+            return _shared[key]
+        if os.environ.get("AIEDITOR_PREFLIGHT", "1") != "0":
+            pf = run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scouts, log, cancelled, progress)
+            playbooks.update(pf.get("playbooks") or {})
+            skip = set(pf.get("systematic_unrepaired") or []) & set(todo)
+            if skip:
+                log(f"edit {k}: preflight — screencast(s) {', '.join(str(i + 1) for i in sorted(skip))} fail a systematic "
+                    "check the repair could not fix: not recorded (each falls back to its motion template, logged)")
         res = recorder.record_all(
             plan, playbooks, assets, w=w, video=video, new_session=new_session,
             verdict=lambda w_, i, sc: recorder.docker_verdict(w_, i, w / "expect.json", recorder.ACCOUNT, cancelled),
-            media=recorder.DockerMedia(cancelled), log=log, cancelled=cancelled, only=set(todo),
+            media=recorder.DockerMedia(cancelled), log=log, cancelled=cancelled, only=set(todo) - skip,
             allow_intent=recorder.intent_ledger_allowed(),
             progress=lambda m, f: progress(m, f), held=lambda reason, detail: add_held(d, reason, f"edit {k} {detail}"))
         usd += res["usd"]
         if lock:
             lock.release()
+        for i in sorted(skip):
+            res["segments"][i] = recorder._load(w / f"seg-{i:02d}" / "recording.json", None) or \
+                {"status": "preflight", "why": "a systematic first-frame / UI drift the repair agent could not fix "
+                                               "(edit-NN/preflight.json)"}
+            _not_recorded(w / f"seg-{i:02d}", "preflight", sched[i], res["segments"][i]["why"])
         for i, doc in res["segments"].items():
             if doc.get("status") == "ok":
                 n_recorded += 1
@@ -327,8 +352,17 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
                 ev_log.emit("log", f"edit {k}: screencast {i + 1} held — {doc.get('status')}: {str(doc.get('why'))[:200]}",
                             level="warn")
     ev_log.set_sub(None)
+    # NO SILENT DROPS: a screencast that is still not recorded falls back to an approved motion template of its step
+    # in the app's UI kit (with the REAL result when there is one) — listed in fallbacks.json + the job's warnings
+    from . import preflight
+    recs = {i: recorder._load(w / f"seg-{i:02d}" / "recording.json", None) or {"status": "not_recorded", "why": "no recording"}
+            for i in range(len(sched))}
+    fb_evs, fb_rows = preflight.fallbacks(sched, recs, recorder._load(d / "preprod" / "assets.json", None) or {"assets": []},
+                                          video, out_dir=w, log=lambda m: log(f"edit {k}: {m}"))
+    for r in fb_rows:
+        ev_log.emit("log", f"edit {k}: screencast {r['screencast']} fallback — {r['fallback']} ({r['why'][:120]})", level="warn")
     progress("Rendering the overlays…", 0.88)
-    evs = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan, log), video, fps, tag="gfx",
+    evs = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan, log) + fb_evs, video, fps, tag="gfx",
                                cancelled=cancelled)
     json.dump(evs, open(w / "overlays.json", "w"), indent=1)
     n_ok = sum(1 for i in range(len(segs)) if (w / f"seg-{i:02d}" / "rec" / "events.json").exists())
@@ -337,6 +371,69 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             + ("no site could be screencast (A-roll + overlays only)" if not sites else "the director placed none"))
     return (f"{n_ok}/{len(segs)} screencast(s)" + (f" ({n_recorded} in the logged-in app)" if n_recorded else "")
             + (f", {n_held} held" if n_held else "") + f", {len(evs)} overlay(s)"), usd
+
+
+def run_preflight(d, w, sched, todo, playbooks, assets, video, new_session, scouts, log, cancelled, progress):
+    """The self-healing preflight before recording (aieditor/preflight.py): the asset audit (B, logged — the assets
+    were made already), the playbook audit (C), every screencast rehearsed off camera + clustered (A) and a systematic
+    drift repaired as data in THIS video's playbook (drift.Repairer; a moved control re-onboarded) and proven on 2.
+    Never raises (a broken preflight leaves recording exactly as before). → the preflight report."""
+    from . import drift, onboard, preflight
+    out = Path(d) / "preprod"
+    try:
+        progress("Preflight: rehearsing every screencast off camera…", 0.1)
+        for app, pb in playbooks.items():
+            for f in preflight.audit_playbook(pb):
+                log(f"preflight (playbook {app}): {f['action']} — {f['why']}")
+        chats = [(a.get("source") or {}).get("chat_url") for a in (assets or {}).get("assets") or []
+                 if (a.get("source") or {}).get("chat_url")]
+
+        def save_pb(app, pb):
+            onboard.save_job_playbook({k: v for k, v in pb.items() if k != "_path"}, out, app)
+
+        def reonboard(app, ro, pb):
+            x = next((s for s in scouts.values() if s["slug"] == app or recorder_app(s, playbooks) == app), None) \
+                or next(iter(scouts.values()), None)
+            n = {"k": 0}
+
+            def transport():
+                n["k"] += 1
+                return onboard.LiveTransport(Path(w) / "drift" / f"s{n['k']:03d}", (x or {}).get("profile"), dark=True)
+            ctx = onboard.Ctx(out, app, (pb.get("start_state") or {}).get("url"), {k: v for k, v in pb.items() if k != "_path"},
+                              transport_factory=transport, log=log, allowed_chats=chats, image_chat=chats[-1] if chats else None,
+                              cancelled=cancelled)
+            row = onboard.onboard_action(ctx, ro["need"])
+            if row.get("status") != "proven":
+                raise RuntimeError(row.get("why") or row.get("status"))
+            new = ctx.pb
+            aid = ro.get("action_id")
+            if aid and aid in new["actions"] and row["action_id"] != aid:
+                old = new["actions"][aid]
+                rep = new["actions"].pop(row["action_id"])
+                new["actions"][aid] = {**rep, "intents": old.get("intents", []), "generates": old.get("generates", False),
+                                       "proven": True, "video_proof": {**(rep.get("video_proof") or {}), "replaces": aid}}
+            return new
+        pf = preflight.RecordingPreflight(
+            w, [sched[i] for i in range(len(sched))], playbooks, assets, video["words"], new_session,
+            repairer=drift.Repairer(log=log), reonboard=reonboard, save_pb=save_pb, log=log, account=None,
+            cancelled=cancelled, allowed_chats=chats)
+        # only the screencasts about to be recorded are rehearsed (the others are recorded already / held)
+        keep = set(todo)
+        pf.only = keep
+        rep = pf.run()                      # its browsers stay open: the recorder takes them over (new_session)
+        rep["failed"] = [i for i in rep.get("failed", []) if i in keep]
+        rep["systematic_unrepaired"] = [i for i in rep.get("systematic_unrepaired", []) if i in keep]
+        return rep
+    except InterruptedError:
+        raise
+    except Exception as e:  # noqa: BLE001 — the preflight never breaks recording
+        log(f"preflight failed ({type(e).__name__}: {e}) — recording goes on as before")
+        return {}
+
+
+def recorder_app(scout, playbooks):
+    from . import recorder
+    return recorder.app_for(scout.get("home") or "", playbooks)
 
 
 def motion_plate_events(d, plan, log=None):

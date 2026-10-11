@@ -100,6 +100,9 @@ CAMERA_RX = re.compile(r"\bcamera\.\w+|\bzoom(?:s|ed|ing)?\b|\bclose[- ]?up\b|^\
                        r"\bcut (?:to|away)\b", re.I)
 
 
+FRAMES_RX = re.compile(r"\bonly frames\b|\(camera\.\w+\)|\bbeat (?:is|was) (?:a )?camera\.\w+", re.I)
+
+
 def is_camera_need(row):
     """True when a needs row asks for a camera move / framing / structure / timing (route D, never the app)."""
     pr = row.get("proposed") if isinstance(row.get("proposed"), dict) else {}
@@ -109,6 +112,11 @@ def is_camera_need(row):
     fields = [pr.get("need"), pr.get("desc"), row.get("need"), pr.get("body")]
     if row.get("code") in ("structure", "lost", "plate", "coverage", "session"):
         fields.append(row.get("why"))
+    # a plan-check line about a beat that only FRAMES ("… describes a UI step but the beat only frames (camera.zoom)")
+    # is the edit's camera on the picture already on screen — D, never a missing feature (re-run 15: 'Close on the
+    # bottle's label' went to P4 as "ui_state … shown working via motion graphics")
+    if FRAMES_RX.search(str(row.get("why") or "")):
+        return True
     return any(CAMERA_RX.search(str(f)) for f in fields if f)
 
 
@@ -260,6 +268,8 @@ class Guarded:
             for rx in self.forbid:
                 if rx.search(lab):
                     return f"forbidden in onboarding: {rx.pattern}"
+        if a.get("type") in ("goto", "open") and self._private_url(a.get("url")):
+            return "never one of Jake's own pages (playbook private_urls: his Library / his items)"
         if a.get("type") in ("goto", "open"):
             m = CHAT_RX.search(str(a.get("url") or ""))
             if m and m.group(0) not in self.allowed:
@@ -270,8 +280,19 @@ class Guarded:
             return "this step would start a generation — not allowed for this need"
         return None
 
+    def _private_url(self, url):
+        for rx in (self.pb or {}).get("private_urls") or []:
+            try:
+                if re.search(rx, str(url or ""), re.I):
+                    return True
+            except re.error:
+                continue
+        return False
+
     def send(self, msg):
         cmd = msg.get("cmd")
+        if cmd == "open" and self._private_url(msg.get("url")):
+            return self.refuse("never one of Jake's own pages (playbook private_urls: his Library / his items)")
         if cmd == "open":
             m = CHAT_RX.search(str(msg.get("url") or ""))
             if m and m.group(0) not in self.allowed:
@@ -323,7 +344,33 @@ class Session(playbook.RecorderSession):
                 continue
             for st in playbook.resolve(self.pb, a, {"optional": True} if a == "hide_sidebar" else {}):
                 self.act(st)
+        self.reset()
         return True, None
+
+    CHIP_REMOVE = 'button[aria-label^="Remove "]'
+
+    def reset(self):
+        """Restore the start state an earlier proof round may have left behind (a pending reply chip / attachment in
+        the composer DRAFT, an open mode, a menu): Escape, the start state's dismiss steps (data), the draft's chips
+        removed (playbook "draft_chip_remove", default 'Remove …' buttons — removing a chip from a draft deletes
+        nothing; proofs only run in chats this job created). Re-run 15: 'Remove markup' still present in round 3."""
+        if self.skip == "_no_reset":
+            return
+        self.t.send({"cmd": "act", "action": {"type": "key", "key": "Escape"}})
+        for d in (self.pb.get("start_state") or {}).get("dismiss") or []:
+            try:
+                steps = playbook.resolve(self.pb, d["action"], {}) if d.get("action") else [d]
+            except (playbook.PlaybookError, KeyError):
+                continue
+            for st in steps:
+                self.act(st)
+        sel = self.pb.get("draft_chip_remove") or self.CHIP_REMOVE
+        for _ in range(4):
+            if not (self.t.send({"cmd": "count", "selector": sel}) or {}).get("n"):
+                break
+            r = self.t.send({"cmd": "act", "action": {"type": "click", "selector": sel}})
+            if not (r or {}).get("ok", True) or (r or {}).get("error"):
+                break
 
 
 class LiveTransport:
@@ -637,6 +684,13 @@ def recent_proven(app, need, days=RECENT_DAYS, now=None):
 _CONFIRM_RX = re.compile(r"\b(?:check ?mark|tick|submit|attach|done|confirm|apply|save)\b", re.I)
 
 
+def failed_prereq(ctx):
+    """{action id: reason} — prerequisites that failed in THIS run after their one self-repair (run control, class D)."""
+    if not isinstance(getattr(ctx, "_failed_prereq", None), dict):
+        ctx._failed_prereq = {}
+    return ctx._failed_prereq
+
+
 STEP_DATA = ("after_reply", "then_skip")              # step data a tool's playbook spec may carry onto its learned action
 
 
@@ -672,6 +726,10 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
             return {**row, "status": "proven", "action_id": aid, "replays": "1/1 (reused)"}
         ctx.pb["actions"].pop(aid, None)
         ctx.log(f"P2: the recent proof of '{need[:60]}' no longer replays ({str(why)[:120]}) — onboarding it afresh")
+    bad = next(((r, failed_prereq(ctx)[r]) for r in (chain or []) if r in failed_prereq(ctx)), None)
+    if bad:
+        ctx.log(f"P2: '{need[:60]}' skipped: prerequisite {bad[0]} failed ({bad[1][:120]}) — no rounds spent; its fallback")
+        return {**row, "why": f"skipped: prerequisite {bad[0]} failed ({bad[1]})", "prereq_failed": bad[0]}
     ex = Explorer(ctx, ctx.budget)
     feedback = None
     start = ctx.start_url(need)
@@ -694,6 +752,12 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
             row.update(why=res.get("why"), budget=bool(res.get("budget")))
             return row
         aid, act = res["action_id"], res["action"]
+        bad = next(((r, failed_prereq(ctx)[r]) for r in list(act.get("requires") or []) + list(chain or [])
+                    if r in failed_prereq(ctx)), None)
+        if bad:
+            ctx.log(f"P2: '{need[:60]}' skipped: prerequisite {bad[0]} failed ({bad[1][:120]}) — no proof rounds")
+            row.update(why=f"skipped: prerequisite {bad[0]} failed ({bad[1]})", prereq_failed=bad[0])
+            return row
         if chain:
             # the earlier steps of the same tool come first in every proof (they are what makes this step's control exist)
             act["requires"] = [r for r in chain if r != aid and r not in (act.get("requires") or [])] + list(act.get("requires") or [])
@@ -732,6 +796,31 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
                 pr = prove(ctx, aid, p)
                 if not pr["proven"]:
                     act.pop("after_reply", None)
+            fails = [str(x.get("why") or "") for x in pr["replays"] if not x["ok"]]
+            req_ = {m.group(1) for m in (re.match(r"requires (\w+): (?:post|pre|action|requires)", f) for f in fails) if m}
+            if not pr["proven"] and fails and len(req_) == 1 and len(fails) == len(pr["replays"]) \
+                    and next(iter(req_)) in ctx.pb["actions"] and next(iter(req_)) not in getattr(ctx, "_drift_checked", set()):
+                # EVERY replay fails inside the SAME required step ("requires viewer_markup: post: no element
+                # button[aria-label='Cancel markup']" — re-run 15): that step drifted, not this proposal. Re-prove it
+                # for this video (re-onboarded as data when it no longer replays), then prove this one again.
+                r_id = next(iter(req_))
+                ctx._drift_checked = getattr(ctx, "_drift_checked", set()) | {r_id}
+                ctx.pb["actions"][r_id]["video_proof"] = None
+                ctx.log(f"onboarding '{need[:60]}': every proof fails inside '{r_id}' ({fails[0][:120]}) — that step "
+                        "drifted: re-proving it for this video")
+                rp_ = reprove_existing(ctx, [r_id], {r_id: p})
+                if (rp_.get(r_id) or {}).get("ok"):
+                    ctx.pb["actions"][aid] = act
+                    pr = prove(ctx, aid, p)
+                if not pr["proven"]:
+                    # the prerequisite stays broken after its one self-repair: every step that needs it is skipped
+                    # for the rest of this run (straight to its fallback), never another 3 rounds + a new chat
+                    failed_prereq(ctx)[r_id] = fails[0][:200]
+                    ctx.log(f"onboarding: prerequisite '{r_id}' failed in this run ({fails[0][:120]}) — every step "
+                            "that requires it is skipped (its fallback)")
+                    row["attempts"][-1]["replays"] = pr["replays"]
+                    row.update(why=f"skipped: prerequisite {r_id} failed ({fails[0][:160]})", prereq_failed=r_id)
+                    return row
         row["attempts"][-1]["replays"] = pr["replays"]
         if pr["proven"]:
             act["video_proof"] = {"mode": "onboarded", "replays": pr["replays"], "ok": pr["ok"], "n": pr["n"]}
@@ -742,7 +831,7 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
         ctx.pb["actions"].pop(aid, None)
         row["attempts"][-1]["proposal"] = act             # what was proposed, for the log when it is not proven
         feedback = "; ".join(str(x.get("why")) for x in pr["replays"] if not x["ok"])[:600]
-        if "start_state: no element" in feedback or "could not load" in feedback.lower():
+        if "start_state: no element" in feedback or "could not load" in feedback.lower() or "still present" in feedback:
             # the start chat does not load any more (a chat that grew too big: "Could not load this conversation" —
             # re-run 13): the next round starts from ANOTHER chat this job created, never one of Jake's
             others = [c for c in sorted(getattr(ctx, "allowed_chats", set()) or []) if c and c != ctx.image_chat]
@@ -925,7 +1014,17 @@ def reuse_ok(ctx, aid, old):
     """A stored row is reused only when it passes TODAY's checks (look, continuity, no UI chrome): a row the new
     producer checked carries fidelity v>=2; an older one is re-checked once (one vision call) — so a dropped or redo
     asset is never resurrected by its old side file."""
-    from . import producer as prod_mod
+    from . import preflight, producer as prod_mod
+    # the self-healing asset audit (B), by code, before anything else: his words verbatim, no internal / object-list /
+    # collage prompt, a merge with its sources, a tool result made by the tool on a source — else set aside, made again
+    p_ = getattr(ctx, "producer", None)
+    probs = preflight.audit_asset(old, script_prompts(getattr(ctx, "script", "") or ""),
+                                  p_.tool_of if p_ is not None else None, p_.tools() if p_ is not None else None)
+    if probs:
+        ctx.log(f"{aid}: the stored picture fails the asset audit (" + "; ".join(x["why"] for x in probs)[:240]
+                + ") — set aside, made again")
+        preflight.set_aside(ctx.out, aid, "; ".join(x["rule"] for x in probs))
+        return False
     fid = old.get("fidelity") or {}
     if fid.get("v", 0) >= prod_mod.FIDELITY_V and all(fid.get(k, True) for k in ("look_ok", "clean", "same_subject")):
         return True
@@ -1958,6 +2057,10 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     pending_a = list(report["A"])
 
     def handle_c(r, allow_a=True):
+            if is_camera_need(r):
+                # camera / framing / structure is the EDIT's job (D) — never a missing feature, never a motion graphic
+                note(r, "D", "camera / framing in the edit — no feature, no motion graphic")
+                return
             pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
             wid = pr.get("word_id") or (r.get("word_ids") or [None])[0]
             feature = pr.get("need") or r.get("need") or re.sub(r"\s+—.*$", "", str(r.get("why")))[:120]

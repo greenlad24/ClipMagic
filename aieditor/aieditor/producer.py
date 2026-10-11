@@ -555,6 +555,9 @@ class Producer:
                     p.update(rel_from=[0.38, 0.42], rel_to=[0.62, 0.58])
             for r in a.get("requires", []):
                 if r not in done and not any(x.get("action") == r for x in [st]):
+                    if playbook.already(sess, pb, r, {**params, **p}):
+                        done.add(r)                     # the mode is already on: pressing it again toggles it off
+                        continue
                     try:
                         req_steps = playbook.resolve(pb, r, {**params, **p})
                     except playbook.PlaybookError as e:

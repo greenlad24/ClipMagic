@@ -2081,6 +2081,10 @@
   "[autocomplete=\"cc-number\"]",
   "[data-testid*=\"email\" i]"
  ],
+ "private_urls": [
+  "^(?:https?://)?(?:www\\.)?chatgpt\\.com/library\\b"
+ ],
+ "private_urls_src": "Jake: never touch his own items — the Library holds his pictures (re-run 8 opened one); the onboarding / repair agents refuse these URLs",
  "name": "ChatGPT",
  "produce": {
   "src": "R14 P3 producer (2026-10-10): what the generic producer agent (aieditor/producer.py) needs to know about this app. Data only — the agent loop has no app names in it. A HINT: a route that works for a video is learned into THAT video's playbook (recipes), never here.",

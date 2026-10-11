@@ -1007,6 +1007,17 @@ def held_failures(d):
             for r in gates.held_doc(d)["reasons"]] + out
 
 
+def fallback_rows(d):
+    """Every screencast that fell back (edit-NN/fallbacks.json, aieditor/preflight.fallbacks): never a silent drop."""
+    rows = []
+    for f in sorted(Path(d).glob("edit-*/fallbacks.json")):
+        try:
+            rows += [{**r, "edit": f.parent.name} for r in json.loads(f.read_text()).get("fallbacks") or []]
+        except (OSError, ValueError):
+            continue
+    return rows
+
+
 def finish_mode(req):
     """request.json "finish_video": true — the run ends in a FINISHED edit; holds become logged warnings."""
     return bool((req or {}).get("finish_video"))
@@ -1046,7 +1057,8 @@ def execute(job, action):
         if held and finish_mode(job.req):
             # finished, not shipped silently: the issues are kept as warnings next to the finished edit
             gates.write_held(job.d, [])
-            (job.d / "warnings.json").write_text(json.dumps({"finish_mode": True, "issues": held[:200]}, indent=1))
+            (job.d / "warnings.json").write_text(json.dumps({"finish_mode": True, "issues": held[:200],
+                                                             "fallbacks": fallback_rows(job.d)}, indent=1))
             msg = f"Finished (finish mode) — {len(held)} issue(s) below the ship bar, listed in warnings.json"
             job.log(msg)
             job.save(state="done", held=False, held_failures=None, warnings=held[:200], message=msg, progress=1,
