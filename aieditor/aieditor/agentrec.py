@@ -164,10 +164,17 @@ class Session:
         # never wait forever on a stuck browser (2026-10-06: a renderer killed under memory
         # pressure left the worker waiting 2.5 h)
         import select
-        r, _, _ = select.select([self.p.stdout], [], [], 900)
+        # a bound per command, not 15 min for everything (run 20: one typing step hung the recording silently for
+        # 15 min, and the retry could hang the same): an action gets 4 min + its own wait (a generation's timeout), a
+        # segment start / end / take 10 min, anything else 4 min — then the browser is closed and the screencast is
+        # retried once, then falls back (record_all)
+        act = msg.get("action") or {}
+        limit = 240 + float(act.get("timeout") or 0) if cmd == "act" else \
+            600 if cmd in ("segment", "end", "abort", "assemble") else 240
+        r, _, _ = select.select([self.p.stdout], [], [], limit)
         if not r:
             self.close()
-            raise RuntimeError("the agent recorder did not answer for 15 minutes")
+            raise RuntimeError(f"the agent recorder did not answer '{cmd}' for {limit:.0f} s")
         line = self.p.stdout.readline()
         if not line:
             raise RuntimeError("the agent recorder stopped")
