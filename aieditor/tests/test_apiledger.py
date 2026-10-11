@@ -239,4 +239,31 @@ for mode in ("raised", "swallowed"):
           f"{mode}: the job ends held, reason API cap: {st.get('message')}")
     check(st["stages"]["graphics"]["state"] == "failed", f"{mode}: the running stage is closed")
     check(llm.context()["job"] is None and not llm.refusals(), f"{mode}: the context is cleared after the job")
+
+# live caps (Jake 2026-10-11 "why do we have to cancel and rerun every time?"): a raised cap reaches a running job
+# through the caps file the box pushes — no restart
+capf = config.JOBS / "caps.json"
+os.environ.update({"AIEDITOR_API_JOB_CAP_USD": "36", "AIEDITOR_API_DAILY_CAP_USD": "55",
+                   apiledger.ENV_CAPS_FILE: str(capf)})
+check(apiledger.caps("creative") == (36.0, 55.0), "no caps file yet: the shipped caps hold")
+capf.write_text("{half")
+check(apiledger.caps("creative") == (36.0, 55.0), "a half-written caps file never breaks the caps")
+capf.write_text(json.dumps({"job": 45, "day": 55}))
+check(apiledger.caps("creative") == (45.0, 55.0), "the pushed caps file wins: the raised job cap applies live")
+from aieditor import cloud  # noqa: E402
+sent_cmds = []
+_ssh = cloud.ssh
+cloud.ssh = lambda ip, cmd, **kw: sent_cmds.append((cmd, kw.get("input"))) or ""
+os.environ.pop(apiledger.ENV_CAPS_FILE)
+got = cloud.push_caps("1.2.3.4", "/r", "creative", None)
+check(got == {"job": 36.0, "day": 55.0} and len(sent_cmds) == 1 and b'"job": 36.0' in sent_cmds[0][1],
+      f"push_caps writes the box's caps to the server: {got}")
+check(cloud.push_caps("1.2.3.4", "/r", "creative", got) == got and len(sent_cmds) == 1, "unchanged caps: no ssh")
+def _boom(*a, **k):
+    raise cloud.DOError("down")
+cloud.ssh = _boom
+check(cloud.push_caps("1.2.3.4", "/r", "creative", None) is None, "an unreachable server: retried on the next poll")
+cloud.ssh = _ssh
+for k in ("AIEDITOR_API_DAILY_CAP_USD", "AIEDITOR_API_JOB_CAP_USD"):
+    os.environ.pop(k)
 print(f"test_apiledger: {n} checks passed")

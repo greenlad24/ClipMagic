@@ -37,6 +37,8 @@ ENV_DAILY_CAP = "AIEDITOR_API_DAILY_CAP_USD"
 ENV_PRIOR_DAY = "AIEDITOR_API_PRIOR_24H_USD"       # main-box rolling 24 h at dispatch
 ENV_PRIOR_JOB = "AIEDITOR_API_PRIOR_JOB_USD"       # this job's earlier runs
 ENV_DAY_START = "AIEDITOR_API_PRIOR_AT"            # when the prior figure was taken
+ENV_CAPS_FILE = "AIEDITOR_API_CAPS_FILE"           # live caps the box keeps pushing ({"job": $, "day": $}) — a raised
+#                                                    cap reaches a running job without a restart (Jake 2026-10-11)
 _lock = threading.Lock()
 
 
@@ -89,8 +91,17 @@ def _env_float(name):
 
 
 def caps(workflow="cut"):
-    """(job cap, daily cap) in $. A factory server uses what the dispatcher shipped."""
+    """(job cap, daily cap) in $. A factory server uses the live caps file the box keeps current, else what the
+    dispatcher shipped."""
     job_cap, day_cap = _env_float(ENV_JOB_CAP), _env_float(ENV_DAILY_CAP)
+    live = os.environ.get(ENV_CAPS_FILE)
+    if live:
+        try:
+            d = json.loads(Path(live).read_text())
+            job_cap = float(d.get("job") or job_cap or 0) or job_cap
+            day_cap = float(d.get("day") or day_cap or 0) or day_cap
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass                                            # no file yet / half-written: the shipped caps hold
     if job_cap is None or day_cap is None:
         s = {}
         try:

@@ -717,9 +717,29 @@ def api_env(jid, workflow):
             # the in-app generation ledger (daily cap per app across jobs, walls): this box's last 24 h + the job's own
             genledger.ENV_LEDGER: str(config.JOBS / jid / "gen-ledger.jsonl"), genledger.ENV_PRIOR: genledger.prior_env(),
             apiledger.ENV_JOB_CAP: f"{job_cap:.4f}", apiledger.ENV_DAILY_CAP: f"{day_cap:.4f}",
+            apiledger.ENV_CAPS_FILE: str(config.JOBS / jid / "caps.json"),
             apiledger.ENV_PRIOR_DAY: f"{apiledger.daily_total():.6f}",
             apiledger.ENV_PRIOR_JOB: f"{apiledger.job_total(jid):.6f}",
             apiledger.ENV_DAY_START: f"{time.time():.0f}"}
+
+
+def push_caps(ip, rjob, workflow, sent=None):
+    """Keep the running job's caps file equal to this box's settings: a cap raised in factory.json reaches the
+    job within seconds — never a cancel + re-run for a cap (Jake 2026-10-11). Returns what is on the server."""
+    from . import apiledger
+    try:
+        job_cap, day_cap = apiledger.caps(workflow)
+    except Exception:                                       # noqa: BLE001 — caps must never break a job
+        return sent
+    now = {"job": round(job_cap, 4), "day": round(day_cap, 4)}
+    if now == sent:
+        return sent
+    try:
+        ssh(ip, f"cat > {rjob}/caps.json.tmp && mv {rjob}/caps.json.tmp {rjob}/caps.json",
+            input=json.dumps(now).encode(), timeout=60)
+    except (DOError, subprocess.TimeoutExpired):
+        return sent                                         # retried on the next poll
+    return now
 
 
 def merge_ledger(job_dir, log=print):
@@ -874,12 +894,14 @@ def run_remote(job_dir, action, log, cancelled):
             log(f"job started on the factory server ({time.time() - t_start:.0f}s after the request)")
             runner(job_dir, state="running", running_since=time.time())
             sent_cancel = False
+            sent_caps = None
             fails = 0
             while True:
                 time.sleep(5)
                 if cancelled() and not sent_cancel:
                     ssh(ip, f"touch {rjob}/cancel", check=False)
                     sent_cancel = True
+                sent_caps = push_caps(ip, rjob, workflow, sent_caps)
                 try:
                     for f in LIVE_FILES:
                         rsync(f"root@{ip}:{rjob}/{f}", str(job_dir) + "/", timeout=120)
