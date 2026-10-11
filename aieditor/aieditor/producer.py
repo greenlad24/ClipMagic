@@ -460,6 +460,16 @@ class Producer:
 
     def _step(self, sess, tr, st, params, done):
         pb = self.ctx.pb
+        files = params.get("files") or []
+        if st.get("action") and st["action"] == self.roles().get("upload") and len(files) > 1:
+            # several pictures: ONE upload per file, each confirmed before the next (re-run 9: three files in one go
+            # never showed as attached — "did not attach the upload" twice); any app with a single-file input works
+            for i, f in enumerate(files):
+                bad = self._step(sess, tr, st, {**params, "files": [f]}, done)
+                if bad:
+                    return {**bad, "why": f"file {i + 1} of {len(files)}: {bad.get('why')}"}
+                time.sleep(1.0)
+            return None
         if st.get("action"):
             aid = st["action"]
             if aid not in (pb.get("actions") or {}):
@@ -484,8 +494,15 @@ class Producer:
             if a.get("generates"):
                 return None                    # its result is watched by _wait
             rp = playbook._params(a, p)
+            wait = playbook._wait(a) if sess.polls else 0
+            if sess.polls and aid == self.roles().get("upload"):
+                # a photo upload lands only after the bytes are sent: give it time by size (a 2 MB PNG took > 4 s)
+                mb = sum((Path(str(f).replace("/w/", str(getattr(tr, "workdir", "")) + "/", 1)).stat().st_size
+                          if Path(str(f).replace("/w/", str(getattr(tr, "workdir", "")) + "/", 1)).exists() else 2_000_000)
+                         for f in (p.get("files") or [])) / 1e6
+                wait = max(wait, min(45.0, 8.0 + 4.0 * mb))
             for c in a.get("post", []):
-                ok, why = playbook._poll(sess, playbook._fill_assert(c, rp), playbook._wait(a) if sess.polls else 0)
+                ok, why = playbook._poll(sess, playbook._fill_assert(c, rp), wait)
                 if not ok:
                     return {"class": self._role_of(aid), "why": f"{aid} did not land: {why}"}
             return None
