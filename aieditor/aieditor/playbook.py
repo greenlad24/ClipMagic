@@ -247,11 +247,32 @@ def load(app_or_path, guard_path=None):
     if p.suffix != ".json":
         p = skill.playbook_path(str(app_or_path))
     pb = json.loads(p.read_text())
+    if pb.get("per_video"):
+        # a per-video playbook can be left half-written by a run cancelled mid-onboarding (run 19: 'ob_viewer_comment_
+        # pin_sun requires unknown action ob_viewer_comment_paste_note' refused the whole file and crashed pre-production
+        # in 30 s): an action whose requires chain names a missing action is dropped — never the whole playbook
+        gone = prune_dangling(pb)
+        if gone:
+            pb.setdefault("pruned", []).extend({"action": g, "why": "requires a missing action (a cancelled onboarding)"}
+                                               for g in gone)
     errs = validate(pb) + check_guard(pb, guard_rules(guard_path))
     if errs:
         raise PlaybookError(f"{p.name}: " + "; ".join(errs))
     pb["_path"] = str(p)
     return pb
+
+
+def prune_dangling(pb):
+    """Drop every action whose requires (transitively) names an action that does not exist. → the dropped ids."""
+    acts = pb.get("actions") or {}
+    gone = []
+    while True:
+        bad = [k for k, a in acts.items() if any(r not in acts for r in (a.get("requires") or []))]
+        if not bad:
+            return gone
+        for k in bad:
+            acts.pop(k, None)
+            gone.append(k)
 
 
 def _pb(app):

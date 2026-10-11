@@ -54,6 +54,23 @@ def jdump(obj, path):
     Path(path).write_text(json.dumps(obj, indent=1, ensure_ascii=False))
 
 
+def save_assets(assets, path):
+    """assets.json, never LOSING a picture already made: a ready row from the file on disk (an earlier run) whose picture
+    still exists is kept when this run's list does not have it yet (run 19 crashed early in routing and the finally
+    wrote a 3-row list over the 15-row one — the screencasts would have gone ahead without their pictures)."""
+    path = Path(path)
+    try:
+        old = json.loads(path.read_text()).get("assets") or []
+    except (OSError, ValueError, AttributeError):
+        old = []
+    have = {a.get("id") for a in assets.get("assets") or []}
+    keep = [a for a in old if a.get("id") not in have and a.get("status") == "ready" and a.get("file")
+            and Path(a["file"]).exists()]
+    if keep:
+        assets.setdefault("assets", []).extend(keep)
+    jdump(assets, path)
+
+
 def log(msg):
     print(f"[preprod {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -1792,7 +1809,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         costs["image_api_usd"] = round(costs.get("image_api_usd", 0) + assets["image_api_usd"], 4)
         costs["claude_usd"] = round(costs.get("claude_usd", 0) + assets.get("check_usd", 0), 4)
         jdump(costs, out / "costs.json")
-        jdump(assets, out / "assets.json")
+        save_assets(assets, out / "assets.json")
         say("assets: " + ", ".join(f"{a['id']}={a['status']}" for a in assets["assets"])
             + f"; {sum(o['status'] == 'missing' for o in assets['objects'])} narrated object(s) not in any asset")
     if not (out / "assets.json").exists():
@@ -1843,7 +1860,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
                 res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
                                   progress=progress, cancelled=stop)
             finally:
-                jdump(assets, out / "assets.json")          # what was made is kept even if routing stops (re-run 14)
+                save_assets(assets, out / "assets.json")    # what was made is kept even if routing stops (re-run 14)
             refused = llm.refusals()[n_ref:]
             if refused:
                 # the Claude API cap refused calls DURING routing: its fallbacks are not the real routes — never let the
@@ -1852,7 +1869,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
                 raise apiledger.BudgetExceeded(str(refused[-1]), which)
             costs["claude_usd"] = round(costs.get("claude_usd", 0) + res.get("usd", 0), 4)
             jdump(costs, out / "costs.json")
-            jdump(assets, out / "assets.json")
+            save_assets(assets, out / "assets.json")
     pdoc = json.loads((out / "plan.json").read_text())
     pbs = None
     if pdoc.get("routed") and (out / f"playbook-{pdoc['routed'].get('app')}.json").exists():
@@ -1874,7 +1891,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         fn = getattr(app, "dry_run", None)
         dry = fn(job, sl, assets, setd, out, max_gens) if fn else dry_run(job, sl, assets, setd, app, out, max_gens=max_gens)
         jdump(dry, out / "dryrun.json")
-        jdump(assets, out / "assets.json")         # in-app generations now ready (file, chat URL)
+        save_assets(assets, out / "assets.json")         # in-app generations now ready (file, chat URL)
         # the plan now carries the real chat URLs + verification results of the replay
         for seg in setd["segments"]:
             r = next((x for x in dry.get("set_dressing", []) if x["shot"] == seg["shot"]), None)

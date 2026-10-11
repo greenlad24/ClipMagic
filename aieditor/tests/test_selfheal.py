@@ -1130,4 +1130,27 @@ with _tf2.TemporaryDirectory() as _d:
     check(_back and _back["status"] == "ready" and _dst.read_bytes() == b"\x89PNG old" and _back["fallback"]["audit"] == ["tool_not_tool"]
           and _c.asset_files.get("erase_result") == str(_dst) and any("used again" in x for x in _logs2),
           f"the remake failed → the earlier picture is back, as a fallback with its warning: {_back}")
+# run 19: a per-video playbook left half-written by a cancelled onboarding loads with the broken chain dropped
+import tempfile as _tf3  # noqa: E402
+from aieditor import playbook as _PB, preprod as _PP  # noqa: E402
+_pbx = _PB.load("chatgpt")
+_pbx.pop("_path", None)
+_pbx["per_video"] = {"job": "x"}
+_pbx["actions"]["ob_a"] = {**_pbx["actions"]["send"], "requires": ["ob_missing"], "source": "t"}
+_pbx["actions"]["ob_b"] = {**_pbx["actions"]["send"], "requires": ["ob_a"], "source": "t"}
+with _tf3.TemporaryDirectory() as _d3:
+    (Path(_d3) / "playbook-chatgpt.json").write_text(json.dumps(_pbx))
+    _q = _PB.load(Path(_d3) / "playbook-chatgpt.json")
+    check("ob_a" not in _q["actions"] and "ob_b" not in _q["actions"] and "send" in _q["actions"]
+          and len(_q.get("pruned") or []) == 2, "a dangling requires chain is dropped, the playbook still loads")
+    # run 19: a crash early in routing never writes a shorter assets.json over the made pictures
+    _ap = Path(_d3) / "assets.json"
+    _pic = Path(_d3) / "logo.png"
+    _pic.write_bytes(b"x")
+    _ap.write_text(json.dumps({"assets": [{"id": "logo", "status": "ready", "file": str(_pic)},
+                                          {"id": "gone", "status": "ready", "file": str(Path(_d3) / "nope.png")}]}))
+    _new = {"assets": [{"id": "sketch", "status": "ready", "file": str(_pic)}]}
+    _PP.save_assets(_new, _ap)
+    _ids = [a["id"] for a in json.loads(_ap.read_text())["assets"]]
+    check(_ids == ["sketch", "logo"], f"a made picture on disk is kept, a missing file is not: {_ids}")
 print(f"test_selfheal: {N} checks passed")
