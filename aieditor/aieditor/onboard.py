@@ -1863,8 +1863,9 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             note(r, "P4", "motion graphics", verify=v, template=tid, result=res_id, how=how, kit=(kit or {}).get("status"))
 
 
-    for r in report["C"]:
+    for i_c, r in enumerate(report["C"]):
         ctx.check_cancel()
+        ctx.status(f"Missing features → motion graphics: {i_c + 1}/{len(report['C'])}")
         handle_c(r)
 
     # ── A (P2): onboard every missing action, once per distinct need ──
@@ -1877,6 +1878,9 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         sk = stroke_need(need)
         key = sk["key"] if sk else re.sub(r"\W+", " ", need.lower()).strip()[:120]
         if key not in seen:
+            # the Lab's status line follows this stage too (it froze on the last asset while P2 ran — re-run 13)
+            ctx.status(f"Learning this video's actions: {len(seen) + 1} (" + (f"the stroke tool on {sk['surface']}" if sk
+                       else need[:70]) + ")")
             try:
                 if sk:
                     ctx.log(f"P2: '{need[:60]}' is a stroke on {sk['surface']} — onboarding the stroke tool once ({sk['key']}); "
