@@ -1823,8 +1823,15 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     if "route" in steps:
         pdoc = json.loads((out / "plan.json").read_text())
         if (pdoc.get("plan") or {}).get("answer") and not pdoc.get("routed"):
+            n_ref = len(llm.refusals())
             res = route_needs(job, out, app, readiness, assets, pdoc, say=say, video=job_video(job, ranges),
                               progress=progress, cancelled=stop)
+            refused = llm.refusals()[n_ref:]
+            if refused:
+                # the Claude API cap refused calls DURING routing: its fallbacks are not the real routes — never let the
+                # job end as "needs_primitive" or record half-routed (re-run 11): wait for the daily window / hold as cap
+                which = "daily" if any("24 h" in str(r) or "daily" in str(r) for r in refused) else "job"
+                raise apiledger.BudgetExceeded(str(refused[-1]), which)
             costs["claude_usd"] = round(costs.get("claude_usd", 0) + res.get("usd", 0), 4)
             jdump(costs, out / "costs.json")
             jdump(assets, out / "assets.json")
