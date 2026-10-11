@@ -460,6 +460,11 @@ check(t[1] in ("prompt_highlight", "long_prompt_scroll") or not MT.is_on("prompt
       f"a typed step → the app's prompt box (MO06/MO07): {t}")
 check(t[3] is None and "presenter" in rows[2]["fallback"], "no template fits → the presenter, logged as such (never silent)")
 check(json.loads((TMP / "fb" / "fallbacks.json").read_text())["fallbacks"] == rows, "fallbacks.json")
+check(json.loads((TMP / "fb" / "fallbacks.json").read_text())["events"] == json.loads(json.dumps(evs)),
+      "fallbacks.json keeps the full events (params too): the draft-size overlay re-render needs them (run 22)")
+_le = (ROOT / "aieditor" / "longedit.py").read_text()
+check('"fallbacks.json").read_text()).get("events")' in _le and "motion_plate_events(d, plan) + fb" in _le,
+      "the draft-size overlay re-render includes the screencast fallbacks (run 22 showed the presenter there)")
 check(all(e.get("fallback") and e["t1"] > e["t0"] for e in evs), "each fallback event is marked and timed")
 import importlib.machinery, importlib.util  # noqa: E402
 _ld = importlib.machinery.SourceFileLoader("aieditor_worker", str(ROOT / "bin" / "aieditor-worker"))

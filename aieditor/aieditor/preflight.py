@@ -803,7 +803,7 @@ def fallbacks(segs, recordings, assets, video, out_dir=None, log=print):
     if out_dir is not None:
         try:
             Path(out_dir).mkdir(parents=True, exist_ok=True)
-            (Path(out_dir) / "fallbacks.json").write_text(json.dumps({"fallbacks": rows}, indent=1))
+            (Path(out_dir) / "fallbacks.json").write_text(json.dumps({"fallbacks": rows, "events": evs}, indent=1))
         except OSError:
             pass
     return evs, rows

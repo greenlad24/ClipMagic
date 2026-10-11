@@ -822,8 +822,14 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         progress("Overlay frame names repaired", 0.6)
     if W != 1920:                                        # overlays re-rendered at the output size
         progress("Overlays at full resolution…", 0.65)
-        events = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan), _video(d, k), fps, size=size,
-                                      tag=f"gfx-{W}", cancelled=cancelled)
+        # the screencast fallbacks too: overlays.json keeps no params, so their source events ride in fallbacks.json
+        # (without them a 540p draft showed the presenter where each stand-in belongs)
+        try:
+            fb = json.loads((w / "fallbacks.json").read_text()).get("events") or []
+        except (OSError, ValueError, AttributeError):
+            fb = []
+        events = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan) + fb, _video(d, k), fps,
+                                      size=size, tag=f"gfx-{W}", cancelled=cancelled)
     music = pick_music(d / base)
     progress("Compositing (screencasts, bubble, overlays, music)…", 0.75)
     crf = crf or (17 if W == 1920 else 16)
