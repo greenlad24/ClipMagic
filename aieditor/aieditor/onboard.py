@@ -996,8 +996,10 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
                                    f"add every source the narration names that is not available yet.)" if made_from else ""),
                                 {k: ctx.asset_descs.get(k, "") for k in sorted(ctx.asset_files)}, tool=tool)
         if not (plan_in.get("needs_inputs") and plan_in.get("inputs")) and not plan_in.get("same_as") \
-                and source_hint and not plan_in.get("decided"):
-            made_from = (source_hint,)                    # no answer from the source step: the hint stands
+                and source_hint and (not plan_in.get("decided") or (tool and on_source)):
+            # no answer from the source step — or a tool that works ON a picture got none (re-run 14: markup_pepper
+            # went to a new picture): the picture shown just before is its source
+            made_from = (source_hint,)
         same = str(plan_in.get("same_as") or "")
         if same and same in ctx.asset_files and not tool:
             shutil.copyfile(ctx.asset_files[same], dst)
