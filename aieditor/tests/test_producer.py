@@ -30,6 +30,8 @@ for k in ("AIEDITOR_API_LEDGER", "AIEDITOR_GEN_LEDGER", "AIEDITOR_GEN_PRIOR", "A
 (TMP / "work").mkdir()
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import os as _os, tempfile as _tf  # noqa: E401
+_os.environ.setdefault("AIEDITOR_PROVEN_LIB", _tf.mkstemp(suffix="-proven.jsonl")[1])  # never the real recent-proofs ledger
 from aieditor import genledger, onboard, preprod, producer, skill  # noqa: E402
 
 N = 0

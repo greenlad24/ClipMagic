@@ -33,6 +33,8 @@ for k in ("AIEDITOR_API_LEDGER", "AIEDITOR_API_JOB_CAP_USD", "AIEDITOR_API_DAILY
 (TMP / "work").mkdir()
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import os as _os, tempfile as _tf  # noqa: E401
+_os.environ.setdefault("AIEDITOR_PROVEN_LIB", _tf.mkstemp(suffix="-proven.jsonl")[1])  # never the real recent-proofs ledger
 from aieditor import apiledger, beatscript, director, llm, onboard, planfit, playbook, preprod, skill  # noqa: E402
 
 N = 0
@@ -257,6 +259,7 @@ class FakeAPI:
 
 
 def test_budget():
+    _os.environ["AIEDITOR_PROVEN_LIB"] = _tf.mkstemp(suffix="-proven.jsonl")[1]   # no reuse from an earlier test
     llm.TRANSPORT = FakeAPI()
     llm.set_context(job="r14-budget", stage="preprod", workflow="creative")
     try:
@@ -534,3 +537,23 @@ def test_composite_sources(tmp):
 
 if __name__ == "__main__":
     main()
+
+
+def test_recent_proof_reused():
+    """Jake option (c): an action proven in the last 7 days is reused with ONE replay, no explore / 3x proof."""
+    _os.environ["AIEDITOR_PROVEN_LIB"] = _tf.mkstemp(suffix="-proven.jsonl")[1]
+    from aieditor import onboard as ob
+    import time as _t, json as _j
+    with open(_os.environ["AIEDITOR_PROVEN_LIB"], "w") as f:
+        f.write(_j.dumps({"ts": _t.time() - 86400, "app": "chatgpt", "need": "open the plus menu", "key": ob._need_key("open the plus menu"),
+                          "aid": "ob_plus", "action": {"kind": "click", "label": "+", "selectors": ["button"]}}) + "\n")
+        f.write(_j.dumps({"ts": _t.time() - 9 * 86400, "app": "chatgpt", "need": "old thing", "key": ob._need_key("old thing"),
+                          "aid": "ob_old", "action": {"kind": "click", "label": "x", "selectors": ["a"]}}) + "\n")
+    assert ob.recent_proven("chatgpt", "Open the PLUS menu")["aid"] == "ob_plus"
+    assert ob.recent_proven("chatgpt", "old thing") is None            # older than 7 days: onboarded afresh
+    assert ob.recent_proven("claude", "open the plus menu") is None     # per app
+    print("  recent proofs: reused within 7 days, per app; older ones are onboarded afresh")
+
+
+if __name__ == "__main__":
+    test_recent_proof_reused()

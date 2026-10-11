@@ -64,6 +64,7 @@ inventory.mjs add --proxy-server (screencast/macchrome.mjs). On this box no prox
 Settings: WORK/factory.json (created with DEFAULTS on first use). The snapshot is rebuilt
 automatically when the local Docker images change (manifest of image ids)."""
 import json
+import shutil
 import re
 import os
 import shlex
@@ -704,7 +705,15 @@ def api_env(jid, workflow):
     """What a job droplet needs to keep the API caps without the main ledger (apiledger.py)."""
     from . import apiledger, genledger
     job_cap, day_cap = apiledger.caps(workflow)
+    # the recent-proofs ledger (onboard.recent_proven, Jake option c) rides along in the job folder; new lines merge back
+    main_lib = config.WORK / "ledger" / "proven-actions.jsonl"
+    try:
+        if main_lib.exists():
+            shutil.copyfile(main_lib, config.JOBS / jid / "proven-actions.jsonl")
+    except OSError:
+        pass
     return {"AIEDITOR_API_LEDGER": str(config.JOBS / jid / "api-ledger.jsonl"),
+            "AIEDITOR_PROVEN_LIB": str(config.JOBS / jid / "proven-actions.jsonl"),
             # the in-app generation ledger (daily cap per app across jobs, walls): this box's last 24 h + the job's own
             genledger.ENV_LEDGER: str(config.JOBS / jid / "gen-ledger.jsonl"), genledger.ENV_PRIOR: genledger.prior_env(),
             apiledger.ENV_JOB_CAP: f"{job_cap:.4f}", apiledger.ENV_DAILY_CAP: f"{day_cap:.4f}",
@@ -726,6 +735,16 @@ def merge_ledger(job_dir, log=print):
         n = genledger.merge(g)
         if n:
             log(f"{n} in-app generation(s) / stop(s) added to the generation ledger")
+    pl = Path(job_dir) / "proven-actions.jsonl"
+    if pl.exists():
+        main_lib = config.WORK / "ledger" / "proven-actions.jsonl"
+        main_lib.parent.mkdir(parents=True, exist_ok=True)
+        have = set(main_lib.read_text().splitlines()) if main_lib.exists() else set()
+        new = [ln for ln in pl.read_text().splitlines() if ln.strip() and ln not in have]
+        if new:
+            with open(main_lib, "a") as f:
+                f.write("\n".join(new) + "\n")
+            log(f"{len(new)} newly proven action(s) added to the recent-proofs ledger")
 
 
 def run_remote(job_dir, action, log, cancelled):
@@ -733,6 +752,12 @@ def run_remote(job_dir, action, log, cancelled):
     The job folder ends up exactly as if this box had run it. The droplet is always destroyed."""
     s = settings()
     job_dir = Path(job_dir)
+    try:                                            # the recent-proofs ledger travels in the job folder (sent below)
+        main_lib = config.WORK / "ledger" / "proven-actions.jsonl"
+        if main_lib.exists():
+            shutil.copyfile(main_lib, job_dir / "proven-actions.jsonl")
+    except OSError:
+        pass
     jid = job_dir.name
     req = json.loads((job_dir / "request.json").read_text())
     did = None

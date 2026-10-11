@@ -46,6 +46,7 @@ Everything live is behind Ctx (session_factory, llm, image_api, in_app, check, k
 import base64
 import copy
 import json
+import os
 import re
 import shutil
 import time
@@ -586,6 +587,46 @@ def prove(ctx, aid, params=None, n=None):
     return playbook.replay(factory, ctx.pb, aid, n=n, params=params or {}, allow_generate=gen)
 
 
+RECENT_DAYS = 7
+
+
+def _proven_lib():
+    return Path(os.environ.get("AIEDITOR_PROVEN_LIB") or (config.WORK / "ledger" / "proven-actions.jsonl"))
+
+
+def _need_key(need):
+    return re.sub(r"\W+", " ", str(need or "").lower()).strip()[:160]
+
+
+def remember_proven(ctx, need, aid, act):
+    """An action proven for a video goes into the shared recent-proofs ledger (Jake 2026-10-11, option c: reuse what
+    was proven in the last 7 days instead of re-onboarding it per video — the UI changes weekly, not hourly)."""
+    try:
+        p = _proven_lib()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a") as f:
+            f.write(json.dumps({"ts": time.time(), "app": ctx.app, "need": need, "key": _need_key(need), "aid": aid,
+                                "action": {k: v for k, v in act.items() if k not in ("replays",)}}) + "\n")
+    except OSError:
+        pass
+
+
+def recent_proven(app, need, days=RECENT_DAYS, now=None):
+    """The newest action proven for this app + need in the last `days`, or None."""
+    now, key, best = now or time.time(), _need_key(need), None
+    try:
+        for line in open(_proven_lib()):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("app") == app and r.get("key") == key and now - float(r.get("ts") or 0) <= days * 86400:
+                best = r
+    except OSError:
+        return None
+    return best
+
+
 _CONFIRM_RX = re.compile(r"\b(?:check ?mark|tick|submit|attach|done|confirm|apply|save)\b", re.I)
 
 
@@ -594,8 +635,32 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
     generating=True: the step STARTS a generation (a tool's submit): the explorer finds it without pressing it, and
     it is proven by presence (its requires + selector + pre asserts), never pressed 3x (3 generations) — the
     producer presses it once, counted, when it makes the asset."""
-    ex = Explorer(ctx, ctx.budget)
     row = {"need": need, "status": "failed", "attempts": []}
+    # (c) a recent proof first: ONE replay (or a presence check) instead of explore + 3 proofs
+    rec = recent_proven(ctx.app, need)
+    if rec and rec.get("aid") and isinstance(rec.get("action"), dict):
+        aid, act = rec["aid"], dict(rec["action"])
+        ctx.pb["actions"][aid] = act
+        p0 = dict(params or {})
+        if act.get("start_url") and ctx.image_chat:
+            p0.setdefault("chat_url", ctx.image_chat)
+        try:
+            if generating or presence_only or act.get("generates"):
+                ok, why = presence(ctx, aid, p0)
+            else:
+                pr0 = prove(ctx, aid, p0, n=1)
+                ok, why = pr0["proven"], "; ".join(str(x.get("why")) for x in pr0["replays"] if not x["ok"])
+        except Exception as e:  # noqa: BLE001 — onboard it afresh
+            ok, why = False, str(e)
+        if ok:
+            act["video_proof"] = {"mode": f"reused (proven {time.strftime('%Y-%m-%d', time.gmtime(rec['ts']))}), re-checked 1x"}
+            ctx.pb = save_job_playbook(ctx.pb, ctx.out, ctx.app)
+            ctx.log(f"P2: '{need[:60]}' — reused the action proven {time.strftime('%Y-%m-%d', time.gmtime(rec['ts']))}, "
+                    "re-checked once (no explore, no 3x proof)")
+            return {**row, "status": "proven", "action_id": aid, "replays": "1/1 (reused)"}
+        ctx.pb["actions"].pop(aid, None)
+        ctx.log(f"P2: the recent proof of '{need[:60]}' no longer replays ({str(why)[:120]}) — onboarding it afresh")
+    ex = Explorer(ctx, ctx.budget)
     feedback = None
     start = ctx.start_url(need)
     for rnd in range(int(onboarding_rules().get("fix_rounds", 2)) + 1):
@@ -639,6 +704,7 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
         if pr["proven"]:
             act["video_proof"] = {"mode": "onboarded", "replays": pr["replays"], "ok": pr["ok"], "n": pr["n"]}
             ctx.pb = save_job_playbook(ctx.pb, ctx.out, ctx.app)
+            remember_proven(ctx, need, aid, act)
             row.update(status="proven", action_id=aid, replays=f"{pr['ok']}/{pr['n']}")
             return row
         ctx.pb["actions"].pop(aid, None)

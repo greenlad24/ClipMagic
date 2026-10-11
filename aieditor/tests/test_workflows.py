@@ -21,6 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import os as _os, tempfile as _tf  # noqa: E401
+_os.environ.setdefault("AIEDITOR_PROVEN_LIB", _tf.mkstemp(suffix="-proven.jsonl")[1])  # never the real recent-proofs ledger
 import os  # noqa: E402
 # never the live API ledger / caps: preprod_factory's fake Claude calls are priced and logged like real ones
 os.environ.setdefault("AIEDITOR_API_LEDGER", str(Path(tempfile.mkdtemp(prefix="wf-ledger-")) / "api.jsonl"))
