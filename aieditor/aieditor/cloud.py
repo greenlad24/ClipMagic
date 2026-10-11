@@ -897,8 +897,11 @@ def run_remote(job_dir, action, log, cancelled):
             env = droplet_env(log, s)
             ssh(ip, f"umask 077; mkdir -p {config.ENV_FILE.parent}; cat > {config.ENV_FILE}", input=env.encode())
             # the job folder, source video included (VPC: free + fast)
+            # browser scratch never travels: the onboarding proof workdirs and the per-run profile copies are remade on
+            # the server (run 21: 4.1 GB at ~2 MB/s to blr1, ~790 MB of it old onboarding browser copies)
             rsync(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
-                  "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl")
+                  "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl", "--exclude", "preprod/onboard/",
+                  "--exclude", "profile/", "--exclude", "outside-profile-*/")
             if screencasts:
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
                     slugs = _scout_bundle(req, Path(td), job_dir, slugs=lock.slugs)
