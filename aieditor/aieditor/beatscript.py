@@ -541,7 +541,10 @@ def asset_chat_start(seg, assets):
     if _session_kind(seg) == "outside" or "/c/" in str(seg.get("url") or "") or not assets:
         return None
     rows = {a.get("id"): a for a in (assets.get("assets") or []) if isinstance(a, dict)}
-    for b in sorted([x for x in seg.get("beats") or [] if x.get("t_word") is not None], key=lambda x: x["t_word"]):
+    # in order of the narration: t_word when the beats are timed, else their word id (run 22: the beats reach this before
+    # timing — the t_word filter skipped every one and the rule never fired)
+    key = lambda x: (x.get("t_word") if x.get("t_word") is not None else float(x.get("word_id") or 0))
+    for b in sorted(seg.get("beats") or [], key=key):
         if b.get("typed_text") or (b.get("params") or {}).get("text") or b.get("text"):
             return None
         row = rows.get(b.get("asset_id"))

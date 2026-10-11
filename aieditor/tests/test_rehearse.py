@@ -536,4 +536,7 @@ check('[contenteditable="false"], button, [role="button"]' in _src_ar and "async
 from aieditor import recorder as _RR  # noqa: E402
 _src_rec = (ROOT / "aieditor" / "recorder.py").read_text()
 check(_RR.OVERRUN_X >= 2 and "dur * OVERRUN_X" in _src_rec, "a long take is allowed to run on; the assembler cuts the waits")
+# run 22: untimed beats (no t_word yet) still choose the picture's chat, in word order
+_seg_untimed = {"app": "chatgpt", "session": "logged_in", "beats": [{"word_id": 775, "action": "open_image_viewer", "asset_id": "pic"}]}
+check(B.asset_chat_start(_seg_untimed, _as) == "https://chatgpt.com/c/job-pic", "untimed beats still open on the picture's chat")
 print(f"test_rehearse: {N} checks passed")
