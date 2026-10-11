@@ -663,7 +663,12 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
     ex = Explorer(ctx, ctx.budget)
     feedback = None
     start = ctx.start_url(need)
-    for rnd in range(int(onboarding_rules().get("fix_rounds", 2)) + 1):
+    n_rounds = int(onboarding_rules().get("fix_rounds", 2)) + 1
+    for rnd in range(n_rounds):
+        try:
+            ctx.status(f"Learning: {need[:70]} (round {rnd + 1}/{n_rounds})")
+        except Exception:  # noqa: BLE001 — a status line never stops onboarding
+            pass
         tr = ctx.guarded(allow_generate=generates)
         try:
             res = ex.run(need, start, tr, feedback=feedback, allow_generate=generates)

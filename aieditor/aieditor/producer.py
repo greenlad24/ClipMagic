@@ -186,6 +186,7 @@ class Producer:
             self.ctx.image_chat = chat
             self.ctx.allowed_chats.add(chat)
         self._log(f"producer: the {tool} tool needs a step this video's playbook does not have yet — onboarding it: {need[:120]}")
+        self._status(f"Learning the {tool} tool: {need[:70]}")      # the status line never freezes on the last asset
         try:
             row = onboard.onboard_action(self.ctx, need, {"text": params.get("prompt")} if st.get("text") else None,
                                          generates=False, generating=bool(st.get("generates")))
