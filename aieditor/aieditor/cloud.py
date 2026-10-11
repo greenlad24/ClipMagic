@@ -140,6 +140,9 @@ DEFAULTS = {
     # logged-in screencasts away from home: "tunnel" = through the main box over the job's own SSH
     # connection (reverse tunnel, nothing opened on this box); "wait" = they wait for SGP1 capacity
     "logged_in_away": "tunnel",
+    # LIVE UPDATE (aieditor/liveupdate.py, Jake 2026-10-11): a code change whose tests are green reaches the RUNNING
+    # job's server (staged + atomic switch) and the job picks it up at its next safe boundary — no restart
+    "live_update": True,
 }
 
 
@@ -881,6 +884,14 @@ def run_remote(job_dir, action, log, cancelled):
                 + (f" ({time.time() - t_create:.0f}s after create)" if away else "") + " — sending the job")
             runner(job_dir, state="sending", droplet=did, up_after_s=round(time.time() - t_start))
             # code (always the current one: the snapshot only carries images + models)
+            from . import liveupdate
+            live = bool(s.get("live_update", True)) and os.environ.get(liveupdate.ENV_ON) != "0"
+            code_v = None
+            if live:
+                try:
+                    code_v = liveupdate.versions()[0]          # what this dispatch sends (a later change is pushed live)
+                except OSError:
+                    live = False
             rsync(str(config.CODE) + "/", f"root@{ip}:{config.CODE}/", "--delete",
                   "--exclude", "__pycache__", "--exclude", "tests", "--exclude", "node_modules")
             env = droplet_env(log, s)
@@ -901,6 +912,8 @@ def run_remote(job_dir, action, log, cancelled):
             # ";" not "&&": only the worker may go to the background — a backgrounded "a && b &"
             # list keeps ssh's stdout open and the call blocked until the job ENDED (trial 1)
             extra = {"AIEDITOR_FACTORY_SERVER": "1", **api_env(jid, workflow)}
+            if live:
+                extra.update({liveupdate.ENV_ON: "1", liveupdate.ENV_VERSION: code_v})
             if proxy:
                 extra["AIEDITOR_US_PROXY"] = proxy["url"]
             ssh(ip, "cd {code}; mem=$(awk '/MemTotal/{{print int($2/1048576*0.85)}}' /proc/meminfo); "
@@ -916,12 +929,18 @@ def run_remote(job_dir, action, log, cancelled):
             sent_cancel = False
             sent_caps = None
             fails = 0
+            pusher = liveupdate.Pusher(ip, job_dir, log, sent=code_v, runner=lambda **kw: runner(job_dir, **kw)) \
+                if live else None
+            if live:
+                runner(job_dir, code_version=code_v)
             while True:
                 time.sleep(5)
                 if cancelled() and not sent_cancel:
                     ssh(ip, f"touch {rjob}/cancel", check=False)
                     sent_cancel = True
                 sent_caps = push_caps(ip, rjob, workflow, sent_caps)
+                if pusher is not None and not sent_cancel:
+                    pusher.tick()                         # new green code → the running server (never raises)
                 try:
                     for f in LIVE_FILES:
                         rsync(f"root@{ip}:{rjob}/{f}", str(job_dir) + "/", timeout=120)

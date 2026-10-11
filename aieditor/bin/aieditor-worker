@@ -81,6 +81,7 @@ from aieditor import align, camera, cloud, compose, config, descript, edl, event
 from aieditor import sites as sites_mod  # noqa: E402
 from aieditor import accountlock, apiledger, chain, genledger, llm  # noqa: E402
 from aieditor import handoff  # noqa: E402
+from aieditor import liveupdate  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -290,12 +291,16 @@ def run_job(job, action):
             if job.st["stages"].get(name, {}).get("state") != "done":
                 job.stage(name, "done", "reused")
             return
+        if liveupdate.settled(f"stage/{name}") and job.st["stages"].get(name, {}).get("state") == "done":
+            return                                      # done in THIS run before a live code update: not redone
+        liveupdate.boundary(f"before the {name} stage", stage=name)      # a safe boundary between big stages
         job.stage(name, "running")
         job.progress(None, 0)
         job.log(f"stage {name} start")
         note = fn()
         job.log(f"stage {name} done {note or ''}")
         job.stage(name, "done", note)
+        liveupdate.settle(f"stage/{name}", "done")
 
     rebuild = action in ("rebuild", "recut")
     creative = workflow_of(req) == "creative"
@@ -437,6 +442,9 @@ def run_preprod(job, req, info, fps):
     if not callable(fn):
         job.stage("preprod", "skipped", "aieditor/preprod.py has no run()")
         return
+    if liveupdate.settled("stage/preprod") and job.st["stages"].get("preprod", {}).get("state") == "done":
+        return                                          # done in THIS run before a live code update: not redone
+    liveupdate.boundary("before the preprod stage", stage="preprod")
     offer = {"req": req, "edl": jload(d / "edl.json"), "info": info, "fps": fps,
              "progress": lambda m=None, f=None: job.progress(m, f), "cancelled": job.cancelled,
              "log": job.log, "events": events}
@@ -490,6 +498,7 @@ def run_preprod(job, req, info, fps):
         for h in held:
             reasons = longedit.add_held(d, h.get("reason", "held"), h.get("detail", ""))
         raise Held(reasons)
+    liveupdate.settle("stage/preprod", "done")
 
 
 def run_handoff(job, action, req, info, fps, step):
@@ -1044,6 +1053,7 @@ def execute(job, action):
     llm.set_context(job=job.id, workflow=workflow_of(job.req), stage=None)
     longedit.clear_held(job.d, apiledger.BudgetExceeded.reason)   # a new run gets a new chance at the cap
     job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
+    restarting = False
     try:
         if job.req.get("canary"):
             # the WEEKLY CANARY (aieditor/canary.py): one example of each failure class on the live app, a report —
@@ -1086,6 +1096,11 @@ def execute(job, action):
         job.save(state="done", held=False, held_failures=None, message="Ready to review", progress=1,
                  finished_at=now())
         events.emit("stage", "job finished — ready to review", stage="job")
+    except liveupdate.Restart:
+        # a live code update at a safe boundary (aieditor/liveupdate.py): once() re-execs the worker — the cancel
+        # file and the job's tmp-* stay exactly as they are
+        restarting = True
+        raise
     except Held as exc:
         job.log(str(exc))
         for name, s in list(job.st["stages"].items()):
@@ -1121,9 +1136,10 @@ def execute(job, action):
     finally:
         events.set_sink(None)
         llm.clear_context()
-        (job.d / "cancel").unlink(missing_ok=True)
-        for t in job.d.glob("tmp-*"):
-            shutil.rmtree(t, ignore_errors=True)
+        if not restarting:
+            (job.d / "cancel").unlink(missing_ok=True)
+            for t in job.d.glob("tmp-*"):
+                shutil.rmtree(t, ignore_errors=True)
 
 
 def execute_cloud(job, action):
@@ -1269,10 +1285,32 @@ def chain_tick():
 
 
 def once(job_id, action):
-    """`aieditor-worker --once <job id> <action>` — what a factory server runs."""
+    """`aieditor-worker --once <job id> <action>` — what a factory server runs. LIVE UPDATE (aieditor/liveupdate.py):
+    a newer pushed tree that imports is picked up at the next safe boundary — the job unwinds (liveupdate.Restart),
+    and this function re-execs the same worker, same job + action, from the new tree (same server, same pid)."""
     job = Job(config.JOBS / job_id)
+    liveupdate.attach(job.d, cancelled=job.cancelled, log=job.log, save=job.save, stage=lambda: job.st.get("stage"))
     job.save(state="running", action=action, host=os.uname().nodename)
-    execute(job, action)
+    liveupdate.announce()
+    try:
+        execute(job, action)
+    except liveupdate.Restart as r:
+        if job.cancelled():
+            # the cancel arrived while the job unwound: it ends cancelled, on the old code (no exec)
+            job.log("cancelled")
+            for name, s in list(job.st["stages"].items()):
+                if s.get("state") == "running":
+                    job.stage(name, "interrupted", "cancelled")
+            job.save(state="cancelled", message="Cancelled")
+            (job.d / "cancel").unlink(missing_ok=True)
+            return 1
+        err = liveupdate.reexec(job_id, action, r)          # returns only if no worker could be exec'd
+        if err:
+            job.save(state="failed", message=err, error=err)
+            return 1
+        return 0
+    finally:
+        liveupdate.detach()
     return 0 if job.st.get("state") in ("done", "held", "waiting") else 1
 
 

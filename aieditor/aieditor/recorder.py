@@ -38,7 +38,7 @@ import uuid
 from pathlib import Path
 
 from . import beatscript as B
-from . import clickguard, config, events, gates, llm, remedy
+from . import clickguard, config, events, gates, liveupdate, llm, remedy
 
 MAX_BEAT_RETAKES = 2                     # a failing beat is re-recorded on its own up to 2 times (§4.3)
 MAX_TAKE_RESTARTS = 3                    # whole-segment restarts (a wall / a first beat that fails)
@@ -1237,6 +1237,8 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
             if skip_done and (sd / "rec" / "events.json").exists() and (_load(sd / "recording.json", {}) or {}).get("status") == "ok":
                 out[i] = _load(sd / "recording.json")
                 continue
+            # a live code update (aieditor/liveupdate.py) lands BETWEEN screencasts only: the one before is recorded
+            liveupdate.boundary(f"between screencasts ({i + 1} of {len(segs)} next)")
             (r.progress or (lambda m, f: None))(f"Screencast {i + 1} of {len(segs)}: rehearse + record "
                                                 f"({seg['t1'] - seg['t0']:.0f} s)", 0.1 + 0.75 * i / max(1, len(segs)))
             events.set_sub(f"screencast {i + 1}/{len(segs)}")
@@ -1244,7 +1246,8 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
                 doc = None
                 for attempt in (1, 2):
                     try:
-                        doc = r.record_segment(i, seg)
+                        with liveupdate.unit(f"screencast {i + 1}"):         # rehearse + record: never cut by an update
+                            doc = r.record_segment(i, seg)
                         break
                     except (InterruptedError, KeyboardInterrupt):
                         raise
@@ -1262,6 +1265,7 @@ def record_all(plan, playbooks, assets, *, w, video, new_session, verdict=None, 
             finally:
                 events.set_sub(None)
             out[i] = doc
+            liveupdate.settle(f"{Path(w).name}/seg-{i:02d}", doc.get("status"), why=str(doc.get("why") or "")[:300])
             if doc["status"] != "ok":
                 reason = {"needs_primitive": "needs_primitive", "needs_asset": "needs_asset",
                           "challenge": "challenge page", "timing": "timing", "held": "beat failed",

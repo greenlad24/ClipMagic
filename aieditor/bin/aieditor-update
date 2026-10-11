@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""aieditor-update — push the current code to a RUNNING factory job now (LIVE UPDATE, aieditor/liveupdate.py).
+
+  aieditor-update <job id | job dir>            tests (cached per tree hash) → push → what the server will do
+  aieditor-update <job id | job dir> --status   only what the server runs and what is staged there
+
+The job's own dispatcher (cloud.run_remote) does the same at most once a minute by itself; this forces it now.
+Red tests: nothing is pushed (exit 1). The server switches at its next SAFE BOUNDARY — between pictures, between
+route groups (P3 → P4 → P2), between screencasts, before a stage — never mid-generation or mid-recording; a tree
+that does not import there is rolled back and the job keeps running the old code."""
+import json
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from aieditor import cloud, config, liveupdate  # noqa: E402
+
+NEXT = {
+    "preprod": "the next picture (P3) or route group (P3 → P4 → P2) of pre-production — the picture being made "
+               "finishes first; once routing is over, before the graphics stage",
+    "graphics": "the next screencast — the one being rehearsed / recorded finishes first",
+}
+
+
+def say(msg):
+    print(time.strftime("%H:%M:%S ") + msg, flush=True)
+
+
+def droplet_of(jid):
+    for p in sorted(cloud.LEASES.glob("*.json")) if cloud.LEASES.exists() else []:
+        try:
+            ls = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if ls.get("job") == jid and not ls.get("role") and ls.get("ip"):
+            return ls
+    return None
+
+
+def remote_state(ip, jid):
+    R = liveupdate.DEFAULT_ROOT
+    out = cloud.ssh(ip, f"cat {R}/code-version 2>/dev/null; echo; echo @@LU@@; head -2 {R}/running 2>/dev/null; "
+                        f"echo @@LU@@; ls {R}/rejected 2>/dev/null; echo @@LU@@; cat {config.JOBS / jid}/status.json 2>/dev/null",
+                    timeout=60, check=False)
+    parts = (out.split("@@LU@@", 3) + ["", "", "", ""])[:4]
+    try:
+        cv = json.loads(parts[0].strip() or "{}")
+    except ValueError:
+        cv = {}
+    run = parts[1].strip().splitlines()
+    try:
+        st = json.loads(parts[3].strip() or "{}")
+    except ValueError:
+        st = {}
+    return {"named": cv, "running_tree": run[0] if run else None, "running": (run[1] if len(run) > 1 else None)
+            or st.get("code_version"), "rejected": parts[2].split(), "status": st}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 2
+    jid = Path(argv[0]).name
+    only_status = "--status" in argv[1:]
+    ls = droplet_of(jid)
+    if not ls:
+        say(f"{jid}: not running on a factory server (no lease with an address) — nothing to update")
+        return 2
+    ip = ls["ip"]
+    rs = remote_state(ip, jid)
+    st = rs["status"]
+    stage = st.get("stage") or "?"
+    say(f"{jid} on server {ls.get('droplet')} ({ip}): state {st.get('state')}, stage {stage} — {str(st.get('message'))[:120]}")
+    say(f"running code: {rs['running'] or 'the dispatched code (no version)'}; named on the server: "
+        f"{rs['named'].get('version') or '-'}" + (f"; rejected: {', '.join(rs['rejected'])}" if rs["rejected"] else ""))
+    if only_status:
+        return 0
+    snap = liveupdate.snapshot()
+    if not snap:
+        say("the code is changing right now (the snapshot did not match) — try again in a moment")
+        return 1
+    v, key, sdir = snap
+    say(f"this box's code: {v} (tests key {key})")
+    if v == rs["running"]:
+        say("the server already runs this code — nothing to do")
+        return 0
+    if v in rs["rejected"]:
+        say(f"the server rejected {v} earlier (it did not import there) — fix it first")
+        return 1
+    st_t = liveupdate.test_status(key)
+    say(f"tests: {'cached ' + st_t if st_t in ('green', 'red') else 'running the fast suite (~3-5 min)…'}")
+    res = liveupdate.run_tests_now(key, sdir, out=say)
+    if res != "green":
+        say(f"tests RED — not pushed: {liveupdate.test_reason(key)[:300]}")
+        return 1
+    out = liveupdate.push(ip, sdir, v)
+    if out != "switched":
+        say(f"push: {out}")
+        return 1
+    cloud.runner(config.JOBS / jid, live_update={"version": v, "state": "sent", "at": time.time(), "by": "aieditor-update"})
+    say(f"pushed {v} — staged in {liveupdate.DEFAULT_ROOT}/trees/{v} and switched atomically (code-version)")
+    say(f"the worker switches at {NEXT.get(stage, 'the start of the next stage')}: it import-checks the new tree, "
+        f"then re-execs itself (same server, same job, same browser profile copies, ledgers, caps) and continues "
+        f"from {stage}. If the tree does not import there, it keeps running {rs['running'] or 'the old code'} and logs why.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

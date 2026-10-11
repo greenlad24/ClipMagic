@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import apiledger, agentrec, config, director, llm, planfit, skill, takes
+from . import apiledger, agentrec, config, director, liveupdate, llm, planfit, skill, takes
 
 ALL_STEPS = ["readiness", "assets", "plan", "route", "set_dressing", "dryrun", "gate"]
 DARK_LUM = 60                                  # mean screen luminance (0-255) below this = dark theme
@@ -1741,6 +1741,13 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
     steps = steps or ALL_STEPS
     say = say or log
     stop = cancelled or (lambda: False)
+    # LIVE UPDATE (aieditor/liveupdate.py): after a code update this run keeps what it already measured and paid for
+    # (readiness, the plan) and goes on from routing — never a second plan call. The asset manifest is rebuilt as on
+    # any Continue (code only, no generation): routing's assets.json no longer lists the pictures still to make
+    kept = [s for s in ("readiness", "plan") if s in steps and liveupdate.settled(f"preprod/{s}")]
+    if kept:
+        steps = [s for s in steps if s not in kept]
+        say(f"live update: {', '.join(kept)} kept from this run (made before the code update)")
 
     def check():
         if stop():
@@ -1770,6 +1777,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
                "disk_free_gb": round(df, 1), "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "checks": checks,
                "features": features_of(app, checks)}, out / "readiness.json")
         say(f"readiness: {sum(c['status'] == 'pass' for c in checks)}/{len(checks)} pass")
+        liveupdate.settle("preprod/readiness", "done")
     readiness = json.loads((out / "readiness.json").read_text())
     if set(steps) <= {"readiness"}:
         return None
@@ -1816,6 +1824,7 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         say(f"plan: {len(plan['segments'])} screencast(s), {len(plan['overlays'])} overlay(s), "
             f"{len(plan.get('needs_primitive', []))} needs_primitive, {meta.get('calls')}, ${meta['usd']}"
             + (f" — HELD: {', '.join(h['reason'] for h in held)}" if held else ""))
+        liveupdate.settle("preprod/plan", "done")
     if not (out / "plan.json").exists():
         return None
     # 3b. R14: every NEED of the plan filled for THIS video — P2 onboarding into job/preprod/playbook-<app>.json, P3
@@ -2036,6 +2045,9 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
     if row and video["words"]:
         app = adapter or adapter_for(row["url"])
         fresh = all((out / f).exists() and (out / f).stat().st_mtime >= edl_at for f in FACTORY_FILES)
+        # a flow THIS run started before a live code update (aieditor/liveupdate.py) goes on — never "fresh" from files an
+        # earlier run left
+        fresh = fresh and not liveupdate.settled("preprod/readiness")
         try:
             if fresh:
                 fg = json.loads((out / "flow-gate.json").read_text()) if (out / "flow-gate.json").exists() else {}

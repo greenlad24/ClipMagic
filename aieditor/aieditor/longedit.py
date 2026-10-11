@@ -20,7 +20,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import agentrec, compose_long, config, director, events as ev_log, gates, graphics_long, media, playbook, rubric, usroute
+from . import agentrec, compose_long, config, director, events as ev_log, gates, graphics_long, liveupdate, media, playbook, rubric, usroute
 
 SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
@@ -260,6 +260,12 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         sd = w / f"seg-{i:02d}"
         if (sd / "rec" / "events.json").exists() and (recorder._load(sd / "recording.json", {}) or {}).get("status") == "ok":
             n_recorded += 1
+            continue
+        prior = liveupdate.settled(f"{w.name}/seg-{i:02d}")
+        if prior is not None and prior.get("status") != "ok":
+            # ended not-ok in THIS run before a live code update: kept as it was (its fallback below), not redone
+            add_held(d, str(prior.get("status") or "held"), f"edit {k} screencast {i + 1}: {prior.get('why', '')}"[:300])
+            n_held += 1
             continue
         why, reason = None, None
         if seg["session"] == "outside" and not us_proxy:

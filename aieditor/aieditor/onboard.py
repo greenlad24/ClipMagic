@@ -52,7 +52,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import clickguard, config, director, llm, playbook, skill
+from . import clickguard, config, director, liveupdate, llm, playbook, skill
 
 GROUPS = ("A", "B", "C", "D")
 GROUP_NAME = {"A": "action missing from the playbook (P2 onboarding)", "B": "asset never produced (P3)",
@@ -1148,6 +1148,20 @@ def reuse_ok(ctx, aid, old):
     return ok
 
 
+def produce_once(ctx, aid, *a, **kw):
+    """produce_asset as ONE live-update unit (aieditor/liveupdate.py): a code update waits until the picture is finished
+    (made + checked, or failed every try). After an update, a picture this run already settled as failed is kept as it
+    was — never made again; a ready one is reused through its <id>.produced.json as on any re-run."""
+    prior = liveupdate.settled(f"picture/{aid}")
+    if prior and prior.get("status") != "ready" and isinstance(prior.get("row"), dict):
+        ctx.log(f"{aid}: settled before the code update ({prior.get('status')}) — kept as it was, not made again")
+        return prior["row"]
+    with liveupdate.unit(f"picture {aid}"):
+        row = produce_asset(ctx, aid, *a, **kw)
+    liveupdate.settle(f"picture/{aid}", row.get("status"), row=None if row.get("status") == "ready" else row)
+    return row
+
+
 def _row(aid, desc, status, why, **kw):
     return {"id": aid, "kind": "app_generation", "desc": desc, "status": status, "file": None, "source": None,
             "attempts": [why], "checks": [], "why": why, **kw}
@@ -1980,19 +1994,25 @@ class Ctx:
 
     def start_url(self, need):
         if self.IMAGE_NEED.search(need):
+            prior = liveupdate.settled("onboard/start_chat") if not self.image_chat else None
+            if prior and prior.get("chat_url"):          # made before a live code update in this run: not again
+                self.image_chat = prior["chat_url"]
+                self.allowed_chats.add(prior["chat_url"])
             if not self.image_chat and self.in_app is not None:
                 # a chat with an image that THIS job owns (one generation, spaced) — never one of Jake's chats
                 self.spacer.wait()
                 dst = self.out / "assets" / "onboard_start.png"
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    r = self.in_app({"id": "onboard_start", "prompt": self.STARTER_PROMPT}, dst, [])
+                    with liveupdate.unit("onboarding start chat"):
+                        r = self.in_app({"id": "onboard_start", "prompt": self.STARTER_PROMPT}, dst, [])
                 except Exception as e:  # noqa: BLE001
                     r = None
                     self.log(f"onboarding: the start chat could not be made ({e})")
                 if r and r.get("chat_url"):
                     self.image_chat = r["chat_url"]
                     self.allowed_chats.add(r["chat_url"])
+                    liveupdate.settle("onboard/start_chat", "ready", chat_url=r["chat_url"])
             if self.image_chat:
                 return self.image_chat
         return self.pb["start_state"]["url"]
@@ -2155,6 +2175,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
     failed = {}
     for r in report["B"]:
         ctx.check_cancel()
+        liveupdate.boundary("pre-production: between pictures (P3)")      # a code update lands here, never mid-picture
         ctx.tally = (len([a for a in usable if (by_asset.get(a) or {}).get("status") == "ready"]), max(1, n_need))
         pr = r.get("proposed") if isinstance(r.get("proposed"), dict) else {}
         aid = pr.get("asset_id")
@@ -2177,7 +2198,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             # was run on the hot-sauce photo because the nearest earlier picture was taken as its source)
             hint = _prior_asset(answer, pr.get("word_id") or (r.get("word_ids") or [None])[0], pos, usable)
         wid0 = pr.get("word_id") or (r.get("word_ids") or [None])[0]
-        row = produce_asset(ctx, aid, desc, made_from, sentence=r.get("sentence"),
+        row = produce_once(ctx, aid, desc, made_from, sentence=r.get("sentence"),
                             window=window_of(video, wid0) if wid0 is not None else r.get("sentence"), source_hint=hint)
         if row["status"] == "not_a_picture":            # a camera move / framing: the edit's job (D), not the app's
             note(r, "D", "not a picture — camera / framing in the edit (no generation)", asset=aid, why2=row.get("why"))
@@ -2192,6 +2213,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
             held.append({"reason": "asset_failed", "detail": f"{aid}: {row.get('why')}"[:300]})
             note(r, "P3", "failed", asset=aid, why2=row.get("why"))
 
+    liveupdate.boundary("pre-production: P3 pictures → P4 features")
     # ── C (P4): verify absence, then motion graphics with a REAL result ──
     kit = {}
     pending_a = list(report["A"])
@@ -2231,7 +2253,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
                 how = f"{req.get('result_kind')} — the app's UI from the kit" + (f", with '{res_id}' in it" if res_id else "")
                 ctx.log(f"feature {feature}: {req.get('result_kind')} (from the narration around it) — no generation")
             else:
-                res = produce_asset(ctx, res_id, req["expect"], [prior] if prior else [], prompt=req["prompt"],
+                res = produce_once(ctx, res_id, req["expect"], [prior] if prior else [], prompt=req["prompt"],
                                     sentence=sentence, window=win, look=req.get("look"))
                 if res["status"] == "not_a_picture":
                     note(r, "D", "not a picture — camera / framing in the edit (no generation)", verify=v)
@@ -2277,6 +2299,7 @@ def route(ctx, pdoc, video, sites, assets, facts_fn, held_reasons=None):
         ctx.status(f"Missing features → motion graphics: {i_c + 1}/{len(report['C'])}")
         handle_c(r)
 
+    liveupdate.boundary("pre-production: P4 features → P2 actions")
     # ── A (P2): onboard every missing action, once per distinct need ──
     # In AGENT mode (Jake 2026-10-11: "the agents finds the way to do the screencast") nothing is learned up front: the
     # rehearsal agent finds each missing control on screen when it rehearses that screencast (run 18 still spent its
