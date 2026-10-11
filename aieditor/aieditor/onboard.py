@@ -409,10 +409,36 @@ def _slug(text):
     return ("ob_" + "_".join(w[:4]))[:40] or "ob_action"
 
 
+_POINT_KEYS = ("from", "to", "rel_from", "rel_to", "drag_from", "drag_to", "rel", "at", "point")
+
+
+def norm_points(d):
+    """Coordinates the agent wrote as text ("0.3, 0.4", "[0.3,0.4]", {"x":…,"y":…}) → [x, y] numbers, in place.
+    Since actions travel as JSON text (EXPLORE_SCHEMA), a drag's points arrived as strings and every drag failed
+    ("drag needs from/to [x, y]" — re-run 9, the Markup box). Generic: any action, any app."""
+    if not isinstance(d, dict):
+        return d
+    for k in _POINT_KEYS:
+        v = d.get(k)
+        if isinstance(v, str):
+            nums = re.findall(r"-?\d+(?:\.\d+)?", v)
+            if len(nums) >= 2:
+                d[k] = [float(nums[0]), float(nums[1])]
+        elif isinstance(v, dict) and {"x", "y"} <= set(v):
+            d[k] = [float(v["x"]), float(v["y"])]
+        elif isinstance(v, (list, tuple)) and len(v) >= 2:
+            try:
+                d[k] = [float(v[0]), float(v[1])]
+            except (TypeError, ValueError):
+                pass
+    return d
+
+
 def normalize_proposal(p, pb, need):
     """The agent's proposal → a playbook action (or ValueError). Code fills what the schema needs."""
     if not isinstance(p, dict):
         raise ValueError("no proposal object")
+    norm_points(p)
     kind = p.get("kind")
     if kind not in KINDS_OK:
         raise ValueError(f"kind {kind!r} not one of {KINDS_OK}")
@@ -529,7 +555,7 @@ class Explorer:
             elif do == "find":
                 obs = {"found": transport.send({"cmd": "find", "texts": list(ans.get("texts") or [])[:6]}).get("found", {})}
             elif do == "act":
-                obs = transport.send({"cmd": "act", "action": dict(ans.get("action") or {})})
+                obs = transport.send({"cmd": "act", "action": norm_points(dict(ans.get("action") or {}))})
                 log[-1] += f" → {'ok' if obs.get('ok', True) and not obs.get('error') else obs.get('error') or obs.get('refused')}"
                 if obs.get("ok", True) and not obs.get("error"):
                     obs = {**transport.send({"cmd": "observe"}), "act": obs}
