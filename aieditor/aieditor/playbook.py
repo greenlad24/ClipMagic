@@ -343,12 +343,26 @@ def resolve(app, action_id, params=None):
     elif k == "drag":
         # points may be params (given per use) OR fixed on the onboarded action itself (re-run 10: the proposal kept
         # rel_from/rel_to on the action, the replay read only params → "drag needs from/to [x, y]" on every proof)
-        rf, rt = p.get("rel_from", a.get("rel_from")), p.get("rel_to", a.get("rel_to"))
+        def _ok(v):
+            return isinstance(v, (list, tuple)) and len(v) >= 2 and all(isinstance(x, (int, float)) for x in v[:2])
+
+        def _pt(*keys):                                   # params first, then the action; every common spelling
+            for src in (p, a, a.get("rel") if isinstance(a.get("rel"), dict) else {}):
+                for k in keys:
+                    if _ok(src.get(k)):
+                        return list(src[k])[:2]
+            return None
+        rf = _pt("rel_from", "drag_from_rel", "from_rel", "start_rel") or \
+            ((a.get("points") or [None])[0] if _ok((a.get("points") or [None])[0]) else None)
+        rt = _pt("rel_to", "drag_to_rel", "to_rel", "end_rel") or \
+            ((a.get("points") or [None, None])[-1] if len(a.get("points") or []) >= 2 and _ok(a["points"][-1]) else None)
+        if rf is None and isinstance(a.get("rel"), dict):
+            rf, rt = _pt("from", "start"), rt or (list(a["rel"]["to"]) if _ok(a["rel"].get("to")) else None)
         if rf is not None and rt is not None and "selector" in tgt:
             # element-relative (R14 P2): fractions of the selector's box, measured on the live page (agent_rec.mjs)
             st = [{"type": "drag", "selector": tgt["selector"], "rel_from": list(rf), "rel_to": list(rt)}]
         else:
-            st = [{"type": "drag", "from": p.get("from", a.get("from")), "to": p.get("to", a.get("to"))}]
+            st = [{"type": "drag", "from": _pt("from", "drag_from", "start"), "to": _pt("to", "drag_to", "end")}]
     elif k == "draw":
         st = [{"type": "draw", "strokes": p.get("strokes", []), **({"box": p["box"]} if "box" in p else {})}]
     elif k == "reveal":
