@@ -51,6 +51,7 @@ REPAIR_VIDEO_USD = 3.00
 REPAIR_MODEL = "claude-opus-5-5"   # Jake 2026-10-09: every AI call on Opus 5.5
 REPAIR_TURNS = 8
 DROP_KINDS = ("challenge", "account", "error")
+OVERRUN_X = 3.0                          # a take may run up to 3x its narration window (+2 s); the assembler cuts the waits
 MAX_TAKE_STEPS = 400                     # a compiled take never needs more actions (a runaway script = step exhaustion)
 # compile-time keys the browser never sees
 WIRE_DROP = {"assert", "camera_only", "generates", "result_of", "playbook", "filler", "alt", "payoff_t", "cursor_at",
@@ -404,8 +405,11 @@ def play_script(sess, script, out_rel=None, dur=None, record=True, log=print, se
             if not res.get("ok"):
                 raise Retake(f"beat {b['id']} ({b.get('word')}) {a.get('type')} failed: {str(res.get('error', ''))[:160]}",
                              wall=res.get("wall"), beat=b["id"])
-            if record and isinstance(res.get("t"), (int, float)) and res["t"] > dur + 0.5 and b is not order[-1]:
-                # step exhaustion: the take ran past the segment's end with beats still to show
+            if record and isinstance(res.get("t"), (int, float)) and res["t"] > dur * OVERRUN_X + 2.0 and b is not order[-1]:
+                # step exhaustion: a take FAR past the segment's end. A take that only runs long is kept: the elastic
+                # assembler then cuts the waiting / idle frames so it fits the narration — the actions stay (Jake
+                # 2026-10-11: "The flow should be cut if it doesn't fit (cut the waiting time to result only)"; run 22
+                # screencast 10 was dropped at 10.6 s of 9.3 s)
                 raise Retake(f"step exhaustion: the take reached {res['t']:.1f}s of {dur:.1f}s at beat {b['id']} "
                              f"with {len(order) - order.index(b) - 1} beat(s) left", beat=b["id"])
             want = s.get("assert") or {}

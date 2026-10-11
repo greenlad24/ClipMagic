@@ -532,4 +532,8 @@ check(B.start_state_for(_seg_type, _pbs, _as)["url"] == "https://chatgpt.com/", 
 _src_ar = (ROOT / "screencast" / "agent_rec.mjs").read_text()
 check('[contenteditable="false"], button, [role="button"]' in _src_ar and "async function keyTicking" in _src_ar
       and "await keyTicking(() => pressCombo(combo))" in _src_ar, "chip-aware field text + ticking key presses on camera")
+# Jake 2026-10-11: a take that runs long is kept and cut to fit (the waits), never dropped at the window's end
+from aieditor import recorder as _RR  # noqa: E402
+_src_rec = (ROOT / "aieditor" / "recorder.py").read_text()
+check(_RR.OVERRUN_X >= 2 and "dur * OVERRUN_X" in _src_rec, "a long take is allowed to run on; the assembler cuts the waits")
 print(f"test_rehearse: {N} checks passed")
