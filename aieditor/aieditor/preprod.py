@@ -536,10 +536,13 @@ class ChatGPT:
         add("updated_label", "'Updated' label next to the image option", "pass" if upd else "not_found",
             where={"hits": upd, "searched": ["+ menu", "model picker", "/images"]},
             note="" if upd else "no 'Updated' badge anywhere the image option appears")
-        # image viewer toolbar on an existing library image (read only — no tool is applied)
-        p.send({"cmd": "open", "url": "https://chatgpt.com/library?tab=images", "settle": 6})
+        # image viewer toolbar: NOT read from Jake's Library any more (his own pictures — Jake's rule: never touch his
+        # items; re-run 8 opened one and its Resize menu). The toolbar facts come from the proven playbook and are
+        # re-confirmed live when a tool route runs on a picture THIS job made. AIEDITOR_READINESS_LIBRARY=1 restores it.
         card, t0 = None, time.time()
-        while not card and time.time() - t0 < 25:
+        if os.environ.get("AIEDITOR_READINESS_LIBRARY") == "1":
+            p.send({"cmd": "open", "url": "https://chatgpt.com/library?tab=images", "settle": 6})
+        while os.environ.get("AIEDITOR_READINESS_LIBRARY") == "1" and not card and time.time() - t0 < 25:
             o = p.observe()
             card = next((i for i in o.get("items", []) if i["tag"] == "button" and re.search(r"\.(png|jpe?g|webp)$", i["text"], re.I)), None)
             if not card:
@@ -558,6 +561,14 @@ class ChatGPT:
         for cid, lab in (("tb_markup", "Markup"), ("tb_comment", "Comment"), ("tb_remove_bg", "Remove BG"),
                          ("tb_erase", "Erase"), ("tb_resize", "Resize"), ("tb_sketch", "Sketch"), ("tb_templates", "Templates")):
             hit = _first(tb, lab)
+            if not card and lab in ("Markup", "Comment", "Remove BG", "Erase", "Resize") \
+                    and os.environ.get("AIEDITOR_READINESS_LIBRARY") != "1":
+                # not re-read live (no Library visit): the proven playbook's toolbar stands; a tool route on a picture
+                # this job made confirms it live
+                add(cid, f"image toolbar: {lab}", "pass",
+                    where={"path": "open an image (click it) → floating toolbar under the image",
+                           "source": "proven playbook (not re-read from Jake's Library)"})
+                continue
             add(cid, f"image toolbar: {lab}", "pass" if hit else "not_found",
                 where={"path": "open an image (click it) → floating toolbar under the image", "hit": hit} if hit else
                 {"alternative": {"Sketch": "composer '+' → 'Sketch' plugin", "Templates": "https://chatgpt.com/images → 'Templates' tab"}.get(lab)},

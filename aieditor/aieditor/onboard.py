@@ -1319,12 +1319,25 @@ def source_inputs(ctx, desc, available, tool=None):
                                                                  "name exactly that one source.\n" if tool else "")
              + f"AVAILABLE pictures:\n{av}"}]
     try:
-        ctx.budget.need(llm.estimate(model, INPUTS_SYSTEM, msgs, 500))
-        r = ctx.llm(model, INPUTS_SYSTEM, None, 500, effort="low", msgs=msgs, schema=INPUTS_SCHEMA,
-                    stage=f"preprod.onboard.{ctx.app}", purpose="P3 source pictures of a composite")
-        ctx.budget.add(r.get("usd"))
-        j = json.loads(r.get("text") or "{}")
-        return {**none, **j, "decided": True} if isinstance(j, dict) else none
+        j = {}
+        for k in range(2):
+            ctx.budget.need(llm.estimate(model, INPUTS_SYSTEM, msgs, 700))
+            r = ctx.llm(model, INPUTS_SYSTEM, None, 700, effort="medium", msgs=msgs, schema=INPUTS_SCHEMA,
+                        stage=f"preprod.onboard.{ctx.app}", purpose="P3 source pictures of a composite")
+            ctx.budget.add(r.get("usd"))
+            j = json.loads(r.get("text") or "{}")
+            if not isinstance(j, dict):
+                return none
+            if not (j.get("needs_inputs") and not j.get("inputs")):
+                break
+            # "needs inputs" with NONE listed is not an answer (re-run 8: the merge went to a single invented picture)
+            msgs = msgs + [{"role": "assistant", "content": json.dumps(j)},
+                           {"role": "user", "content": "You said it needs source pictures but listed none. List EVERY "
+                            "source picture by id + visible description (reuse an AVAILABLE id when it fits), and the "
+                            "instruction he types with them attached."}]
+        if j.get("needs_inputs") and not j.get("inputs"):
+            return none                                   # still empty: not decided (a hint, if any, stands)
+        return {**none, **j, "decided": True}
     except Exception:  # noqa: BLE001 — treated as a plain picture
         return none
 
