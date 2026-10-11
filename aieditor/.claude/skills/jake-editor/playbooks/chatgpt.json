@@ -2349,21 +2349,21 @@
     "start": "open_images_page",
     "steps": [
      {
-      "action": "images_templates_tab"
+      "action": "open_images_page"
      },
      {
-      "need": "on the Images page's Templates tab, click the Logo template card so its prompt / name box opens"
+      "need": "on the Images page, open the Templates tab and the Logo template card, then the control that starts using it (the card shows 'Try it')"
      },
      {
-      "action": "paste_prompt",
-      "params": {
-       "text": "{prompt}"
-      }
+      "need": "in the Logo template, enter the brand name (the text is DATA given at use time: param 'text')",
+      "text": true
      },
      {
-      "action": "send"
+      "need": "in the Logo template with the name entered, the control that creates the logo (it starts a generation: find it, never press it)",
+      "generates": true
      }
-    ]
+    ],
+    "src": "2026-10-11 (re-run 13): the live Logo card is 'Logo — Create a small set of distinct logo options… Aspect ratio · Subject/reference · Try it'; steps are NEEDS so the onboarding agent learns the real flow"
    }
   },
   "overlay_close": [
