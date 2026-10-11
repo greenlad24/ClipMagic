@@ -500,6 +500,13 @@ def test_pre_contradicted_by_requires():
     finally:
         playbook._pb = orig
     check(not r["proven"] and "still present" in (r["replays"][0]["why"] or ""), f"a real precondition still fails: {r}")
+    # a mode already ON is reached even when its (drifted) pre fails — re-run 16: the viewer reopened in Erase mode
+    pb2 = {"actions": {"erase": {"kind": "click", "selectors": ["text=Erase"], "generates": False,
+                                 "pre": [{"kind": "selector", "selector": "#renamed-close"}],
+                                 "post": [{"kind": "selector", "selector": "#cancel-markup"}]}}}
+    s3 = S()
+    s3.mode = True
+    check(playbook.already(s3, pb2, "erase") is True, "post holds → already reached, whatever the pre says")
 
 
 def main():

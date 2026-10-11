@@ -636,9 +636,9 @@ def already(session, pb, action_id, params=None):
         return False
     p = _params(a, dict(params or {}))
     try:
-        for c in a.get("pre", []):
-            if not session.check(_fill_assert(c, p))[0]:
-                return False
+        # the post alone decides: its 'pre' is about whether the press CAN happen (re-run 16: ChatGPT's viewer reopens
+        # in the last mode used — Erase mode was already on, the 'Erase' button was not shown, and a drifted pre made
+        # this check say "not reached" → "no element for Erase" in every proof)
         return all(session.check(_fill_assert(c, p))[0] for c in a["post"])
     except Exception:  # noqa: BLE001 — not checkable: press it
         return False
