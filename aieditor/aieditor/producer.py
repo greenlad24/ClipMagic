@@ -189,7 +189,8 @@ class Producer:
         self._status(f"Learning the {tool} tool: {need[:70]}")      # the status line never freezes on the last asset
         try:
             row = onboard.onboard_action(self.ctx, need, {"text": params.get("prompt")} if st.get("text") else None,
-                                         generates=False, generating=bool(st.get("generates")))
+                                         generates=False, generating=bool(st.get("generates")),
+                                         chain=list(getattr(self, "_chain", []) or []))
         except Exception as e:  # noqa: BLE001 — BudgetSpent / a broken explorer: the tool route is not available
             row = {"status": "failed", "why": str(e)}
         finally:
@@ -221,6 +222,9 @@ class Producer:
             if st.get("action"):
                 steps.append({"action": st["action"], **({"params": dict(st["params"])} if st.get("params") else {})})
                 continue
+            # the steps already in this tool's chain are what this step needs first (the Logo name box only exists
+            # after "open the card → Try it" — re-run 14): its proof replays them
+            self._chain = [s_["action"] for s_ in steps if s_.get("action")]
             aid, why = self.ensure_tool_action(tool, i, st, params)
             if not aid:
                 return None, why

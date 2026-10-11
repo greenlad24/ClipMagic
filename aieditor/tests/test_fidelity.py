@@ -251,7 +251,7 @@ def test_missing_tool_action_onboarded():
     order = []
     real = onboard.onboard_action
 
-    def fake_onboard(c, need, params=None, generates=False, generating=False):
+    def fake_onboard(c, need, params=None, generates=False, generating=False, **_kw):
         order.append(("onboard", need[:30], generating, len(world.sends)))
         aid = "ob_apply_erase" if generating else "ob_brush"
         c.pb["actions"][aid] = {"kind": "click", "label": aid, "selectors": ["text=" + ("Apply erase" if generating else "Brush")],
@@ -456,7 +456,7 @@ def test_strokes_are_data():
     called = []
     real = onboard.onboard_action
 
-    def fake_onboard(c, need, params=None, generates=False, generating=False):
+    def fake_onboard(c, need, params=None, generates=False, generating=False, **_kw):
         called.append((need, params))
         c.pb["actions"]["ob_canvas_stroke"] = {"kind": "draw", "label": "a pen stroke on the canvas",
                                                "selectors": ["canvas"], "params": {}, "requires": [], "proven": True, "source": "test fake"}

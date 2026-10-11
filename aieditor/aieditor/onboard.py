@@ -630,7 +630,7 @@ def recent_proven(app, need, days=RECENT_DAYS, now=None):
 _CONFIRM_RX = re.compile(r"\b(?:check ?mark|tick|submit|attach|done|confirm|apply|save)\b", re.I)
 
 
-def onboard_action(ctx, need, params=None, generates=False, generating=False, presence_only=False):
+def onboard_action(ctx, need, params=None, generates=False, generating=False, presence_only=False, chain=None):
     """P2 for one needed action: explore → propose → prove 3/3 (fix rounds feed the failures back). → row.
     generating=True: the step STARTS a generation (a tool's submit): the explorer finds it without pressing it, and
     it is proven by presence (its requires + selector + pre asserts), never pressed 3x (3 generations) — the
@@ -682,6 +682,9 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False, pr
             row.update(why=res.get("why"), budget=bool(res.get("budget")))
             return row
         aid, act = res["action_id"], res["action"]
+        if chain:
+            # the earlier steps of the same tool come first in every proof (they are what makes this step's control exist)
+            act["requires"] = [r for r in chain if r != aid and r not in (act.get("requires") or [])] + list(act.get("requires") or [])
         if generating:
             act["generates"] = True
         ctx.pb["actions"][aid] = act
