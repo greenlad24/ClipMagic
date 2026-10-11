@@ -528,4 +528,8 @@ check(_ss["url"] == "https://chatgpt.com/c/job-pic" and "new_chat" not in _ss["s
 _seg_type = {"app": "chatgpt", "session": "logged_in", "beats": [
     {"t_word": 1.0, "action": "paste_prompt", "params": {"text": "a bottle"}}, {"t_word": 2.0, "action": "x", "asset_id": "pic"}]}
 check(B.start_state_for(_seg_type, _pbs, _as)["url"] == "https://chatgpt.com/", "a segment that types first starts on home")
+# run 20: a mode chip in the composer is not draft text, and key presses during recording tick the clock
+_src_ar = (ROOT / "screencast" / "agent_rec.mjs").read_text()
+check('[contenteditable="false"], button, [role="button"]' in _src_ar and "async function keyTicking" in _src_ar
+      and "await keyTicking(() => pressCombo(combo))" in _src_ar, "chip-aware field text + ticking key presses on camera")
 print(f"test_rehearse: {N} checks passed")

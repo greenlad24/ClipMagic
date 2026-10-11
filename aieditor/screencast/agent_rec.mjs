@@ -1126,14 +1126,23 @@ async function act(a) {
       // 2026-10-09). ⚠️ The browser now says it is a Mac, so apps map select-all to ⌘A and ignore Ctrl+A:
       // the editing commands are used first (work in inputs and rich-text composers alike), keys as backup.
       // Acknowledged by SILENT ticks (no frames, nothing shown)
-      const fieldText = () => page.evaluate(() => { const x = document.activeElement; return x ? String(x.value ?? x.innerText ?? "").trim() : ""; }).catch(() => "");
+      // ⚠️ 2026-10-11 (run 20, screencast 6): a MODE CHIP inside the composer ("Create image" after + → Create image) is
+      // not draft text — read as text it was "cleared" with ⌘A/Backspace (removing the mode itself) and those key
+      // presses hung the paused recording clock for 15 min. The text of non-editable children (chips) is ignored.
+      const fieldText = () => page.evaluate(() => { const x = document.activeElement; if (!x) return "";
+        if (x.value != null) return String(x.value).trim();
+        const c = x.cloneNode(true); c.querySelectorAll('[contenteditable="false"], button, [role="button"]').forEach((n) => n.remove());
+        return String(c.innerText ?? "").trim(); }).catch(() => "");
       if (a.clear !== false && (a.clear || (await fieldText()))) {
         await page.evaluate(() => { try { document.execCommand("selectAll"); document.execCommand("delete"); } catch {} }).catch(() => {});
         if (rec) await step(true);
         if (await fieldText()) {
           for (const combo of ["Meta+a", "Control+a"]) {
-            await pressCombo(combo); if (rec) await step(true);
-            await page.keyboard.press("Backspace"); if (rec) { for (let j = 0; j < 3; j++) await step(true); }
+            // under the paused recording clock a key press waits for a frame: the clock is advanced WHILE it is pressed
+            // (never awaited alone — run 20 hung here), and a press that still does not return is given up after 5 s
+            await keyTicking(() => pressCombo(combo));
+            await keyTicking(() => page.keyboard.press("Backspace"));
+            if (rec) { for (let j = 0; j < 3; j++) await step(true); }
             if (!(await fieldText())) break;
           }
         }
@@ -1367,6 +1376,14 @@ async function act(a) {
            ...(b && b.tag !== "point" && b.tag !== "region" ? { resolved: { hint: b.hint || null, label: b.label || b.text || "", tag: b.tag } } : {}) };
 }
 
+// a key press while the recording clock is paused: the clock ticks (silent frames) until the press returns, max ~5 s
+async function keyTicking(fn) {
+  const p = Promise.resolve().then(fn).catch(() => {});
+  if (!rec) return p;
+  let done = false; p.finally(() => { done = true; });
+  for (let i = 0; !done && i < 40; i++) await step(true);
+  await withTimeout(p, 5000).catch(() => {});
+}
 async function pressCombo(k) {
   // "Shift+1", "Control+0", "Meta+a" → modifiers held around the key
   const parts = String(k).split("+").filter(Boolean);
@@ -1603,7 +1620,10 @@ for await (const line of rl) {
         for (const tx of m.present || []) if (!body.toLowerCase().includes(String(tx).toLowerCase()) && !document.querySelector(`[aria-label="${tx}"]`)) fail.push(`missing "${tx}"`);
         for (const tx of m.absent || []) if (body.toLowerCase().includes(String(tx).toLowerCase())) fail.push(`unexpected "${tx}"`);
         const fld = m.field ? document.querySelector(m.field) : document.activeElement;
-        const val = fld ? String(fld.value ?? fld.innerText ?? "").replace(/\u00a0/g, " ").trim() : null;
+        // a mode chip inside the composer ("Create image") is not the field's text (run 20)
+        const txt = (e) => { if (e.value != null) return String(e.value); const c = e.cloneNode(true);
+          c.querySelectorAll('[contenteditable="false"], button, [role="button"]').forEach((n) => n.remove()); return String(c.innerText ?? ""); };
+        const val = fld ? txt(fld).replace(/\u00a0/g, " ").trim() : null;
         if (m.field_empty && val) fail.push(`field not empty: "${val.slice(0, 60)}"`);
         if (m.field_equals != null && val !== String(m.field_equals).trim()) fail.push(`field "${(val || "").slice(0, 80)}" != script "${String(m.field_equals).slice(0, 80)}"`);
         for (const sel of m.selector_present || []) if (!document.querySelector(sel)) fail.push(`no ${sel}`);
