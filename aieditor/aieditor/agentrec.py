@@ -177,8 +177,14 @@ class Session:
             raise RuntimeError(f"the agent recorder did not answer '{cmd}' for {limit:.0f} s")
         line = self.p.stdout.readline()
         if not line:
+            # a dead browser is never "recording" any more (run 20: its flag stayed set, live update then refused every
+            # boundary and the next screencasts reused the dead session — each crashed at once)
+            self.recording = False
             raise RuntimeError("the agent recorder stopped")
         return json.loads(line)
+
+    def alive(self):
+        return self.p.poll() is None
 
     def close(self):
         self.recording = False

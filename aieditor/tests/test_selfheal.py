@@ -1155,4 +1155,22 @@ with _tf3.TemporaryDirectory() as _d3:
     _PP.save_assets(_new, _ap)
     _ids = [a["id"] for a in json.loads(_ap.read_text())["assets"]]
     check(_ids == ["sketch", "logo"], f"a made picture on disk is kept, a missing file is not: {_ids}")
+# run 20: a browser that died is replaced, never reused for the next screencast
+from aieditor import recorder as _R2  # noqa: E402
+class _S:
+    def __init__(self):
+        self.up = True
+    def alive(self):
+        return self.up
+    def close(self):
+        self.up = False
+_made, _rl = [], []
+_r = object.__new__(_R2.Recorder)
+_r.sessions, _r.log = {}, _rl.append
+_r.new_session = lambda app, kind, fresh: (_made.append(_S()), _made[-1])[1]
+_s1 = _r.session("chatgpt", "logged_in")
+check(_r.session("chatgpt", "logged_in") is _s1, "a live browser is reused")
+_s1.up = False
+_s2 = _r.session("chatgpt", "logged_in")
+check(_s2 is not _s1 and len(_made) == 2 and any("fresh one" in x for x in _rl), "a dead browser is replaced by a fresh one")
 print(f"test_selfheal: {N} checks passed")

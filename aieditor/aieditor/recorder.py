@@ -848,6 +848,17 @@ class Recorder:
     # sessions: one browser per (app, session kind); a wall -> a FRESH one after a cooldown
     def session(self, app, kind, fresh=False):
         key = (app, kind)
+        cur = self.sessions.get(key)
+        al = getattr(cur, "alive", None) or getattr(getattr(cur, "t", None), "alive", None) or \
+            getattr(getattr(getattr(cur, "t", None), "s", None), "alive", None)
+        if cur is not None and callable(al):
+            try:
+                dead = not al()
+            except Exception:  # noqa: BLE001
+                dead = True
+            if dead:                 # a browser that died (killed, crashed) is replaced, never reused (run 20)
+                self.log(f"recorder: the {kind} browser had stopped — a fresh one is opened")
+                fresh = True
         if fresh and key in self.sessions:
             try:
                 self.sessions.pop(key).close()
