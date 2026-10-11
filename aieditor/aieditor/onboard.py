@@ -1087,7 +1087,7 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
                 # his on-screen words VERBATIM first; off camera an IMPRESSIVE result may get one added paragraph after
                 # them (Jake 2026-10-10: "it needs to be word by word like in the script - but you can add a paragraph
                 # to it to make it look impressive"). On camera he types only his words.
-                final = verbatim_plus(typed or prompt, look)
+                final = verbatim_plus(typed or prompt, look, desc)
             else:
                 final = with_look(typed or prompt or req["as_words"], look)
             style, subject = "", final or req["as_words"]
@@ -1100,7 +1100,7 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
                            as_words=with_look(req["as_words"], look) if not on_screen else req["as_words"])
         row["made_from"] = list(made_from)
     else:
-        base = verbatim_plus(prompt, look) if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
+        base = verbatim_plus(prompt, look, desc) if on_screen else (with_look(prompt or req["typed"] or req["as_words"], look) if not new_photo else None)
         row = _produce_in_app(ctx, aid, desc, dst, made_from, inputs, base, new_photo, look=look)
     row["look"] = look
     if row.get("status") == "ready":
@@ -1179,12 +1179,20 @@ IMPRESSIVE_PARAGRAPH = ("Make this a genuinely impressive, photoreal image: a st
                         "subject, vivid but believable colour. No text, captions, borders or collage panels.")
 
 
-def verbatim_plus(words, look):
+_TEXTUAL_RX = re.compile(r"\b(?:logo|poster|label|sign|title|text|words?|name|lettering|typography|banner|flyer|"
+                         r"thumbnail|headline|caption|menu|card)\b", re.I)
+
+
+def verbatim_plus(words, look, desc=""):
     """An on-screen prompt off camera: his words exactly as the script has them, then — for an impressive look only —
-    ONE added paragraph that lifts the result. His words are never edited, reordered or trimmed."""
+    ONE added paragraph that lifts the result. His words are never edited, reordered or trimmed. A picture that
+    CARRIES words (a logo, a poster, a label) never gets "no text" (re-run 15: the logo prompt said "No text")."""
     w = str(words or "").strip()
     if look == "impressive" and w:
-        return f"{w} {IMPRESSIVE_PARAGRAPH}"            # one line: a newline typed in a composer can send early
+        para = IMPRESSIVE_PARAGRAPH
+        if _TEXTUAL_RX.search(f"{w} {desc}"):
+            para = para.replace("No text, captions, borders or collage panels.", "No borders or collage panels.")
+        return f"{w} {para}"                            # one line: a newline typed in a composer can send early
     return w
 
 

@@ -395,7 +395,11 @@ class Producer:
         if miss:
             p = p.rstrip(". ") + ". It must clearly show " + ", ".join(miss) + "."
         if route.get("clean_boost") and not self.cur.get("verbatim"):
-            p = p.rstrip(". ") + ". " + CLEAN_ASK
+            from .onboard import _TEXTUAL_RX
+            # a picture that CARRIES words (a logo, a poster, a label) is never asked for "no text" (re-run 15)
+            ask = CLEAN_ASK if not _TEXTUAL_RX.search(p) else \
+                "One single plain picture: no app interface, arrows, before/after split or collage."
+            p = p.rstrip(". ") + ". " + ask
         return " ".join(p.split())                     # one line: a newline in a composer can send early
 
     # ── one try ──

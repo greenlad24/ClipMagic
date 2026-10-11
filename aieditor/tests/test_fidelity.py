@@ -640,3 +640,16 @@ def test_input_photo_never_gets_his_prompt():
 
 if __name__ == "__main__":
     test_input_photo_never_gets_his_prompt()
+
+
+def test_textual_pictures_keep_text():
+    from aieditor import onboard as ob
+    out = ob.verbatim_plus("Create a logo for the name Grandma's Regret", "impressive", "the logo result")
+    assert "No text" not in out and "No borders" in out, out
+    out2 = ob.verbatim_plus("Turn this rough sketch into a realistic photo", "impressive", "a photo")
+    assert "No text" in out2, out2
+    print("  a picture that carries words (logo/poster/label) is never asked for 'no text'")
+
+
+if __name__ == "__main__":
+    test_textual_pictures_keep_text()
