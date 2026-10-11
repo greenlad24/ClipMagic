@@ -1118,6 +1118,7 @@ def reuse_ok(ctx, aid, old):
         ctx.log(f"{aid}: the stored picture fails the asset audit (" + "; ".join(x["why"] for x in probs)[:240]
                 + ") — set aside, made again")
         preflight.set_aside(ctx.out, aid, "; ".join(x["rule"] for x in probs))
+        (getattr(ctx, "asset_files", None) or {}).pop(aid, None)   # its picture is gone: nothing may reuse or copy it any more
         return False
     fid = old.get("fidelity") or {}
     if fid.get("v", 0) >= prod_mod.FIDELITY_V and all(fid.get(k, True) for k in ("look_ok", "clean", "same_subject")):
@@ -1226,7 +1227,9 @@ def produce_asset(ctx, aid, desc, made_from=(), prompt=None, sentence=None, wind
             # went to a new picture): the picture shown just before is its source
             made_from = (source_hint,)
         same = str(plan_in.get("same_as") or "")
-        if same and same in ctx.asset_files and not tool:
+        # never itself, never a picture that was set aside since (re-run 16: rerun_a was set aside by the audit, the
+        # source step answered same_as 'rerun_a' → FileNotFoundError crashed pre-production)
+        if same and same != aid and same in ctx.asset_files and Path(ctx.asset_files[same]).exists() and not tool:
             shutil.copyfile(ctx.asset_files[same], dst)
             row = {"id": aid, "kind": "app_generation", "desc": desc, "status": "ready", "file": str(dst),
                    "source": {**((json.loads(dst.with_name(f"{same}.produced.json").read_text()).get("source") or {})

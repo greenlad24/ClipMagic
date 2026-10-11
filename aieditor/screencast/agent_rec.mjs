@@ -954,6 +954,13 @@ async function act(a) {
     };
     if (!b && (a.target || a.text || a.selector)) {
       b = await fromLabelOrSelector();
+      // OFF CAMERA a target that is not there YET (the page is still loading — re-run 16: the Logo route failed
+      // 5 tries in a row within seconds on a spinner, "no element for Erase" on a viewer still opening) is waited
+      // for, up to wait_s (default 10 s); on camera the beat's timing decides, never a silent wait
+      if (!b && !rec) {
+        const until = Date.now() + 1000 * (a.wait_s ?? (a.optional ? 0 : 10));   // an optional step (hide the sidebar if it is there) never waits
+        while (!b && Date.now() < until) { await sleep(300); b = await fromLabelOrSelector(); }
+      }
       // a target that is still MOVING (the image viewer's toolbar slides in) is measured again until it holds
       // still: a press on the first box hit the empty place it was leaving (proving run 2026-10-09, Markup 1/3)
       for (let k = 0; b && k < 12; k++) {

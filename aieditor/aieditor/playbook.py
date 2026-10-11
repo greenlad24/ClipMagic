@@ -481,7 +481,10 @@ class RecorderSession:
         why = None
         for s in tries:
             s = {k: v for k, v in s.items() if k not in ("alt", "playbook")}
-            r = self.t.send({"cmd": "act", "action": {k: v for k, v in s.items() if k != "optional_step"}})
+            act = {k: v for k, v in s.items() if k != "optional_step"}
+            if step.get("optional_step"):
+                act.setdefault("wait_s", 0)               # an optional control that is not there is never waited for
+            r = self.t.send({"cmd": "act", "action": act})
             if r.get("ok", True) and not r.get("error"):
                 return True, None
             why = r.get("error") or "act failed"
