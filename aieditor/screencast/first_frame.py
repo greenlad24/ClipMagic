@@ -166,14 +166,25 @@ def allowed(reason, allow, facts=None):
     m = _POPUP_TEXT.search(reason)
     if m and _text_resting(m.group(1), allow.get("resting_texts")):
         return "resting_texts"
+    if m and allow.get("resting_texts") and int(allow.get("resting_popups") or 0) > 0:
+        # a ROTATING resting group (suggestion chips): another chip text is fine while the page shows no more popups
+        # than the proven resting count
+        # — the group is recognised by at least one of its proven texts on screen now (a menu left open, with none
+        # of them, still fails)
+        dom = (facts or {}).get("dom") or {}
+        n_now = int(dom.get("popups") or 0)
+        if 0 < n_now <= int(allow["resting_popups"]) and \
+                any(_text_resting(t, allow.get("resting_texts")) for t in dom.get("popup_texts") or []):
+            return "resting_popups"
     m = _POPUP_DOM.search(reason)
     if m:
         n = int(m.group(1))
         texts = ((facts or {}).get("dom") or {}).get("popup_texts") or []
         if texts and len(texts) >= n and all(_text_resting(t, allow.get("resting_texts")) for t in texts[:n]):
             return "resting_texts"
-        if n <= int(allow.get("resting_popups") or 0):
-            return "resting_popups"
+        if n <= int(allow.get("resting_popups") or 0) and (not allow.get("resting_texts") or any(
+                _text_resting(t, allow.get("resting_texts")) for t in texts)):
+            return "resting_popups"     # a count that comes with its group's texts needs one of them on screen
     if reason.lower().startswith("wall: "):
         kind = reason[6:].split(":", 1)[0].strip().lower()
         if kind in [str(w).lower() for w in allow.get("walls") or []] and kind not in ("challenge", "account", "error"):

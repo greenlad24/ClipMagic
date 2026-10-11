@@ -137,6 +137,11 @@ def to_patch(decision, reasons, guarded=None):
             except re.error:
                 out["refused"].append([r, "not a regex"])
                 continue
+            # a "reason" that matches none of the failing reasons accepts nothing (re-run 16: the agent wrote four
+            # sentences of prose there) — kept only when it really matches one
+            if not any(re.search(str(r), x, re.I) for x in reasons if x):
+                out["refused"].append([r, "matches none of the failing reasons"])
+                continue
             rx.append(str(r)[:160])
         if texts:
             allow["resting_texts"] = texts
@@ -150,7 +155,13 @@ def to_patch(decision, reasons, guarded=None):
             n = int(d.get("resting_popups") or 0)
         except (TypeError, ValueError):
             n = 0
-        if 0 < n <= 3:
+        # popups the page shows at rest come as a GROUP whose texts rotate per load (re-run 16: ChatGPT's suggestion
+        # chips under the composer — 'Prep me for my next meeting' one load, 'Find emails…' the next — 3 texts
+        # accepted, the next load failed): when the cluster failed on a popup COUNT, that count is the allowance too
+        seen = [int(m.group(1)) for m in (ff._POPUP_DOM.search(x or "") for x in reasons) if m]
+        if texts and seen:
+            n = max(n, max(seen))
+        if 0 < n <= 6:
             allow["resting_popups"] = n
         # the allowance must accept the failing reasons — and never one of the rules that protect Jake
         for r in reasons:

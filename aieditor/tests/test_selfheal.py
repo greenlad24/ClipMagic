@@ -142,6 +142,21 @@ for bad in ["account Keith, not Jake (C4)", "greeting to Keith, not Jake (C4: on
 check(FF.allowed("2 popup/menu/suggestion list open (S3)", {"resting_popups": 1}) is None
       and FF.allowed("1 popup/menu/suggestion list open (S3)", {"resting_popups": 1}) == "resting_popups",
       "resting_popups counts")
+# re-run 16: ChatGPT's suggestion chips ROTATE per load — the group is accepted by its count, not 3 fixed texts
+from aieditor import drift as DR  # noqa: E402
+rs = ["popup / suggestion list on screen ('Prep me for my next') — S3", "4 popup/menu/suggestion list open (S3)"]
+pt = DR.to_patch({"verdict": "resting_ui", "resting_texts": ["Summarize recent Notion updates across my workspace."],
+                  "reasons": ["The 4 detected popups are one list container plus 3 suggestion chips."]}, rs)
+check(pt["verdict"] == "resting_ui" and pt["allow"].get("resting_popups") == 4 and "reasons" not in pt["allow"]
+      and any("matches none" in str(x) for x in pt["refused"]), f"count from the cluster, prose reasons refused: {pt}")
+facts = {"dom": {"popups": 4, "popup_texts": ["Prep me for my next meeting.", "Find emails I can unsubscribe from",
+                                              "Summarize recent Notion updates across my workspace."]}}
+check(FF.allowed(rs[0], pt["allow"], facts) == "resting_popups" and FF.allowed(rs[1], pt["allow"], facts) == "resting_popups",
+      "another chip text on the next load is accepted within the proven count")
+facts5 = {"dom": {"popups": 5, "popup_texts": []}}
+check(FF.allowed(rs[0], pt["allow"], facts5) is None, "one popup more than the resting group (an open menu) still fails")
+check(FF.allowed(rs[0], pt["allow"], {"dom": {"popups": 2, "popup_texts": ["Copy", "Share"]}}) is None,
+      "a menu with none of the group's texts still fails")
 
 
 class Page:
