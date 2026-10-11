@@ -910,8 +910,20 @@ async function act(a) {
         const exact = hits.filter((e) => lab(e) === want);
         // "exact": the WHOLE label or nothing — on a chat page there is no Chat/Work switch, and a containing
         // match for "Chat" was "New chat" (it navigated away from the chat)
-        const pool = exact.length ? exact : only ? [] : hits;
-        const el = pool.find((e) => !pool.some((o) => o !== e && e.contains(o)));
+        const pool0 = (exact.length ? exact : only ? [] : hits).filter((e, _, all) => !all.some((o) => o !== e && e.contains(o)));
+        // SEVERAL controls carry the label (re-run 16: "Markup" is the image viewer's toolbar button AND the reply
+        // chip it adds to the composer, which comes first in the page — the replay clicked the chip, Markup mode never
+        // opened, 2 proofs in 3 failed): the one the user can actually press wins — not covered by another layer, in
+        // the open overlay (dialog / menu / toolbar) before the page under it, an interactive control before plain text.
+        const score = (e) => {
+          const r = e.getBoundingClientRect(), top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          const covered = !(top && (top === e || e.contains(top) || top.contains(e)));
+          const layer = e.closest('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[role="toolbar"]');
+          const ctl = e.closest('button,a,[role="button"],[role="menuitem"],[role="tab"],[tabindex]');
+          return (covered ? 4 : 0) + (layer ? 0 : 2) + (ctl ? 0 : 1);
+        };
+        const pool = pool0.length > 1 ? pool0.map((e, i) => [score(e), i, e]).sort((x, y) => x[0] - y[0] || x[1] - y[1]).map((x) => x[2]) : pool0;
+        const el = pool[0];
         if (!el) return null;
         const r = el.getBoundingClientRect();
         return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 80), href: null, blank: false };
