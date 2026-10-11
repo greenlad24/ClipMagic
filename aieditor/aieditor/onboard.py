@@ -628,8 +628,9 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False):
             return row
         ctx.pb["actions"].pop(aid, None)
         row["attempts"][-1]["proposal"] = act             # what was proposed, for the log when it is not proven
-        ctx.log(f"onboarding '{need[:60]}': proposal not proven — {json.dumps({k: v for k, v in act.items() if k not in ('replays', 'intents')})[:600]}")
         feedback = "; ".join(str(x.get("why")) for x in pr["replays"] if not x["ok"])[:600]
+        ctx.log(f"onboarding '{need[:60]}': proposal not proven — WHY: {feedback[:400]} — PROPOSAL: "
+                f"{json.dumps({k: v for k, v in act.items() if k not in ('replays', 'intents', 'source')})[:1400]}")
     row["why"] = f"not proven after {len(row['attempts'])} round(s): {feedback}"
     return row
 
