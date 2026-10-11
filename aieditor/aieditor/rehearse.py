@@ -503,7 +503,9 @@ class SegmentAgent:
             return False, aid
         k = next((j for j, b in enumerate(todo) if b.get("id") == beat.get("id")), len(todo))
         later = [b for b in todo[k + 1:] if beat_role(b, self.pb) == "agent"]
-        return bool(later), aid
+        # a result the video does not have yet and that is NOT made live on camera: made for real now, off camera — a
+        # dry press left the reveal with nothing to show (run 22 screencast 7: needs_asset seg06-b038-result)
+        return bool(later) or not beat.get("live"), aid
 
     def perform(self, a, beat, todo):
         """One agent action: guard → stable target → (dry / real generation) → the browser. Logged in the trial log."""
