@@ -1173,4 +1173,8 @@ check(_r.session("chatgpt", "logged_in") is _s1, "a live browser is reused")
 _s1.up = False
 _s2 = _r.session("chatgpt", "logged_in")
 check(_s2 is not _s1 and len(_made) == 2 and any("fresh one" in x for x in _rl), "a dead browser is replaced by a fresh one")
+# run 21: a "render" re-run still records the screencasts not done yet — it carries the logged-in account
+from aieditor import cloud as _CL  # noqa: E402
+check(_CL.logged_in_job({"workflow": "creative"}, "render") and not _CL.logged_in_job({"workflow": "creative"}, "final"),
+      "render carries the login (it re-records); final does not")
 print(f"test_selfheal: {N} checks passed")

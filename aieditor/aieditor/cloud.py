@@ -1049,7 +1049,9 @@ _CAP = {}
 def logged_in_job(req, action):
     """Does this run record logged-in screencasts (Scout profiles, Cloudflare-bound to this box's IP)?"""
     req = req or {}
-    return (action in ("run", "edit") and bool(req.get("sites") or req.get("workflow") == "creative")
+    # "render" redoes the screencasts not recorded yet (graphics rerun, skip_done) — it needs the login too (run 21: a
+    # render without it turned all 35 screencasts into "no_scout_login" fallbacks at once)
+    return (action in ("run", "edit", "render") and bool(req.get("sites") or req.get("workflow") == "creative")
             and not req.get("handoff"))
 
 

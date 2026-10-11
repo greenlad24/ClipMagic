@@ -1223,7 +1223,7 @@ def main():
         if not cloud.enabled_for(action, req):
             return False
         # one job per logged-in account: a job whose Scout account is in use stays queued
-        if action in ("run", "edit") and (req.get("sites") or workflow_of(req) == "creative") and not handoff.wanted(req):
+        if action in ("run", "edit", "render") and (req.get("sites") or workflow_of(req) == "creative") and not handoff.wanted(req):
             try:
                 slugs = cloud.scout_slugs(req, d)
                 if any(accountlock.busy(slug) for slug in slugs):
