@@ -620,6 +620,10 @@ def onboard_action(ctx, need, params=None, generates=False, generating=False):
             # a drag whose points are DATA at use time (a located region): proven with a neutral centre box — the
             # proof checks that a box lands, the producer passes the real located points when it uses the action
             p.update(rel_from=[0.38, 0.42], rel_to=[0.62, 0.58])
+        if act.get("kind") == "draw" and not act.get("strokes") and not p.get("strokes"):
+            # strokes are data at use time (the doodle): the proof draws one short sample stroke (a box's worth) —
+            # it checks that ink lands (re-run 13: no strokes → "Undo never enabled" on every proof)
+            p["strokes"] = [[[410, 460], [512, 410], [614, 460], [563, 563], [461, 563], [410, 460]]]   # 1024-unit space
         if generating:
             ok, why = presence(ctx, aid, p)
             pr = {"proven": ok, "ok": int(ok), "n": 1, "replays": [{"ok": ok, "why": why, "mode": "presence (generating)"}]}

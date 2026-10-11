@@ -367,7 +367,11 @@ def resolve(app, action_id, params=None):
         else:
             st = [{"type": "drag", "from": _pt("from", "drag_from", "start"), "to": _pt("to", "drag_to", "end")}]
     elif k == "draw":
-        st = [{"type": "draw", "strokes": p.get("strokes", []), **({"box": p["box"]} if "box" in p else {})}]
+        # strokes are DATA at use time (the doodle's shapes) and rarely declared: raw params too (as the drag)
+        strokes = p.get("strokes") or raw.get("strokes") or a.get("strokes") or []
+        box = p.get("box") or raw.get("box") or a.get("box")
+        st = [{"type": "draw", "strokes": strokes, **({"box": box} if box else {}),
+               **({"selector": tgt["selector"]} if "selector" in tgt else {})}]
     elif k == "reveal":
         st = [{"type": "reveal", "asset": p.get("asset"), **({"url": p["url"]} if "url" in p else {})}]
     else:  # pragma: no cover - validate() refuses other kinds
