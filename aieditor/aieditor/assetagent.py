@@ -125,6 +125,7 @@ class AssetAgent(producer.Producer):
                 return res
             sel = self.spec.get("result_selector") or ""
             n0 = int(tr.send({"cmd": "count", "selector": sel}).get("n", 0) or 0) if sel else 0
+            res["n0"] = n0
             text0 = (tr.send({"cmd": "text"}) or {}).get("text", "")
             files = []
             for f in inputs or []:
@@ -182,7 +183,14 @@ class AssetAgent(producer.Producer):
                     last = {"counts": {x: (tr.send({"cmd": "count", "selector": x}) or {}).get("n")
                                        for x in list(ans.get("texts") or [])[:6]}}
                     continue
-                if do != "act":
+                if do not in ("act", "give_up"):
+                    # no usable answer (empty / unparsable JSON — run 18: "try 1 turn 2: None" ended the try as "gave up:
+                    # no reason") is never a give-up: the agent is told and asked again, the turn counts
+                    last = {"error": "your answer had no valid \"do\" — answer ONLY the JSON object with do = "
+                                     "act|observe|find|count|give_up"}
+                    stuck += 1
+                    continue
+                if do == "give_up":
                     res["diag"] = {"class": "ui_step_failed", "why": f"the agent gave up: {ans.get('note') or 'no reason'}"}
                     return res
                 acted = []
@@ -225,6 +233,27 @@ class AssetAgent(producer.Producer):
                 ctx.allowed_chats.add(url)
             tr.close()
 
+    def _wait_only(self, n, aid, typed, deadline, pending):
+        """The last try's generation was still running when its wait ended (run 18: Comment mode worked, ChatGPT took
+        more than 4 min, the next tries found the picture FINISHED and had nothing left to press): no agent — code
+        reopens that chat and collects the picture when it lands."""
+        ctx = self.ctx
+        tr = ctx.guarded(allow_generate=False)
+        res = {"file": None, "chat_url": pending["chat"], "diag": None, "generated": True,
+               "tool_pressed": pending.get("tool_pressed", False), "usd": 0.0, "turns": 0, "typed_ok": None}
+        try:
+            sess = producer._session(tr, ctx.pb)
+            ok, why = sess.open(pending["chat"])
+            if not ok:
+                res["diag"] = {"class": "ui_step_failed", "why": f"reopen the generating chat: {why}"}
+                return res
+            wd = Path(getattr(getattr(tr, "t", None), "workdir", None) or (Path(ctx.out) / "producer" / "w"))
+            sel = self.spec.get("result_selector") or ""
+            res.update(self._wait(tr, sel, pending.get("n0", 0), "", typed or "", deadline, wd, aid, n))
+            return res
+        finally:
+            tr.close()
+
     def _act(self, tr, guard, a, obs, typed, files, tool, tool_labels, res, aid, n):
         from . import onboard
         a = onboard.norm_points(dict(a))
@@ -243,7 +272,15 @@ class AssetAgent(producer.Producer):
         if why:
             return {"ok": False, "what": what, "why": why}
         wire = {k: v for k, v in a.items() if k in ("type", "ref", "target", "selector", "key", "by", "rel", "rel_from",
-                                                     "rel_to", "x", "y", "exact")}
+                                                     "rel_to", "x", "y", "exact", "from", "to")}
+        if ty == "drag" and not (isinstance(wire.get("from"), list) and isinstance(wire.get("to"), list)) \
+                and isinstance(a.get("rel_from"), list) and isinstance(a.get("rel_to"), list) and item and item.get("box"):
+            # run 18: every Markup box failed "drag needs from/to [x, y]" (20 drags, 4 tries) — the browser takes a drag
+            # as SCREENSHOT px points only: the element's box (CSS px) / f
+            f = float(obs.get("f") or 1.5)
+            bx, by, bw, bh = (float(v) for v in item["box"][:4])
+            wire["from"] = [round((bx + a["rel_from"][0] * bw) / f, 1), round((by + a["rel_from"][1] * bh) / f, 1)]
+            wire["to"] = [round((bx + a["rel_to"][0] * bw) / f, 1), round((by + a["rel_to"][1] * bh) / f, 1)]
         if ty == "type":
             wire.update(text=typed, paste=True, clear=True, enter=False)
         if ty == "upload":
@@ -314,6 +351,7 @@ class AssetAgent(producer.Producer):
         log, missing, feedback, usd = [], [], None, 0.0
         script_prompts = onboard.script_prompts(getattr(ctx, "script", "") or "")
         tally = getattr(ctx, "tally", None) or (0, 1)
+        pending = None
         for n in range(1, self.max_tries + 1):
             self._cancel()
             if self.clock() >= deadline:
@@ -324,10 +362,17 @@ class AssetAgent(producer.Producer):
                 self.make_prompt({"name": "asset agent"}, subject, style, inputs if not tool else [], missing)
             row["prompt"] = typed or None
             self._status(f"Making assets: {tally[0]}/{tally[1]} ready ({aid}: try {n}, the asset agent)")
-            res = self._try(n, aid, typed, inputs if not (tool and self.cur["source"].get("chat")) else [], tool, deadline,
-                            feedback, log, lambda: usd)
+            if pending:
+                self._log(f"{aid} try {n}: the last try's picture was still generating — waiting for it in that chat")
+                res = self._wait_only(n, aid, typed, deadline, pending)
+                pending = None
+            else:
+                res = self._try(n, aid, typed, inputs if not (tool and self.cur["source"].get("chat")) else [], tool,
+                                deadline, feedback, log, lambda: usd)
             usd += res["usd"]
             diag = res.get("diag")
+            if not res.get("file") and (diag or {}).get("class") == "still_generating" and res.get("chat_url"):
+                pending = {"chat": res["chat_url"], "n0": res.get("n0", 0), "tool_pressed": res.get("tool_pressed")}
             entry = {"try": n, "ok": False, "turns": res["turns"], "usd": round(res["usd"], 6), "generated": res["generated"],
                      "tool_pressed": res["tool_pressed"], "chat_url": res.get("chat_url")}
             if res.get("file"):

@@ -176,6 +176,45 @@ check(row2["status"] == "ready" and len(row2["tries"]) == 2 and row2["tries"][0]
       f"a collage is rejected, the next try is accepted: {row2['tries']}")
 check(any("REJECTED" in s and "collage" in s for s in m2.statics), "the verifier's reason reached the agent")
 
+# ── run 18: an empty / unusable answer is asked again, never a give-up ──
+m9 = Model([{"note": "hmm"}, act({"type": "type", "ref": "r1"}, {"type": "click", "ref": "r2"})])
+c9 = ctx_for("empty", m9, ok_check)
+row9 = c9.producer.produce("sauce9", "a jar of chili sauce", c9.out / "assets" / "sauce9.png", prompt=PROMPT, verbatim=True)
+check(row9["status"] == "ready" and m9.calls >= 2, f"an answer without 'do' is retried, not 'gave up': {row9.get('why')}")
+# ── run 18: a drag given as fractions of an element reaches the browser as screenshot points ──
+class _Tr:
+    def __init__(self):
+        self.sent = []
+    def send(self, m):
+        self.sent.append(m)
+        return {"ok": True}
+class _G:
+    def check(self, *a, **k):
+        return None
+c10 = ctx_for("drag", Model([]), ok_check)
+tr10 = _Tr()
+obs10 = {"f": 2.0, "items": [{"ref": "r48", "tag": "img", "text": "Generated image 1", "box": [100, 200, 400, 300]}]}
+out10 = c10.producer._act(tr10, _G(), {"type": "drag", "ref": "r48", "rel_from": [0.25, 0.5], "rel_to": [0.75, 1.0]},
+                          obs10, "", [], "markup", [], {"tool_pressed": False, "generated": False}, "x", 1)
+w10 = tr10.sent[-1]["action"]
+check(w10.get("from") == [100.0, 175.0] and w10.get("to") == [200.0, 250.0],
+      f"element fractions → screenshot points for the drag: {w10}")
+# ── run 18: the picture was still generating when the wait ended → the next try waits for it, no agent ──
+m11 = Model([act({"type": "type", "ref": "r1"}, {"type": "click", "ref": "r2"})])
+c11 = ctx_for("slow", m11, ok_check)
+_calls11 = []
+def _wait11(tr, sel, n0, text0, prompt, deadline, wd, aid, n):
+    _calls11.append(n)
+    if len(_calls11) == 1:
+        return {"diag": {"class": "still_generating", "why": "no finished image after 241 s"}}
+    f = Path(wd) / "slow.png"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"\x89PNG fake")
+    return {"file": str(f)}
+c11.producer._wait = _wait11
+row11 = c11.producer.produce("slow", "a jar of chili sauce", c11.out / "assets" / "slow.png", prompt=PROMPT, verbatim=True)
+check(row11["status"] == "ready" and _calls11 == [1, 2] and m11.calls == 1,
+      f"a slow generation is collected on the next try without the agent: {_calls11} calls={m11.calls} {row11.get('why')}")
 # ── 3. the cap → needs_asset ──
 m3 = Model([act({"type": "type", "ref": "r1"}, {"type": "click", "ref": "r2"})] * 10)
 c3 = ctx_for("cap", m3, lambda a, f, o: {"matches": False, "missing_objects": ["the jar"], "usd": 0.002})

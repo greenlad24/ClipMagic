@@ -511,7 +511,16 @@ class SegmentAgent:
         if why:
             return self._logstep(beat, a, ok=False, refused=why)
         step = {k: v for k, v in a.items() if k in ("type", "key", "by", "rel", "rel_from", "rel_to", "url", "selector",
-                                                     "target", "exact", "x", "y")}
+                                                     "target", "exact", "x", "y", "from", "to")}
+        if ty == "drag" and not (isinstance(step.get("from"), list) and isinstance(step.get("to"), list)) \
+                and isinstance(a.get("rel_from"), list) and isinstance(a.get("rel_to"), list) and item and item.get("box"):
+            # fractions of the element's box → SCREENSHOT px points the browser takes for every drag (run 18: the asset
+            # agent's Markup box arrived as rel_from/rel_to on a ref, the derived target dropped the box, and all 20
+            # drags failed "drag needs from/to [x, y]"). The box is CSS px; the agent's screenshot is CSS / f.
+            f = float(self.obs.get("f") or 1.5)
+            bx, by, bw, bh = (float(v) for v in item["box"][:4])
+            step["from"] = [round((bx + a["rel_from"][0] * bw) / f, 1), round((by + a["rel_from"][1] * bh) / f, 1)]
+            step["to"] = [round((bx + a["rel_to"][0] * bw) / f, 1), round((by + a["rel_to"][1] * bh) / f, 1)]
         how = None
         if a.get("ref") and ty in ("click", "type", "drag", "draw"):
             tgt, how = self.stable_target(item, ty)
@@ -818,8 +827,12 @@ class SegmentAgent:
                     self.reset_to(k, todo)
                     self.observe()
                     last = {"reset": f"back at the start of {b['id']}"}
-                else:
+                elif do == "give_up":
                     return self._out(False, f"the agent gave up at {b['id']}: {note or 'no reason'}")
+                else:
+                    # no usable answer (empty / unparsable JSON) is never a give-up — asked again, the turn counts
+                    last = {"error": "your answer had no valid \"do\" — answer ONLY the JSON object with do = "
+                                     "act|observe|find|count|beat_done|redo_beat|give_up"}
         return self._out(True, "")
 
     def _out(self, ok, why):
