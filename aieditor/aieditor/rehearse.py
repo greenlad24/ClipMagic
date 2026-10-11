@@ -1090,7 +1090,7 @@ def rehearse_segment(rec, i, seg, pb, sess, kind, *, feedback=None, prior=None, 
     k0 = next((k for k, b in enumerate(plan) if b.get("id") == from_beat), 0) if from_beat else 0
 
     def open_start():
-        R.open_clean(sess, pb, seg, B.start_state_for(seg, pb), rec.log, account=rec.account, pixels=rec.pixels, session=kind)
+        R.open_clean(sess, pb, seg, B.start_state_for(seg, pb, rec.assets), rec.log, account=rec.account, pixels=rec.pixels, session=kind)
 
     agent = SegmentAgent(sess, seg, pb, seg_idx=i, kind=kind, assets=rec.assets, call=rec.rehearse_call, budget=rec.rehearsal_budget,
                          log=rec.log, job=llm.context().get("job"), sleep=rec.sleep, open_start=open_start,

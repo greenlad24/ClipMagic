@@ -517,4 +517,15 @@ check(_g20.check({"type": "click", "ref": "r9"}, {"text": "Share", "tag": "butto
 _src_rh = (ROOT / "aieditor" / "rehearse.py").read_text()
 check('wire["ref"] = a["ref"]' in _src_rh and "len(hits) <= 1" in _src_rh,
       "live presses use the agent's ref; a label is a stable target only when unique")
+# run 20: a screencast that continues on a picture the video already made OPENS on that picture's job chat
+_as = {"assets": [{"id": "pic", "status": "ready", "source": {"chat_url": "https://chatgpt.com/c/job-pic"}}]}
+_pbs = {"start_state": {"url": "https://chatgpt.com/", "asserts": []}, "set_dressing": ["new_chat", "chat_mode", "hide_sidebar"]}
+_seg_pic = {"app": "chatgpt", "session": "logged_in", "beats": [
+    {"t_word": 1.0, "action": "camera.zoom", "asset_id": "pic"}, {"t_word": 2.0, "action": "open_image_viewer", "asset_id": "pic"}]}
+_ss = B.start_state_for(_seg_pic, _pbs, _as)
+check(_ss["url"] == "https://chatgpt.com/c/job-pic" and "new_chat" not in _ss["set_dressing"]
+      and "hide_sidebar" in _ss["set_dressing"], f"a picture's segment opens on its job chat, never 'new chat': {_ss}")
+_seg_type = {"app": "chatgpt", "session": "logged_in", "beats": [
+    {"t_word": 1.0, "action": "paste_prompt", "params": {"text": "a bottle"}}, {"t_word": 2.0, "action": "x", "asset_id": "pic"}]}
+check(B.start_state_for(_seg_type, _pbs, _as)["url"] == "https://chatgpt.com/", "a segment that types first starts on home")
 print(f"test_rehearse: {N} checks passed")

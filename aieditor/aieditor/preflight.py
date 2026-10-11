@@ -392,7 +392,7 @@ class RecordingPreflight:
         from . import beatscript as B, recorder as R
         kind = seg.get("session") or "logged_in"
         sess = self.session(seg.get("app"), kind)
-        ss = B.start_state_for(seg, pb)
+        ss = B.start_state_for(seg, pb, self.assets)
         try:
             st = R.open_clean(sess, pb, seg, ss, lambda *a: None, tries=1, account=self.account, pixels=self.pixels,
                               session=kind, accept_resting=False)

@@ -531,14 +531,37 @@ def _expected_end(pb, aid, params, beat):
     return out
 
 
-def start_state_for(seg, pb):
+def asset_chat_start(seg, assets):
+    """The job chat a logged-in segment must OPEN on when its first content beat acts on a picture the video already
+    made (run 20: screencasts 2, 4, 5 continued work on the bottle photo but opened on the empty ChatGPT home — the agent
+    rightly never opens a chat by itself, gave up, and they fell back). A segment that types a prompt before it touches a
+    picture starts on the home page as before. Only a chat THIS job created (the picture's own chat_url)."""
+    if _session_kind(seg) == "outside" or seg.get("url") or not assets:
+        return None
+    rows = {a.get("id"): a for a in (assets.get("assets") or []) if isinstance(a, dict)}
+    for b in sorted([x for x in seg.get("beats") or [] if x.get("t_word") is not None], key=lambda x: x["t_word"]):
+        if b.get("typed_text") or (b.get("params") or {}).get("text") or b.get("text"):
+            return None
+        row = rows.get(b.get("asset_id"))
+        if row and row.get("status") == "ready":
+            url = (row.get("source") or {}).get("chat_url") or row.get("chat_url")
+            if url and "/c/" in str(url):
+                return url
+    return None
+
+
+def start_state_for(seg, pb, assets=None):
     """The start state a segment's recording opens on (url, the playbook's asserts, set dressing, the proven resting-UI
     allowances + dismiss steps). The outside view (never logged in, RULEBOOK L4) has no account / app theme / set
     dressing to prove, and its logged-out header (Log in / Sign up) is the view, never a wall."""
     outside = _session_kind(seg) == "outside"
-    start_state = {"url": seg.get("url") or (pb.get("start_state") or {}).get("url"),
+    chat = asset_chat_start(seg, assets)
+    start_state = {"url": seg.get("url") or chat or (pb.get("start_state") or {}).get("url"),
                    "asserts": [] if outside else list((pb.get("start_state") or {}).get("asserts") or []),
                    "set_dressing": [] if outside else list(pb.get("set_dressing") or []), "fingerprint": None}
+    if chat and not seg.get("url"):
+        # opened ON the picture's chat: the set dressing must not leave it ('new chat') — a chat page is Chat mode
+        start_state["set_dressing"] = [x for x in start_state["set_dressing"] if x not in ("new_chat", "chat_mode")]
     src = (pb.get("outside_view") or {}) if outside else (pb.get("start_state") or {})
     allow = copy.deepcopy(src.get("allow") or {})
     if outside:
@@ -598,7 +621,7 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     steps, out_beats = [], []
     prev_typed, used_live, last_target = None, 0, None
     # the start state + the app's proven resting UI / dismiss steps (self-healing data in THIS video's playbook)
-    start_state = start_state_for(seg, pb)
+    start_state = start_state_for(seg, pb, assets)
     gen_results = []          # (press beat, typed, word_t) awaiting their reveal
 
     def doodle_for(b):
