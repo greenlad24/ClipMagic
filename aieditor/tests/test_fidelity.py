@@ -564,7 +564,13 @@ def test_onscreen_prompt_verbatim():
                              "glass squat hot sauce bottle on a weathered wooden picnic table warm late afternoon light")
     assert got and "weathered wooden picnic table" in got and "Striking" not in got, got
     assert ob.onscreen_prompt(c, "a casual phone photo of a bottle on a desk", "Nothing fancy", "a bottle on a desk") is None
-    print("  on-screen prompt found and kept verbatim; unrelated step gets none")
+    # re-run 17: a SHORT quote (skipped by the old length-limited regex) turned its closing mark into an opening one,
+    # and the narration between two quotes became "his prompt" (typed for the logo)
+    s2 = ('Like: "Retouch the skin"\nAlright, this next one is all about the wording.\nSO: \n"create a shallow depth of '
+          'field effect. \nSharp subject, soft background"\nDo not ask for a blurred background.')
+    ps2 = ob.script_prompts(s2)
+    assert ps2 == ["create a shallow depth of field effect. Sharp subject, soft background"], ps2
+    print("  on-screen prompt found and kept verbatim; unrelated step gets none; quotes paired in order")
 
 
 if __name__ == "__main__" and "test_onscreen_prompt_verbatim" not in globals().get("_RAN", ()):

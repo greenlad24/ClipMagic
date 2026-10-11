@@ -1554,11 +1554,21 @@ _PROMPT_RX = re.compile(r"THE\s+PROMPT\s*:?\s*[\"“]([^\"”]{8,600})[\"”]|[\
 def script_prompts(script):
     """Every prompt the script has him READ ON SCREEN ("THE PROMPT: '…'", or a quoted request of 5+ words), whitespace
     normalised, in script order. Generic: any app, any video whose script quotes what is typed."""
-    out = []
-    for m in _PROMPT_RX.finditer(str(script or "")):
-        t = " ".join((m.group(1) or m.group(2) or "").split()).strip(" —-")
-        if len(t.split()) >= 5 and t not in out:
+    # quotes are PAIRED IN ORDER, short ones included (re-run 17: the short `Like: "Retouch the skin"` was skipped by a
+    # length-limited regex, its closing mark became an opening one, and the NARRATION between two quotes — "Alright,
+    # this next one is all about the wording. SO:" — was typed as the logo's prompt). Then the 5+ word ones are kept.
+    out, text = [], str(script or "")
+    marks = [(m.start(), m.group(0)) for m in re.finditer(r"[\"“”]", text)]
+    i = 0
+    while i + 1 < len(marks):
+        (a, qa), (b, qb) = marks[i], marks[i + 1]
+        if qa == "”" or (qa == "\"" and qb == "“"):    # a stray closing mark: never the start of a quote
+            i += 1
+            continue
+        t = " ".join(text[a + 1:b].split()).strip(" —-")
+        if len(t.split()) >= 5 and len(t) <= 600 and t not in out:
             out.append(t)
+        i += 2
     return out
 
 
