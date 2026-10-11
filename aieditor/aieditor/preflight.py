@@ -299,6 +299,7 @@ class RecordingPreflight:
         self.doodles = doodles or []
         self.sessions = {}
         self.only = None                       # the screencast indexes to rehearse (None = all)
+        self.min_systematic = 2                # a cluster on this many screencasts goes to the repair agent (canary: 1)
 
     def session(self, app, kind, fresh=False):
         key = (app, kind)
@@ -381,7 +382,7 @@ class RecordingPreflight:
         clusters = cluster(self._fails(results))
         repairs = []
         for cl in clusters:
-            if not cl["systematic"] or cl["cls"] != "A" or self.repairer is None:
+            if len(cl["segments"]) < self.min_systematic or cl["cls"] != "A" or self.repairer is None:
                 continue
             rep = self.repair(cl, results)
             repairs.append(rep)

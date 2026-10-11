@@ -1,0 +1,7 @@
+[Unit]
+Description=Auto Editor weekly canary — queue one canary job per app (the worker runs it on a factory server)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/clipmagic/aieditor/bin/aieditor-canary enqueue chatgpt

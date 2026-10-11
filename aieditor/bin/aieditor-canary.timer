@@ -1,0 +1,11 @@
+# Shipped DISABLED (Jake enables it): see /opt/clipmagic/aieditor/docs/SELF-HEALING.md
+[Unit]
+Description=Auto Editor weekly canary (Mondays 02:00 UTC = 09:00 Bangkok)
+
+[Timer]
+OnCalendar=Mon *-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

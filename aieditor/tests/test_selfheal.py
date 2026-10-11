@@ -969,6 +969,85 @@ check(bad and bad["class"] == "ui_step_failed" and "requires paste_prompt" in ba
       f"'param text is required' in a requires → a failed step: {bad}")
 
 
+# ── 10. THE WEEKLY CANARY: one example of each class, a report, the ledger refreshed — offline with fakes ──
+pins("canary")
+from aieditor import canary, genledger  # noqa: E402
+jobs_c = TMP / "cjobs"
+dq = canary.enqueue("chatgpt", jobs=jobs_c, now=1_800_000_000)
+rq = json.loads((dq / "request.json").read_text())
+check(rq["canary"] and rq["sites"][0]["url"] == "https://chatgpt.com/" and json.loads((dq / "queue.json").read_text())
+      == {"action": "edit"} and dq.name.startswith("canary-chatgpt-"), "enqueue: a factory job the worker sends out")
+src_w = (ROOT / "bin" / "aieditor-worker").read_text()
+check('if job.req.get("canary"):' in src_w and "canary.run(job.d" in src_w, "the worker runs the canary instead of an edit")
+check("OnCalendar=" in (ROOT / "bin" / "aieditor-canary.timer").read_text()
+      and not Path("/etc/systemd/system/aieditor-canary.timer").exists(), "the timer is shipped, not installed (disabled)")
+(TMP / "proven.jsonl").write_text(json.dumps({"ts": __import__("time").time() - 3600, "app": "chatgpt", "need": "drag a markup box",
+                                              "key": "drag a markup box", "aid": "ob_box2",
+                                              "action": {"kind": "click", "label": "x", "selectors": ["#x"], "proven": True,
+                                                         "source": "t", "requires": [], "pre": [], "post": []}}) + "\n")
+
+
+class CCtx:
+    def __init__(self):
+        self.pb = copy.deepcopy(PBX)
+        self.producer, self.image_chat, self.app, self.out = None, None, "chatgpt", TMP / "cjobs"
+        self.logs = []
+
+    def log(self, m):
+        self.logs.append(m)
+
+
+made_c = []
+
+
+def fake_produce(ctx, aid, desc, made_from=(), **k):
+    genledger.record("chatgpt", ctx_job, aid, 1, "fake")
+    made_c.append(aid)
+    return {"id": aid, "status": "ready", "desc": desc, "made_from": list(made_from), "file": str(TMP / "res.png"),
+            "source": {"prompt": "Create an image: a bottle", "route": "Create image mode", "via": "learned",
+                       "chat_url": "https://chatgpt.com/c/canary-1", **({"tool": "remove_bg", "via": "tool",
+                                                                          "recipe": "produce_edit:remove_bg"} if "cutout" in aid else {})}}
+
+
+dc = canary.enqueue("chatgpt", jobs=jobs_c, now=1_800_000_600)
+ctx_job = dc.name
+_pa, _pv = onboard.produce_asset, onboard.prove
+onboard.produce_asset = fake_produce
+onboard.prove = lambda ctx, aid, params=None, n=None: {"proven": True, "ok": 1, "n": 1, "replays": [{"ok": True}]}
+
+
+class FakeRecorder:
+    def record_segment(self, i, seg):
+        return {"status": "ok", "why": ""}
+
+
+try:
+    rep_c = canary.run(dc, json.loads((dc / "request.json").read_text()), log=lambda *a: None,
+                       ctx_factory=lambda *a: CCtx(), session_factory=lambda app, kind, fresh: DriftPage(),
+                       recorder_factory=lambda *a: FakeRecorder())
+finally:
+    onboard.produce_asset, onboard.prove = _pa, _pv
+check(made_c == ["canary_photo", "canary_edit", "canary_cutout"] and rep_c["generations"] == 3,
+      f"B: Create image, an edit with an upload, Remove BG — 3 generations: {made_c} {rep_c['generations']}")
+check(rep_c["classes"]["A"] == "ok" and rep_c["classes"]["B"] == "ok" and rep_c["classes"]["C"] == "ok"
+      and rep_c["classes"]["D"] == "ok", f"one example of each class: {rep_c['classes']} {rep_c['checks']}")
+check(any(c["check"].startswith("start state: logged-out pricing") and c["skipped"] for c in rep_c["checks"]),
+      "pricing only via the US route — skipped (never through Singapore) when the job has none")
+check(any("one 5-second screencast" == c["check"] and c["ok"] for c in rep_c["checks"]), "one 5-second screencast")
+ledger = [json.loads(x) for x in (TMP / "proven.jsonl").read_text().splitlines()]
+check(len(ledger) == 2 and ledger[-1]["aid"] == "ob_box2", "the 7-day ledger is refreshed by the replay")
+check(json.loads((dc / "canary-report.json").read_text())["summary"].startswith("Canary chatgpt: A ✓ B ✓ C ✓ D ✓"),
+      f"the report's status line: {rep_c['summary']}")
+check(os.environ.get("AIEDITOR_API_JOB_CAP_USD") is None, "the canary's own $1.50 cap is process-local and restored")
+# the cap headroom stops the canary before anything starts
+de = canary.enqueue("chatgpt", jobs=jobs_c, now=1_800_001_200)
+apiledger.record({"ts": __import__("time").time(), "job": de.name, "usd": 1.45, "model": "x"})
+rep_e = canary.run(de, json.loads((de / "request.json").read_text()), log=lambda *a: None, ctx_factory=lambda *a: CCtx())
+check(rep_e["classes"]["D"] == "fail" and rep_e["classes"]["B"] == "not run", f"no headroom → nothing runs: {rep_e['classes']}")
+src_lab = (ROOT.parent / "lab" / "server" / "src" / "aieditor" / "factory.ts").read_text()
+check("canary-report.json" in src_lab and "Weekly canary" in (ROOT.parent / "lab" / "src" / "components" / "autoeditor"
+                                                               / "FactoryPanel.tsx").read_text(), "the Lab shows the canary line")
+
 # ── 9. THE COVERAGE TABLE: every past failure has a class, a detector, a repair and a REAL test ──
 for row in preflight.COVERAGE:
     check(row["cls"] in preflight.CLASSES and row["detector"] and row["repair"], f"coverage row complete: {row['id']}")

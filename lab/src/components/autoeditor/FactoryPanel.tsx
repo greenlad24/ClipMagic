@@ -37,6 +37,7 @@ export interface FactoryState {
   history: FactoryRun[];
   month: { serverUsd: number; liveUsd: number; runs: number; minutes: number; volumeUsd: number; budgetUsd: number };
   worker: { alive: boolean; seenAt: number | null; factoryJobs: number | null };
+  canary?: { job: string; summary: string; ok: boolean; finished: string | null } | null;
 }
 
 async function rest<T>(url: string, body?: unknown): Promise<T> {
@@ -317,6 +318,19 @@ export function FactoryPanel() {
               </div>
             </div>
           </div>
+
+          {/* ── the weekly canary (aieditor/canary.py) ── */}
+          <p className="text-[11px] text-muted-foreground">
+            Weekly canary:{' '}
+            {data.canary ? (
+              <span className={data.canary.ok ? 'text-foreground' : 'text-amber-500'}>
+                {data.canary.summary}
+                {data.canary.finished && ` · ${data.canary.finished.slice(0, 10)}`}
+              </span>
+            ) : (
+              'no run yet'
+            )}
+          </p>
 
           {/* ── live servers ── */}
           <div className="space-y-1.5">

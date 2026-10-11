@@ -1045,6 +1045,20 @@ def execute(job, action):
     longedit.clear_held(job.d, apiledger.BudgetExceeded.reason)   # a new run gets a new chance at the cap
     job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
     try:
+        if job.req.get("canary"):
+            # the WEEKLY CANARY (aieditor/canary.py): one example of each failure class on the live app, a report —
+            # never an edit; its status line is the report's summary (the Lab's Video factory panel shows it too)
+            from aieditor import canary
+            job.st["stages"] = {"canary": {"state": "running", "started_at": now()}}
+            job.cur = "canary"
+            rep = canary.run(job.d, job.req, log=job.log, progress=lambda m=None, f=None: job.progress(m, f),
+                             cancelled=job.cancelled)
+            job.st["stages"]["canary"].update(state="done", finished_at=now(), note=rep.get("summary"))
+            job.cur = None
+            job.save(state="done", held=False, message=rep.get("summary"), progress=1, finished_at=now(),
+                     cost_usd=rep.get("claude_usd", 0.0))
+            events.emit("stage", rep.get("summary", "canary done"), stage="job", level="info" if rep.get("ok") else "warn")
+            return
         try:
             run_job(job, action)
         except apiledger.BudgetExceeded as exc:

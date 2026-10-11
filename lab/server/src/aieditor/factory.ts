@@ -223,6 +223,21 @@ export async function getFactory(deps: FactoryDeps = {}) {
   }
   const hb = await readJson<any>(path.join(r, "worker-heartbeat.json"));
 
+  // ── the weekly canary (aieditor/canary.py): the newest report's one-line summary ──
+  let canary: { job: string; summary: string; ok: boolean; finished: string | null } | null = null;
+  try {
+    const names = (await fsp.readdir(path.join(r, "jobs"))).filter((n) => /^canary-[a-z0-9]+-\d{8}-\d{4}$/.test(n)).sort();
+    for (const n of names.reverse()) {
+      const rep = await readJson<any>(path.join(r, "jobs", n, "canary-report.json"));
+      if (rep?.summary) {
+        canary = { job: n, summary: String(rep.summary), ok: !!rep.ok, finished: rep.finished ? String(rep.finished) : null };
+        break;
+      }
+    }
+  } catch {
+    canary = null;
+  }
+
   const { snapshot_manifest: _m, vpc_uuid: _v, vpc_range: _vr, ...settings } = cfg;
   return {
     settings: {
@@ -259,6 +274,7 @@ export async function getFactory(deps: FactoryDeps = {}) {
       volumeUsd: VOLUME_USD_MONTH,
       budgetUsd: BUDGET_USD_MONTH,
     },
+    canary,
     worker: {
       alive: !!hb?.at && now - Number(hb.at) < 30,
       seenAt: Number(hb?.at) || null,

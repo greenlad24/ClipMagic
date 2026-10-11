@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""aieditor-canary — the weekly canary per app (aieditor/canary.py, docs/SELF-HEALING.md).
+
+  aieditor-canary enqueue [app]   queue a canary job (default chatgpt): the worker sends it to a factory server
+  aieditor-canary status [app]    the newest canary report's summary (what the Lab's Video factory panel shows)
+
+The systemd timer (bin/aieditor-canary.timer) is shipped DISABLED — see docs/SELF-HEALING.md to enable it.
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from aieditor import canary, config  # noqa: E402
+
+
+def newest(app):
+    best = None
+    for d in sorted(config.JOBS.glob(f"canary-{app}-*")):
+        if (d / "canary-report.json").exists():
+            best = d
+    return best
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    app = argv[2] if len(argv) > 2 else "chatgpt"
+    if app not in canary.APPS:
+        print(f"unknown app {app!r} (known: {', '.join(canary.APPS)})")
+        return 2
+    if cmd == "enqueue":
+        d = canary.enqueue(app)
+        print(f"queued {d.name}")
+        return 0
+    if cmd == "status":
+        d = newest(app)
+        if not d:
+            print(f"no canary report for {app} yet")
+            return 1
+        rep = json.loads((d / "canary-report.json").read_text())
+        print(f"{d.name}: {rep.get('summary')}")
+        return 0 if rep.get("ok") else 1
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
