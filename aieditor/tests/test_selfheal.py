@@ -812,7 +812,7 @@ FF_vp = R.first_frame_check(type("VP", (), {"send": lambda self, m: {**Page().se
                             "workdir": None})(), {"asserts": []}, "Jake", pixels=False)
 check(not FF_vp[0] and any("viewport" in w for w in FF_vp[1]), "a cropped frame is never a clean first frame")
 src_ar = (ROOT / "screencast" / "agent_rec.mjs").read_text()
-check("async function ensureViewport()" in src_ar and "width: w, height: h, scale: scale * CSS_W / w" in src_ar,
+check("async function ensureViewport()" in src_ar and "width: w, height: h, scale: scale * CSS_W / w / SCALE" in src_ar,
       "agent_rec proves the viewport and clips the whole of it")
 if os.environ.get("AIEDITOR_SKIP_DOCKER") != "1":
     import subprocess  # noqa: E402

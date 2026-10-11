@@ -81,8 +81,9 @@ await dress(page, ID);
 const DARK = process.env.AGENT_DARK === "1";
 const darken = (pg) => DARK ? pg.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]).catch(() => {}) : null;
 await darken(page);
-await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
+// ⚠️ 2026-10-11 (re-run 17): the device metrics live on BOTH CDP sessions — see setVp() below
 let cdp = await page.createCDPSession();
+await setVp(page, cdp);
 // a link that opens a new tab: follow it in THIS tab (the recording is one tab)
 browser.on("targetcreated", async (tg) => {
   if (tg.type() !== "page") return;
@@ -92,13 +93,30 @@ browser.on("targetcreated", async (tg) => {
 let rec = null;            // {ff, frame, events, cursor, dir}
 // LIVE VIEW (Jake 2026-10-10: "have also vision on the browser it uses"): off camera only (never while recording or on
 // virtual time), a small JPEG of the page every 4 s at <workdir>/live.jpg (atomic rename) so an operator can watch
-let liveBusy = false;
+// ⚠️ 2026-10-11 (re-run 17): live.jpg showed the page TILED 2×2 and the observation frames only its TOP-LEFT
+// quarter. Measured locally (aieditor-screencast:0.2, a static page): Chrome takes a Page.captureScreenshot by
+// re-applying the CAPTURING session's device-metrics emulation, plus the clip's scale, and restores THAT session's
+// metrics afterwards. puppeteer's page.setViewport set the metrics on puppeteer's own session only; every shot here
+// went through `cdp`, a second session with NO metrics — so each clipped shot reset the page to the window's own
+// metrics (devicePixelRatio 1 after the very first observe; the layout viewport read 77×43, 1280×720 or 2560×1440,
+// i.e. a capture's size — the "viewport had drifted" log lines) and the 4 s live shot (puppeteer's session) put
+// 1536×864 @1.667 back. When the two overlapped, one capture ran on the other's half-applied metrics: the page laid
+// out 2560 CSS px wide, the clip took its top-left 1536×864 (the cropped obs), the live shot read a half-size surface
+// (tiled). The fix: the SAME metrics on both sessions (setVp), the live view shot through `cdp` like every other shot,
+// and never two captures at once (shoot() / capN — the live shot waits for a gap between shots, a shot waits for the live one).
+let liveBusy = false, liveWait = false, capN = 0;
 if (process.env.AGENT_LIVE_SHOT !== "0") setInterval(async () => {
-  if (liveBusy || rec || vtOn || crashed) return;
-  liveBusy = true;
+  if (liveBusy || liveWait || rec || vtOn || crashed) return;
+  // waits for a gap between shots (skipping instead starved the live view while the agent observed back to back)
+  liveWait = true;
+  for (let i = 0; capN > 0 && i < 400; i++) await sleep(25);
+  liveWait = false;
+  if (capN > 0 || rec || vtOn || crashed) return;
+  liveBusy = true;                                                // set in the same tick as the capN check: no shot starts now
   try {
     const tmp = path.join(workdir, ".live.tmp.jpg");
-    await page.screenshot({ path: tmp, type: "jpeg", quality: 55, captureBeyondViewport: false });
+    const s = await withTimeout(cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 55 }), 15000);
+    fs.writeFileSync(tmp, Buffer.from(s.data, "base64"));
     fs.renameSync(tmp, path.join(workdir, "live.jpg"));
   } catch {} finally { liveBusy = false; }
 }, 4000).unref();
@@ -133,8 +151,9 @@ async function recover() {
   try { await page.close().catch(() => {}); } catch {}
   page = await browser.newPage();
   await dress(page, ID);
-  await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
   cdp = await page.createCDPSession();
+  await setVp(page, cdp);
+  capN = 0;                       // a shot that hung on the dead page never ends: it no longer holds the live view
   hbScript = null;
   if (rec) await heartbeat(true);
   watch(page);
@@ -151,6 +170,20 @@ async function recover() {
 // out), so a CSS_W×CSS_H clip cropped it. Every shot first PROVES the viewport (ensureViewport re-applies it when it
 // drifted), and the clip always covers the WHOLE layout viewport, downscaled — never cropped.
 let vpFixes = 0;
+// the recording viewport on puppeteer's session AND on the session that takes the shots (re-run 17, above the live view)
+async function setVp(pg, session) {
+  await pg.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE }).catch(() => {});
+  await session.send("Emulation.setDeviceMetricsOverride", { width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE, mobile: false })
+    .catch(() => {});
+}
+// every shot: one at a time, never across the live view's; `vs` = take the clip from vclip(vs) inside the turn
+async function shoot(params, vs = null) {
+  capN += 1;
+  try {
+    for (let i = 0; liveBusy && i < 400; i++) await sleep(25);       // the live shot (≤ 10 s)
+    return await cdp.send("Page.captureScreenshot", vs == null ? params : { ...params, clip: await vclip(vs) });
+  } finally { capN = Math.max(0, capN - 1); }
+}
 async function viewportNow(withDpr = false) {
   try {
     const m = await cdp.send("Page.getLayoutMetrics");
@@ -160,24 +193,31 @@ async function viewportNow(withDpr = false) {
   } catch { return { w: null, h: null, x: 0, y: 0, zoom: 1, dpr: null }; }
 }
 async function ensureViewport() {
-  let vp = await viewportNow(true);
-  // (window.devicePixelRatio is NOT compared: the Mac identity reports its own — macchrome.mjs)
-  const off = (vp.w && Math.abs(vp.w - CSS_W) > 2) || (vp.h && Math.abs(vp.h - CSS_H) > 2);
-  if (off) {
-    vpFixes += 1;
-    process.stderr.write(`viewport drifted (${vp.w}x${vp.h} @${vp.dpr}) — restored to ${CSS_W}x${CSS_H} @${SCALE.toFixed(3)}\n`);
-    await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE }).catch(() => {});
-    await sleep(300);
-    vp = await viewportNow(true);
-  }
-  return { ...vp, fixed: off, fixes: vpFixes, want: [CSS_W, CSS_H, +SCALE.toFixed(4)] };
+  capN += 1;                                                      // no live shot while it is measured
+  try {
+    for (let i = 0; liveBusy && i < 400; i++) await sleep(25);
+    let vp = await viewportNow(true);
+    // ⚠️ 2026-10-11 (re-run 17): window.devicePixelRatio IS compared now — nothing overrides it (macchrome.mjs sets
+    // none); it read 1 because the shots' session reset the metrics (setVp)
+    const off = (vp.w && Math.abs(vp.w - CSS_W) > 2) || (vp.h && Math.abs(vp.h - CSS_H) > 2) || (vp.dpr && Math.abs(vp.dpr - SCALE) > 0.01);
+    if (off) {
+      vpFixes += 1;
+      process.stderr.write(`viewport drifted (${vp.w}x${vp.h} @${vp.dpr}) — restored to ${CSS_W}x${CSS_H} @${SCALE.toFixed(3)}\n`);
+      await setVp(page, cdp);
+      await sleep(300);
+      vp = await viewportNow(true);
+    }
+    return { ...vp, fixed: off, fixes: vpFixes, want: [CSS_W, CSS_H, +SCALE.toFixed(4)] };
+  } finally { capN = Math.max(0, capN - 1); }
 }
 async function vclip(scale) {
   const vp = await viewportNow();
   const w = vp.w || CSS_W, h = vp.h || CSS_H;
   // the whole layout viewport, scaled so the output keeps the size the caller expects (CSS_W × scale) — downscaled,
-  // never cropped, when the page is laid out wider than CSS_W
-  return { x: vp.x, y: vp.y, width: w, height: h, scale: scale * CSS_W / w };
+  // never cropped, when the page is laid out wider than CSS_W.
+  // ⚠️ 2026-10-11 (re-run 17): clip.scale multiplies the capturing session's deviceScaleFactor — now that `cdp` holds
+  // the recording metrics (SCALE, setVp) it is divided out, or a 1280-wide observation came out 2133 wide
+  return { x: vp.x, y: vp.y, width: w, height: h, scale: scale * CSS_W / w / SCALE };
 }
 // ⚠️ 2026-10-08: under paused virtual time Chrome paints only when something changes — on a STATIC page the
 // 2nd captureScreenshot never returned (the recorder hung for good: the old 30 s guard covered only the
@@ -195,15 +235,14 @@ function withTimeout(p, ms) {
   let tm; return Promise.race([p, new Promise((_, rej) => { tm = setTimeout(() => rej(new Error("timeout")), ms); })]).finally(() => clearTimeout(tm));
 }
 async function frameShot() {
-  const opts = async (extra = {}) => ({ format: "jpeg", quality: 92, clip: await vclip(SCALE), ...extra });
-  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch (e) {
+  try { return await withTimeout(shoot({ format: "jpeg", quality: 92 }, SCALE), 15000); } catch (e) {
     process.stderr.write(`frame capture stalled (${e?.message}) — heartbeat + one more frame\n`);
   }
   await cdp.send("Runtime.evaluate", { expression: HB_ON }).catch(() => {});
   await withTimeout(new Promise(async (res) => { cdp.once("Emulation.virtualTimeBudgetExpired", res);
     await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 1 }).catch(res); }), 10000).catch(() => {});
-  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch {}
-  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts({ fromSurface: false })), 15000); } catch {}
+  try { return await withTimeout(shoot({ format: "jpeg", quality: 92 }, SCALE), 15000); } catch {}
+  try { return await withTimeout(shoot({ format: "jpeg", quality: 92, fromSurface: false }, SCALE), 15000); } catch {}
   crashed = true;
   throw new Error("the page stopped painting — it was reopened; observe again");
 }
@@ -272,12 +311,12 @@ function pngGray(buf) {
   return { w, h, g };
 }
 async function tiny() {
-  const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
+  const s = await shoot({ format: "png" }, 0.05);
   return pngGray(Buffer.from(s.data, "base64")).g;
 }
 // 64-bit dHash of the screen (p7: a beat's expected end-state fingerprint; = beatscript.dhash on the same grid)
 async function fingerprint() {
-  const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
+  const s = await shoot({ format: "png" }, 0.05);
   const { w, h, g } = pngGray(Buffer.from(s.data, "base64"));
   let bits = 0n;
   for (let r = 0; r < 8; r++) {
@@ -377,7 +416,7 @@ async function measureDesigns0() {
   const cells = await canvasCells();
   if (!cells) return null;
   const sc = (FIT_GX * 4) / CSS_W;                               // 4×4 px per cell
-  const shot = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(sc) });
+  const shot = await shoot({ format: "png" }, sc);
   const { w, h, g } = pngGray(Buffer.from(shot.data, "base64"));
   // the canvas's own colour = the most common grey on canvas cells
   const hist = new Uint32Array(64);
@@ -658,7 +697,7 @@ async function observe() {
   // after every observation and marked a healthy page as crashed (2026-10-06)
   let timer;
   const s = await Promise.race([
-    cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip: await vclip(1 / SHOT_F) }),
+    shoot({ format: "jpeg", quality: 70 }, 1 / SHOT_F),
     new Promise((_, rej) => { timer = setTimeout(() => { crashed = true; rej(new Error("screenshot timed out — the page was reopened; observe again")); }, 180000); }),
   ]).finally(() => clearTimeout(timer));
   fs.writeFileSync(shot, Buffer.from(s.data, "base64"));
@@ -757,7 +796,7 @@ async function centreOnCanvas(b, late = false, force = false) {
 }
 async function grey10() {
   try {
-    const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.1) });
+    const s = await shoot({ format: "png" }, 0.1);
     return pngGray(Buffer.from(s.data, "base64"));
   } catch { return null; }
 }
@@ -1383,8 +1422,8 @@ async function realClock() {
     if (origin && ss !== "{}") await p.evaluateOnNewDocument((o, j) => {
       try { if (location.origin === o && !sessionStorage.getItem("__amss")) { for (const [k, v] of Object.entries(JSON.parse(j))) sessionStorage.setItem(k, v); sessionStorage.setItem("__amss", "1"); } } catch {}
     }, origin, ss).catch(() => {});
-    await p.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
     const c = await p.createCDPSession();
+    await setVp(p, c);
     page = p; cdp = c; hbScript = null; vtOn = false;
     watch(page);
     if (url && /^https?:/.test(url)) await load(url, 3);
@@ -1435,7 +1474,7 @@ for await (const line of rl) {
     else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, text: (document.body?.innerText || "").slice(0, 20000), uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
     else if (m.cmd === "segment") { await startSegment(m.out, m.t0 ?? 0); out({ ok: true, t0: m.t0 ?? 0 }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });
-    else if (m.cmd === "shot") { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 80, clip: await vclip(1 / SHOT_F) }); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }
+    else if (m.cmd === "shot") { const s = await shoot({ format: "jpeg", quality: 80 }, 1 / SHOT_F); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }
     else if (m.cmd === "count") { const n = await page.$$eval(m.selector, (els) => els.length).catch(() => -1); out({ ok: n >= 0, n }); }
     else if (m.cmd === "net") { out({ ok: true, net: NET.slice(-(m.n || 40)) }); }
     else if (m.cmd === "text") {
@@ -1497,7 +1536,7 @@ for await (const line of rl) {
         if (data && data[1]) fs.writeFileSync(file, Buffer.from(data[1], "base64"));
         else {
           via = "screenshot";
-          const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: { x: info.box[0], y: info.box[1], width: info.box[2], height: info.box[3], scale: SCALE } });
+          const s = await shoot({ format: "png", clip: { x: info.box[0], y: info.box[1], width: info.box[2], height: info.box[3], scale: 1 } });   // × the session DSF (SCALE) = capture px
           fs.writeFileSync(file, Buffer.from(s.data, "base64"));
         }
         out({ ok: true, file, via, type: data ? data[0] : "image/png", w: info.nw, h: info.nh, box: info.box });
@@ -1548,7 +1587,7 @@ for await (const line of rl) {
       const who = await accountName(page);
       const w = await wall(page);
       const shot = path.join(workdir, `ff-${String(++obsN).padStart(4, "0")}.jpg`);
-      try { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90, clip: await vclip(1 / SHOT_F) }); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
+      try { const s = await shoot({ format: "jpeg", quality: 90 }, 1 / SHOT_F); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
       let fp = null; try { fp = await fingerprint(); } catch {}
       const priv = await privacyBoxes(page, privateSelectors(), 1);          // C7: private boxes in this frame (CSS px)
       out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot, fp, private: priv,
