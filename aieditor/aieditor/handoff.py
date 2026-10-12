@@ -813,7 +813,14 @@ def stem_depths(adir):
             with wave.open(str(f)) as wv:
                 out[f"audio/{f.name}"] = wv.getsampwidth() * 8
         except (wave.Error, EOFError, OSError):
-            pass
+            # WAVE_FORMAT_EXTENSIBLE (ffmpeg's 24-bit): python's wave refuses it — the fmt chunk still says the bits
+            try:
+                b = f.read_bytes()[:4096]
+                i = b.find(b"fmt ")
+                if i >= 0:
+                    out[f"audio/{f.name}"] = int.from_bytes(b[i + 22:i + 24], "little")
+            except OSError:
+                pass
     return out
 
 
