@@ -56,10 +56,13 @@ export const FEWER_NUMBERS_RULE = `FEWER NUMBERS (spoken news and deep dives —
 - Never read out a run of scores, versions, prices, dates or user counts. Pick the one that matters, or none.
 - Model and version names: say the name a person would say ("the new Claude"), not every decimal of the version.`;
 
-export const FEWER_TECH_TERMS_RULE = `FEWER TECHNICAL TERMS:
-- Say what a thing DOES instead of its technical name. If the story can be told without the term, leave it out.
-- Keep a technical word only when it is the official name the story is about — then give it ONE short plain line and move on.
-- Insider words to leave out unless the story is about them: ${NEWS_TECH_TERMS.join(", ")}.`;
+// Jake 2026-10-12: "the presentations should be less technical — it can demonstrate a little bit technical things on
+// the screen (just a little bit) — but never in the script".
+export const FEWER_TECH_TERMS_RULE = `NO TECHNICAL TERMS IN THE SCRIPT (this overrides rule 7's "every technical term gets one simple line" for this show):
+- Never a technical term in what Jake says — not even explained. Say what the thing DOES in everyday words, or leave it out.
+- Names are fine: a product, a model, a company, a law ("Claude", "Gemini", "the EU AI Act"). Technical CONCEPTS are not.
+- If the screen shows something technical (a setting, a line of code, a chart label), the script says what it means for the viewer — never reads the technical part out.
+- Words that never appear in the script: ${NEWS_TECH_TERMS.join(", ")}.`;
 
 const plainBanned = (): string[] => BANNED_WORDS.filter((w) => /^[a-z][a-z' -]*$/i.test(w));
 /** Phrases written out (pattern entries stay in the code check, where they can be matched). */
@@ -120,7 +123,7 @@ export function findTechTerms(text: string): string[] {
   for (const t of NEWS_TECH_TERMS) {
     const re = new RegExp(`\\b${t.replace(/[-]/g, "[- ]")}\\b`, t === t.toUpperCase() ? "g" : "gi");
     const m = re.exec(text);
-    if (m) out.push(`Technical term "${t}" — say what it does in plain words, or leave it out: "…${text.slice(Math.max(0, m.index - 50), m.index + 60).replace(/\s+/g, " ")}…"`);
+    if (m) out.push(`Technical term "${t}" in the script — never in what Jake says: say what it does in everyday words, or leave it out: "…${text.slice(Math.max(0, m.index - 50), m.index + 60).replace(/\s+/g, " ")}…"`);
   }
   return out;
 }

@@ -28,7 +28,7 @@ import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { findVideoForStory, parseVideoId } from "./video.js";
 import { gatherVisuals, type Visual } from "./deepDiveVisuals.js";
 import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
-import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
+import { L, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS news_deep_dives (
@@ -636,7 +636,7 @@ RULES:
 6. "eyebrow" = a 1-3 word label above the heading (e.g. "The numbers", "How we got here"). "heading" = ${spec(L.headingV1)} (for "statement" and "quote" the heading is a short label; the big text is in data).
 7. "beats" = 2-4 notes for the scriptwriter: what Jake should say on this section, with the specific facts to use.
 8b. ${SHORT_WORDS}
-8. Plain words. No jargon unless it's the official name the story is about.
+8. ${SCREEN_PLAIN} The "beats" notes for the scriptwriter are plain too: what Jake says, never the technical terms.
 
 Reply with ONLY this JSON (no markdown):
 {"title":"max 8 words","subtitle":"max 14 words","sections":[{"kind":"title","eyebrow":"","heading":"","data":{},"beats":["..."],"visual":""}]}`;
@@ -741,7 +741,7 @@ ${DEEP_DIVE_RULES}
 You are reviewing the teleprompter script for a live deep-dive segment. Rewrite anything that's unclear, stiff, or uses complex language. Aim for a 14-year-old's reading level and a normal American talking to a friend — not a news anchor, not an article being read.
 
 Check every sentence:
-1. A word a 14-year-old wouldn't know? Swap it for what the thing does, or cut it. Keep an official term the story is about and explain it right after.
+1. A word a 14-year-old wouldn't know? Swap it for what the thing does, or cut it. No technical term stays in the script — not even explained (names of products, models, companies and laws are fine).
 2. A technical detail the viewer doesn't need? Cut the detail and its explanation.
 3. An example about running a business or agency? Swap it for an everyday situation.
 4. Does each section bridge naturally from the one before? Is anything repeated across sections? Cut repeats.

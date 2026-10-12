@@ -27,7 +27,7 @@ import { callNewsModel } from "./ai.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { fitMarkers } from "./deepDiveBeats.js";
-import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
+import { L, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 import {
   deepDives, deepDiveSections, sectionsOf, setGenerating, isGenerating,
   research, parseJsonReply, findSectionVideo, splitScripts,
@@ -174,7 +174,7 @@ RULES:
 6. Every number, date, name and quote comes from the research or the material. Nothing invented.
 7. Only use ids that exist above. Do not use the same clip or screenshot twice.
 8b. ${SHORT_WORDS}
-8. Plain words. On-screen text is short; the explaining happens out loud.
+8. ${SCREEN_PLAIN} On-screen text is short; the explaining happens out loud, in plain words — the notes never carry technical terms.
 
 Reply with ONLY this JSON (no markdown):
 {"title":"max 8 words","subtitle":"max 14 words","chapters":[{"kind":"title","eyebrow":"","heading":"","island":null,"data":{},"notes":["..."]}]}`;
@@ -377,7 +377,7 @@ OUTPUT FORMAT — exactly ${chapters.length} chapters, each starting with its ma
 
 ${V2_SCRIPT_RULES}
 
-Review this live deep-dive script. Rewrite anything unclear, stiff or complex: a 14-year-old's reading level, a normal American talking to a friend. Keep an official term the story is about and explain it right after. Cut repeats across chapters. Fix banned endings. Apply the script generator's rules (end of the style guide): every banned word, AI-sounding phrase or insider term rewritten in everyday words; more than one number in a paragraph cut to the one that matters. Keep the facts, the order, the ### SECTION n lines and EXACTLY the [next] markers each chapter has (their count must not change). Total 1,450-1,700 words; if it is short, expand the thinnest beats with research details, never padding.
+Review this live deep-dive script. Rewrite anything unclear, stiff or complex: a 14-year-old's reading level, a normal American talking to a friend. No technical term stays in the script, not even explained (product, model, company and law names are fine); where the screen shows something technical, say what it means. Cut repeats across chapters. Fix banned endings. Apply the script generator's rules (end of the style guide): every banned word, AI-sounding phrase or insider term rewritten in everyday words; more than one number in a paragraph cut to the one that matters. Keep the facts, the order, the ### SECTION n lines and EXACTLY the [next] markers each chapter has (their count must not change). Total 1,450-1,700 words; if it is short, expand the thinnest beats with research details, never padding.
 
 THE CHAPTER BRIEF:
 ${brief}

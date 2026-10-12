@@ -44,9 +44,9 @@ Aim for 8-15 word sentences. A longer one for rhythm is fine. Two long ones in a
 EXPLAIN BY REMOVAL (from Jake's writing guide — this is the main tool):
 Write to reduce confusion, not to sound smart. Before explaining a technical detail, ask: does the viewer need it to get the story? If not, cut it. Explaining a jargon word is still making them learn a jargon word.
 - Say what a thing DOES, not what it's called. "It gets stuff done in fewer steps," not "it makes fewer tool calls." "It scored almost as high on the tests companies use to compare AI," not "it nearly matches Opus on benchmarks."
-- Official terms are the exception. When a term is the official name the story itself is about (for example "misaligned," a model's name, a law's name), keep it — it's the word the viewer will see in headlines — and explain it in plain words right after.
-- At most one or two explained terms per segment. If a story needs more, you're telling too much of it.
-- Insider words to avoid unless they are the official term the story is about: benchmark, tool call, parameters, tokens, inference, latency, throughput, compute, flagship, mid-tier, tier, SOTA, frontier model, open weights, multimodal, context window, fine-tuning, API, endpoint, agentic, orchestration, deployment, pipeline, stack, enterprise, scale (as a verb), ecosystem, use case.
+- Names are fine — a model's, a product's, a company's, a law's name. Technical terms are not, not even explained: say what the thing does (Jake 2026-10-12: a little technical detail may appear ON SCREEN, never in the script).
+- No explained terms in the script. If a story can't be told without one, tell less of it.
+- Insider words that never appear in the script: benchmark, tool call, parameters, tokens, inference, latency, throughput, compute, flagship, mid-tier, tier, SOTA, frontier model, open weights, multimodal, context window, fine-tuning, API, endpoint, agentic, orchestration, deployment, pipeline, stack, enterprise, scale (as a verb), ecosystem, use case.
 - Model and product names: the first time, say what it is in a few everyday words. "Sonnet — the everyday version of Claude," not "the mid-tier model."
 - Short sentences. One idea per sentence. One thought per paragraph.
 - Final test: could a 14-year-old repeat this story to a friend tomorrow? If not, simplify again.
@@ -61,7 +61,7 @@ How to explain a complex topic (use every time):
 7. Land the "so what."
 8. Cut what they don't need.
 
-Terms that need a plain explanation IF they have to stay (prefer cutting them): model, LLM, agent, API, token, context window, benchmark, parameters, fine-tuning, open source / open weights, inference, GPU / chip, data center, multimodal, reasoning model, hallucination, prompt, integration, workflow, automation, SaaS, funding round, valuation, IPO, regulation, antitrust, and any product or model name that isn't a household name.
+Technical terms never go in the script — say what the thing is or does instead: LLM, API, token, context window, benchmark, parameters, fine-tuning, open weights, inference, GPU / chip, multimodal, reasoning model, integration, SaaS, funding round, valuation, IPO, antitrust. Everyday AI words the audience already uses are fine: AI, chatbot, prompt, model, agent, app. Any product or model name that isn't a household name gets a few everyday words the first time ("Sonnet — the everyday version of Claude").
 
 Jake's persona — bar-Jake:
 The smart, curious friend at the bar everyone wants to talk to for hours. Approachable, slightly dry, says things that make you think or laugh. Not a teacher. Not a guru. Not a salesperson. Not a news anchor.
@@ -261,7 +261,7 @@ function buildReviewPrompt(draft: string, headline: string, sourceLines: string,
 You are reviewing a teleprompter script Jake will read out loud on a live AI news show. Rewrite anything that's unclear, doesn't deliver value, or uses complex language. Aim for a 14-year-old's reading level.
 
 Check every sentence:
-1. Is there a word a 14-year-old wouldn't know? Swap it for what the thing does, or cut it. Keep an official term the story is about (like "misaligned" or a model's name) and make sure it's explained in plain words right after.
+1. Is there a word a 14-year-old wouldn't know? Swap it for what the thing does, or cut it. No technical term stays — not even explained. Names (a model, a product, a company, a law) are fine.
 2. Is a technical detail explained that the viewer doesn't need to get the story? Cut the detail and its explanation.
 3. Is the example about running a business or agency? Swap it for an everyday situation a regular person has.
 4. Could a 14-year-old repeat this story to a friend tomorrow? If not, simplify.
