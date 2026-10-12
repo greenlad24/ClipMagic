@@ -10,13 +10,14 @@ import { ChapterView, isPaper } from './Chapter';
 import { flatten, firstBeatOf, type Chapter } from './types';
 import { templateStyle, type DeckTemplate } from '../templates';
 import { BubbleLayer, bubbleRootProps, type BubbleSettings } from '../bubble';
+import './motion.css';
 
 /** The root props a template + the bubble's safe frame put on a `.dd2`. */
-export function dd2RootProps(template?: DeckTemplate | null, bubble?: BubbleSettings | null): { style: CSSProperties; 'data-deco'?: string; 'data-bubble'?: string } {
+export function dd2RootProps(template?: DeckTemplate | null, bubble?: BubbleSettings | null): { style: CSSProperties; 'data-deco'?: string; 'data-motion'?: string; 'data-bubble'?: string } {
   const b = bubbleRootProps(bubble);
   return {
     style: { ...(template ? templateStyle(template, 'v2') : {}), ...(b.style ?? {}) },
-    ...(template ? { 'data-deco': template.deco } : {}),
+    ...(template ? { 'data-deco': template.deco, 'data-motion': template.id } : {}),
     ...(b['data-bubble'] ? { 'data-bubble': b['data-bubble'] } : {}),
   };
 }
@@ -62,6 +63,7 @@ export default function Show({ chapters, diveId, flat, onFlat, still = false, in
               paper={isPaper(chapters, i, template ?? undefined)}
               onBeat={onFlat ? (b) => onFlat(firstBeatOf(chapters, i) + b) : undefined}
               onRunLive={onRunLive}
+              rel={Math.sign(i - at.chapter)}
             />
           );
         })}

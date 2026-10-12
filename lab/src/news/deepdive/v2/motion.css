@@ -1,0 +1,164 @@
+/*
+ * Deep Dive — ONE MOTION SET PER TEMPLATE (Jake 2026-10-12: "each template should be completely unique in all
+ * aspects. Animations, storyline — but in the same animation family and look/design family").
+ *
+ * The family: every set is built from the same pieces — the house easing (--ease), the accent underline that
+ * draws itself (show.css dd2-draw), chapters that hand over to each other and beats that light up in place — and
+ * differs in HOW: the axis or kind of the chapter hand-over, how a chapter's heading and body arrive, and the tempo.
+ * Keyed by .dd2[data-motion=<template id>] (Show.tsx dd2RootProps). "jake" has no rules here: it is the original
+ * motion, unchanged (show.css). Chapter hand-overs only touch the running show (chapters carry data-rel there;
+ * thumbnails don't), and the reduced-motion / .instant rules of show.css switch all of it off.
+ */
+
+/* ── shared pieces of the family ───────────────────────────────────────────── */
+/* the overlay hand-over: chapters stacked on one spot instead of the sliding track */
+.dd2[data-motion="aurora"] .dd2-track, .dd2[data-motion="editorial"] .dd2-track, .dd2[data-motion="midnight"] .dd2-track,
+.dd2[data-motion="neon"] .dd2-track, .dd2[data-motion="terminal"] .dd2-track, .dd2[data-motion="swiss"] .dd2-track,
+.dd2[data-motion="royal"] .dd2-track, .dd2[data-motion="ocean"] .dd2-track, .dd2[data-motion="mono"] .dd2-track {
+  transform: none !important; transition: none;
+}
+.dd2[data-motion="aurora"] .dd2-ch[data-rel], .dd2[data-motion="editorial"] .dd2-ch[data-rel], .dd2[data-motion="midnight"] .dd2-ch[data-rel],
+.dd2[data-motion="neon"] .dd2-ch[data-rel], .dd2[data-motion="terminal"] .dd2-ch[data-rel], .dd2[data-motion="swiss"] .dd2-ch[data-rel],
+.dd2[data-motion="royal"] .dd2-ch[data-rel], .dd2[data-motion="ocean"] .dd2-ch[data-rel], .dd2[data-motion="mono"] .dd2-ch[data-rel] {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+}
+.dd2[data-motion] .dd2-ch[data-rel="on"] { z-index: 3; pointer-events: auto; }
+.dd2.instant[data-motion] .dd2-ch[data-rel] { transition: none !important; }
+
+@keyframes mo-rise { from { opacity: 0; transform: translateY(calc(var(--u) * 3)); } }
+@keyframes mo-fade { from { opacity: 0; } }
+@keyframes mo-unblur { from { opacity: 0; filter: blur(calc(var(--u) * 1.2)); } }
+@keyframes mo-wipe-up { from { clip-path: inset(100% 0 0 0); transform: translateY(calc(var(--u) * 1.5)); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mo-wipe-right { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mo-wipe-center { from { clip-path: inset(0 50% 0 50%); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mo-type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mo-pop { 0% { opacity: 0; transform: scale(.86); } 70% { opacity: 1; transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes mo-punch { from { opacity: 0; transform: scale(1.18); } }
+@keyframes mo-flip { from { opacity: 0; transform: perspective(900px) rotateX(-75deg); } }
+@keyframes mo-stamp { 0% { opacity: 0; transform: scale(1.35) rotate(-2.5deg); } 60% { opacity: 1; transform: scale(.98) rotate(-1deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes mo-drop { from { opacity: 0; transform: translateY(calc(var(--u) * -6)) rotate(-1.5deg); } }
+@keyframes mo-from-left { from { opacity: 0; transform: translateX(calc(var(--u) * -12)); } }
+@keyframes mo-from-right { from { opacity: 0; transform: translateX(calc(var(--u) * 12)); } }
+@keyframes mo-blink { 50% { opacity: 0; } }
+@keyframes mo-scan { from { transform: translateY(-10%); opacity: .9; } to { transform: translateY(110%); opacity: 0; } }
+
+/* the parts of a chapter that ARRIVE (the running show only) */
+/* every set staggers the same four: eyebrow → heading → island/tabs → body */
+
+/* ── AURORA · The Mystery — slow dissolves, things drift into focus ───────── */
+.dd2[data-motion="aurora"] .dd2-ch[data-rel] { opacity: 0; filter: blur(calc(var(--u) * 1)); transform: scale(1.035);
+  transition: opacity 1.4s var(--ease), filter 1.4s var(--ease), transform 1.8s var(--ease); }
+.dd2[data-motion="aurora"] .dd2-ch[data-rel="on"] { opacity: 1; filter: none; transform: none; }
+.dd2[data-motion="aurora"] .dd2-ch.on[data-rel] :is(.dd2-eyebrow) { animation: mo-unblur 1.6s .3s var(--ease) both; }
+.dd2[data-motion="aurora"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-unblur 2s .5s var(--ease) both; }
+.dd2[data-motion="aurora"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-fade 1.4s 1.1s var(--ease) both; }
+.dd2[data-motion="aurora"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-unblur 1.8s .9s var(--ease) both; }
+.dd2[data-motion="aurora"] :is(.dd2-card > *, .dd2-fact, .dd2-vs .opt, .dd2-ev, .dd2-list li, .dd2-beat) { transition-duration: 1.1s !important; }
+
+/* ── EDITORIAL · The Feature Story — the page turns sideways, lines set like type ── */
+.dd2[data-motion="editorial"] .dd2-ch[data-rel] { transition: transform 1.05s cubic-bezier(.7,0,.2,1), opacity 1.05s ease; }
+.dd2[data-motion="editorial"] .dd2-ch[data-rel="after"] { transform: translateX(100%); }
+.dd2[data-motion="editorial"] .dd2-ch[data-rel="before"] { transform: translateX(-28%); opacity: .0; }
+.dd2[data-motion="editorial"] .dd2-ch[data-rel="on"] { transform: none; box-shadow: calc(var(--u) * -2) 0 calc(var(--u) * 4) rgba(0,0,0,.35); }
+.dd2[data-motion="editorial"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-wipe-right .7s .55s cubic-bezier(.7,0,.2,1) both; }
+.dd2[data-motion="editorial"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-wipe-up .9s .7s cubic-bezier(.2,.8,.2,1) both; }
+.dd2[data-motion="editorial"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-fade .6s 1.2s ease both; }
+.dd2[data-motion="editorial"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-rise .9s 1s var(--ease) both; }
+
+/* ── MIDNIGHT · The Countdown — zoom through, the number flips ─────────────── */
+.dd2[data-motion="midnight"] .dd2-ch[data-rel] { transition: transform .75s cubic-bezier(.6,0,.2,1), opacity .75s ease; }
+.dd2[data-motion="midnight"] .dd2-ch[data-rel="after"] { transform: scale(.82); opacity: 0; }
+.dd2[data-motion="midnight"] .dd2-ch[data-rel="before"] { transform: scale(1.3); opacity: 0; }
+.dd2[data-motion="midnight"] .dd2-ch[data-rel="on"] { transform: none; opacity: 1; }
+.dd2[data-motion="midnight"] .dd2-ch.on[data-rel] .dd2-num { animation: mo-flip .7s .35s cubic-bezier(.2,1.4,.4,1) both; transform-origin: 50% 0; }
+.dd2[data-motion="midnight"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-punch .5s .45s cubic-bezier(.2,.8,.2,1) both; color: var(--yellow); }
+.dd2[data-motion="midnight"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-punch .7s .55s cubic-bezier(.2,.8,.2,1) both; transform-origin: 0 50%; }
+.dd2[data-motion="midnight"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-rise .6s .85s var(--ease) both; }
+
+/* ── NEON · Myth vs Reality — split from the centre, a scan line passes ────── */
+.dd2[data-motion="neon"] .dd2-ch[data-rel] { transition: clip-path .7s cubic-bezier(.8,0,.2,1), opacity .2s linear .5s; clip-path: inset(0 50% 0 50%); opacity: 0; }
+.dd2[data-motion="neon"] .dd2-ch[data-rel="on"] { clip-path: inset(0 0 0 0); opacity: 1; transition: clip-path .7s cubic-bezier(.8,0,.2,1), opacity 0s; }
+.dd2[data-motion="neon"] .dd2-ch.on[data-rel]::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 30%; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--yellow) 18%, transparent), transparent);
+  animation: mo-scan 1.1s .5s linear both; }
+.dd2[data-motion="neon"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-wipe-center .45s .6s steps(6) both; }
+.dd2[data-motion="neon"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-wipe-center .6s .7s cubic-bezier(.8,0,.2,1) both; }
+.dd2[data-motion="neon"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-wipe-center .7s .95s cubic-bezier(.8,0,.2,1) both; }
+.dd2[data-motion="neon"] .dd2-vs .opt { transition-timing-function: steps(4) !important; }
+
+/* ── TERMINAL · The Build — hard cut, the heading types itself, a cursor waits ── */
+.dd2[data-motion="terminal"] .dd2-ch[data-rel] { opacity: 0; transition: opacity .12s linear; }
+.dd2[data-motion="terminal"] .dd2-ch[data-rel="on"] { opacity: 1; }
+.dd2[data-motion="terminal"] .dd2-eyebrow::before { content: "$ "; color: var(--yellow); }
+.dd2[data-motion="terminal"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-type .5s .1s steps(14) both; }
+.dd2[data-motion="terminal"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-type 1.3s .45s steps(36) both; }
+.dd2[data-motion="terminal"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1)::after { content: "▍"; color: var(--yellow); margin-left: .08em; font-weight: 400;
+  animation: mo-blink 1s 1.8s steps(1) 4 both; }
+.dd2[data-motion="terminal"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-fade .1s 1.7s steps(1) both; }
+.dd2[data-motion="terminal"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-type .6s 1.75s steps(12) both; }
+.dd2[data-motion="terminal"] :is(.dd2-card > *, .dd2-fact, .dd2-vs .opt, .dd2-ev, .dd2-list li, .dd2-beat, .dd2-steps li) { transition-timing-function: steps(3) !important; transition-duration: .3s !important; }
+
+/* ── SUNSET · Before & After — a slow warm rise, the background lags behind ── */
+.dd2[data-motion="sunset"] .dd2-track { transition: transform 1.35s cubic-bezier(.45,0,.15,1); }
+.dd2[data-motion="sunset"] .dd2-ch::before { transition: transform 1.6s cubic-bezier(.45,0,.15,1); }
+.dd2[data-motion="sunset"] .dd2-ch.on::before { transform: translateY(calc(var(--u) * -2)); }
+.dd2[data-motion="sunset"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-rise 1s .7s var(--ease) both; }
+.dd2[data-motion="sunset"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-rise 1.2s .85s var(--ease) both; }
+.dd2[data-motion="sunset"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-rise 1s 1.1s var(--ease) both; }
+.dd2[data-motion="sunset"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-rise 1.3s 1.2s var(--ease) both; }
+.dd2[data-motion="sunset"] .dd2-vs .opt { transition-duration: .9s !important; }
+
+/* ── MINT · The Experiment — a springy slide, results pop in ───────────────── */
+.dd2[data-motion="mint"] .dd2-track { transition: transform .85s cubic-bezier(.34,1.45,.64,1); }
+.dd2[data-motion="mint"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-pop .5s .5s cubic-bezier(.34,1.56,.64,1) both; transform-origin: 0 50%; }
+.dd2[data-motion="mint"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-pop .6s .6s cubic-bezier(.34,1.56,.64,1) both; transform-origin: 0 50%; }
+.dd2[data-motion="mint"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-pop .45s .85s cubic-bezier(.34,1.56,.64,1) both; }
+.dd2[data-motion="mint"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-pop .6s .9s cubic-bezier(.34,1.56,.64,1) both; transform-origin: 50% 0; }
+.dd2[data-motion="mint"] :is(.dd2-card > *, .dd2-fact, .dd2-vs .opt, .dd2-list li, .dd2-beat) { transition-timing-function: cubic-bezier(.34,1.56,.64,1) !important; }
+
+/* ── SWISS · The Explainer — crisp horizontal snap, parts slot in on the grid ── */
+.dd2[data-motion="swiss"] .dd2-ch[data-rel] { transition: transform .5s cubic-bezier(.9,0,.1,1); }
+.dd2[data-motion="swiss"] .dd2-ch[data-rel="after"] { transform: translateX(100%); }
+.dd2[data-motion="swiss"] .dd2-ch[data-rel="before"] { transform: translateX(-100%); }
+.dd2[data-motion="swiss"] .dd2-ch[data-rel="on"] { transform: none; }
+.dd2[data-motion="swiss"] .dd2-ch.on[data-rel] .dd2-num { animation: mo-from-left .35s .45s cubic-bezier(.9,0,.1,1) both; }
+.dd2[data-motion="swiss"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-from-left .35s .53s cubic-bezier(.9,0,.1,1) both; }
+.dd2[data-motion="swiss"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-from-left .4s .61s cubic-bezier(.9,0,.1,1) both; }
+.dd2[data-motion="swiss"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-from-left .35s .69s cubic-bezier(.9,0,.1,1) both; }
+.dd2[data-motion="swiss"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-from-left .45s .77s cubic-bezier(.9,0,.1,1) both; }
+.dd2[data-motion="swiss"] :is(.dd2-card > *, .dd2-fact, .dd2-vs .opt, .dd2-ev, .dd2-list li, .dd2-beat) { transition-timing-function: cubic-bezier(.9,0,.1,1) !important; transition-duration: .35s !important; }
+
+/* ── ROYAL · The Showdown — chapters slam in, contenders charge from both sides ── */
+.dd2[data-motion="royal"] .dd2-ch[data-rel] { transition: transform .6s cubic-bezier(.2,1.25,.4,1), opacity .4s ease; }
+.dd2[data-motion="royal"] .dd2-ch[data-rel="after"] { transform: translateX(110%) skewX(-6deg); opacity: 0; }
+.dd2[data-motion="royal"] .dd2-ch[data-rel="before"] { transform: translateX(-60%) skewX(6deg); opacity: 0; }
+.dd2[data-motion="royal"] .dd2-ch[data-rel="on"] { transform: none; opacity: 1; }
+.dd2[data-motion="royal"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-drop .45s .4s cubic-bezier(.2,1.3,.4,1) both; }
+.dd2[data-motion="royal"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-drop .55s .5s cubic-bezier(.2,1.3,.4,1) both; }
+.dd2[data-motion="royal"] .dd2-ch.on[data-rel] .dd2-vs .opt:nth-child(odd) { animation: mo-from-left .55s .75s cubic-bezier(.2,1.3,.4,1) both; }
+.dd2[data-motion="royal"] .dd2-ch.on[data-rel] .dd2-vs .opt:nth-child(even) { animation: mo-from-right .55s .75s cubic-bezier(.2,1.3,.4,1) both; }
+.dd2[data-motion="royal"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-fade .4s .7s ease both; }
+
+/* ── OCEAN · How We Got Here — a long sideways sweep, like a timeline scrolling ── */
+.dd2[data-motion="ocean"] .dd2-ch[data-rel] { transition: transform 1.25s cubic-bezier(.65,0,.35,1), clip-path 1.25s cubic-bezier(.65,0,.35,1); }
+.dd2[data-motion="ocean"] .dd2-ch[data-rel="after"] { transform: translateX(35%); clip-path: inset(0 0 0 100%); }
+.dd2[data-motion="ocean"] .dd2-ch[data-rel="before"] { transform: translateX(-35%); clip-path: inset(0 100% 0 0); }
+.dd2[data-motion="ocean"] .dd2-ch[data-rel="on"] { transform: none; clip-path: inset(0 0 0 0); }
+.dd2[data-motion="ocean"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-wipe-right .9s .8s cubic-bezier(.65,0,.35,1) both; }
+.dd2[data-motion="ocean"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-wipe-right 1.1s .9s cubic-bezier(.65,0,.35,1) both; }
+.dd2[data-motion="ocean"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-wipe-right 1.2s 1.1s cubic-bezier(.65,0,.35,1) both; }
+.dd2[data-motion="ocean"] .dd2-tl .bar { transition-duration: 1.8s !important; }
+
+/* ── MONO · The Verdict — hard cuts, the heading is stamped on ─────────────── */
+.dd2[data-motion="mono"] .dd2-ch[data-rel] { opacity: 0; transition: none; }
+.dd2[data-motion="mono"] .dd2-ch[data-rel="on"] { opacity: 1; }
+.dd2[data-motion="mono"] .dd2-ch.on[data-rel] .dd2-eyebrow { animation: mo-stamp .35s .15s cubic-bezier(.2,.9,.3,1) both; display: inline-block; transform-origin: 0 50%; }
+.dd2[data-motion="mono"] .dd2-ch.on[data-rel] :is(.dd2-h, .dd2-h1) { animation: mo-stamp .45s .3s cubic-bezier(.2,.9,.3,1) both; transform-origin: 0 50%; }
+.dd2[data-motion="mono"] .dd2-ch.on[data-rel] :is(.dd2-island, .dd2-tabs) { animation: mo-fade .01s .65s steps(1) both; }
+.dd2[data-motion="mono"] .dd2-ch.on[data-rel] .dd2-body { animation: mo-fade .01s .7s steps(1) both; }
+.dd2[data-motion="mono"] :is(.dd2-card > *, .dd2-fact, .dd2-vs .opt, .dd2-ev, .dd2-list li, .dd2-beat) { transition-duration: .08s !important; }
+
+/* (thumbnails carry no data-rel, so none of the above reaches them) — reduced motion switches every set off */
+@media (prefers-reduced-motion: reduce) {
+  .dd2[data-motion] .dd2-ch[data-rel], .dd2[data-motion] .dd2-ch[data-rel] * { animation: none !important; transition: none !important; }
+}

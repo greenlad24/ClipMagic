@@ -27,6 +27,8 @@ export default function StageV2({ dive, sections }: { dive: DeepDive; sections: 
   // The stepping is shared with classic slides (useBeatStage.ts); only L / Esc
   // (the live demo) and the bubble keys B / C / G are this page's own.
   const hero = useMemo(() => heroMedia(dive.heroVideo), [dive.heroVideo]);
+  // ?template=<id>: look at this dive in another template's design + motion without changing it (preview only)
+  const previewTemplate = new URLSearchParams(window.location.search).get('template') || '';
   const { flat, instant, cursorHidden, show, videoOn } = useBeatStage({
     diveId: dive.id,
     units: chapters,
@@ -45,7 +47,7 @@ export default function StageV2({ dive, sections }: { dive: DeepDive; sections: 
   return (
     <div className="fixed inset-0 select-none" style={{ cursor: cursorHidden ? 'none' : 'default' }}>
       <Show chapters={chapters} diveId={dive.id} flat={flat} onFlat={(n) => show(n, true)} instant={instant}
-        template={templateFor(dive.template, 'v2')} bubble={bubble}
+        template={templateFor(previewTemplate || dive.template, 'v2')} bubble={bubble}
         onRunLive={dive.demoAgent ? () => setLive(true) : undefined}
         overlay={live ? <LiveDemo diveId={dive.id} onClose={() => setLive(false)} /> : null} />
       {/* Shift: the dive's most relevant video, full screen over any beat; only a slide change (or Shift / Esc) closes it */}

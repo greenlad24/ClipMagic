@@ -390,6 +390,9 @@ export interface ChapterProps {
   onBeat?: (beat: number) => void;
   /** Stage only: start the demo agent live. */
   onRunLive?: () => void;
+  /** In the running show: where this chapter sits against the current one (-1 before, 0 on, 1 after) — the
+   * template's motion set (motion.css) moves chapters by it. Absent in thumbnails. */
+  rel?: number;
 }
 
 /**
@@ -417,14 +420,15 @@ export const SHOW_FIT: FitTarget[] = [
   { sel: '.dd2-card .big', within: '.dd2-card', min: 0.7, last: true },
 ];
 
-export function ChapterView({ chapter: c, index, beat, diveId, active, still = false, paper = false, presenter = 'Jake Dawson', onBeat, onRunLive }: ChapterProps) {
+export function ChapterView({ chapter: c, index, beat, diveId, active, still = false, paper = false, presenter = 'Jake Dawson', onBeat, onRunLive, rel }: ChapterProps) {
   const d = c.data || {};
   const cls = `dd2-ch k-${c.kind} ${paper ? 'paper' : ''} ${active ? 'on' : ''}`;
   const ref = useRef<HTMLElement>(null);
   useFitText(ref, SHOW_FIT, [c, beat, still, paper, active]);
+  const relAttr = rel === undefined ? undefined : rel < 0 ? 'before' : rel > 0 ? 'after' : 'on';
 
   if (c.kind === 'title') {
-    return <section ref={ref} className={cls}><TitleChapter c={c} diveId={diveId} still={still} active={active} presenter={presenter} /></section>;
+    return <section ref={ref} className={cls} data-rel={relAttr}><TitleChapter c={c} diveId={diveId} still={still} active={active} presenter={presenter} /></section>;
   }
 
   const head = (
@@ -592,7 +596,7 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
     case 'takeaways': {
       const pts = d.points ?? [];
       return (
-        <section ref={ref} className={cls}>
+        <section ref={ref} className={cls} data-rel={relAttr}>
           <div className="dd2-wrap">
             {head}
             <div className="dd2-takes" style={{ gridTemplateColumns: `repeat(${Math.max(1, pts.length)}, minmax(0, 1fr))` }}>
@@ -613,7 +617,7 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
   }
 
   return (
-    <section ref={ref} className={cls}>
+    <section ref={ref} className={cls} data-rel={relAttr}>
       <div className="dd2-wrap">
         {head}
         <div className="dd2-stage">

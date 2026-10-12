@@ -21,3 +21,7 @@
 .dd-stage[data-blobs="0"] .dd-grid { display: none; }
 .dd-stage[data-blobs="0"] .dd-vignette { opacity: .5; }
 .dd-stage[data-paper="1"] .dd-vignette { display: none; }
+
+/* Monochrome's accent is WHITE: on its light (paper) chapters the highlighted big step number used it and vanished
+   on the white card — there it takes the template's accent-for-paper (found in the motion check, 2026-10-12) */
+.dd2[data-motion="mono"] .dd2-ch.paper .dd2-beat.cur .n { color: var(--accent-paper); }
