@@ -283,7 +283,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
     try {
       await autoEditorSaveEdits({ id: job.id, videos: plan });
       toast.success(handoffCut
-        ? 'Saved — rebuilding the package and the preview with your cut (same plan and pictures, no new Claude cost).'
+        ? 'Saved — cutting the timelines, the brief and the preview (a few minutes; nothing is re-made).'
         : 'Saved — rebuilding the cut and the sound check (a few minutes, no video render).');
       onSaved();
     } catch (err) {
@@ -295,7 +295,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const reset = async () => {
     try {
       await autoEditorResetEdits({ id: job.id });
-      toast.success(handoffCut ? 'Every word back — rebuilding the package and the preview.' : "Back to Claude's cut — rebuilding the sound check.");
+      toast.success(handoffCut ? 'Every word back — the original timelines and preview again.' : "Back to Claude's cut — rebuilding the sound check.");
       onSaved();
     } catch (err) {
       toast.error(errText(err));
@@ -579,7 +579,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
             <p className="text-xs text-muted-foreground">
               {handoffCut
                 ? job.status.state === 'done'
-                  ? 'Click a word (or Remove a line) to cut it, then Save: the preview and every file of the package follow.'
+                  ? 'Click a word (or Remove a line) to cut it, then Save: the timelines, the brief and the preview are cut (the media stay as made).'
                   : 'Transcript — you can cut words here once the job has finished.'
                 : creative
                 ? 'Transcript (for reference — nothing is cut in a creative edit)'
@@ -594,7 +594,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               )}
               <Button size="sm" className="gap-1.5" disabled={!dirty || saving || running} onClick={() => void save()}>
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                {handoffCut ? 'Save & rebuild' : 'Save'}
+                {handoffCut ? 'Save & cut' : 'Save'}
               </Button>
             </div>
             )}

@@ -338,42 +338,6 @@ def test_worker():
         llm.TRANSPORT, graphics_long.render, W.handoff.build = saved
     check(calls == [] and built == [1], f"render reuses the plan, rebuilds the package: {calls} {built}")
 
-    # Jake 2026-10-12: he CUTS words after the run (the Lab's transcript → plan.edit.json, queued "render"): the timeline
-    # loses only those words (every other pause as recorded), the SAME plan is re-timed by code — no plan call, no
-    # pictures — and the package is rebuilt; undoing the cut brings the original plan back
-    def run_render():
-        calls.clear()
-        built.clear()
-        saved_ = (llm.TRANSPORT, graphics_long.render, W.handoff.build)
-        try:
-            llm.TRANSPORT = fake_transport
-            graphics_long.render = lambda w, evs, video, fps, **kw: []
-            W.handoff.build = lambda *a, **kw: built.append(1) or {"note": "again"}
-            W.run_job(W.Job(d), "render")
-        finally:
-            llm.TRANSPORT, graphics_long.render, W.handoff.build = saved_
-    (d / "plan.edit.json").write_text(json.dumps({"videos": [{"title": "T", "segments": [
-        {"s": 1, "drop": [4]}, {"s": 2, "drop": []}, {"s": 3, "drop": []}]}]}))
-    run_render()
-    e_ = json.loads((d / "edl.json").read_text())
-    v_ = e_["videos"][0]
-    check(v_["removed"] == [0, 1, 4] and 4 not in [w["i"] for w in v_["words"]] and v_["cuts"] >= 1,
-          f"the timeline lost exactly his words: {v_.get('removed')}, {v_['cuts']} cut(s)")
-    check(v_["duration"] < 12.0 and e_["cut_at"], f"shorter, and marked with the cut it was made from: {v_['duration']}")
-    check(calls == [] and built == [1], f"no plan call (re-timed by code), the package rebuilt: {calls} {built}")
-    pd_ = json.loads((d / "preprod" / "plan.json").read_text())
-    beats_ = [b["word_id"] for sg in pd_["plan"]["answer"]["segments"] for b in sg.get("beats") or []]
-    check(pd_.get("retimed") and 4 not in beats_ and pd_["original"]["answer"]["segments"][0]["beats"][0]["word_id"] == 4,
-          f"the beat on a removed word goes; the original plan is kept: {beats_}")
-    check(json.loads((d / "review.json").read_text())["edited"], "the transcript shows his cut")
-    check(handoff.plan_fresh(d) and not handoff.can_retime(d), "the re-timed plan is current (a Continue makes no new plan)")
-    (d / "plan.edit.json").unlink()
-    run_render()
-    v_ = json.loads((d / "edl.json").read_text())["videos"][0]
-    pd_ = json.loads((d / "preprod" / "plan.json").read_text())
-    check(not v_.get("removed") and v_["cuts"] == 0 and calls == [], "undo: the whole timeline again, still no plan call")
-    check([b["word_id"] for sg in pd_["plan"]["answer"]["segments"] for b in sg.get("beats") or []] == [4],
-          "undo: the original plan's beats come back")
     check(handoff.wanted({"handoff": True, "workflow": "creative", "format": "long"}), "wanted")
     check(not handoff.wanted({"handoff": True, "workflow": "cut", "format": "long"})
           and not handoff.wanted({"handoff": True, "workflow": "creative", "format": "short"}), "creative long-form only")
@@ -608,15 +572,104 @@ def test_creative_cut():
         check(False, "cutting every word must fail")
     except ValueError:
         pass
-    # snapping the plan to the words that are left
-    ans = {"segments": [{"start_word": 1, "end_word": 4, "beats": [{"word_id": 2}, {"word_id": 4, "wait_end_word": 3}]},
-                        {"start_word": 2, "end_word": 3, "beats": []}],
-           "aroll": [{"start_word": 0, "end_word": 1}]}
-    a2, o2, n = handoff.snap_answer(ans, [{"template": "x", "start": 2, "end": 3}, {"template": "y", "start": 3, "end": 5}], {0, 1, 4, 5})
-    check([(s_["start_word"], s_["end_word"]) for s_ in a2["segments"]] == [(1, 4)] and n["segments"] == 1,
-          f"spans snap inward; one with nothing left goes: {a2['segments']}")
-    check(a2["segments"][0]["beats"] == [{"word_id": 4, "wait_end_word": None}] and n["beats"] == 1, "beats on removed words go")
-    check([(o["start"], o["end"]) for o in o2] == [(4, 5)] and n["overlays"] == 1, f"overlays snap / go: {o2}")
+
+
+
+def test_handoff_cut():
+    """Jake 2026-10-12: "No need to do reproduction on cuts - only cutting the sequences and the preview"."""
+    from aieditor import edl, handoffcut as hc, takes
+    tl = sample_timeline()[0]
+    check(nlexml.xmeml(hc.read_xmeml(nlexml.xmeml(tl))) == nlexml.xmeml(tl), "the Premiere XML reads back to the same timeline")
+    kept = [(0, 500), (600, 1800)]                      # frames 500-600 cut
+    t2 = hc.cut_timeline(tl, kept)
+    check(t2["frames"] == 1700, "the sequence is shorter by exactly the cut")
+    bub = [c for tr in t2["video"] for c in tr["clips"] if "slot01" in c["name"]]
+    check([(c["start"], c["frames"], c["in"]) for c in bub] == [(400, 100, 0), (500, 100, 200)],
+          f"a clip across the cut becomes two, rippled, each with its own in-point: {bub}")
+    mk = {m["name"]: (m["frame"], m["frames"]) for m in t2["markers"]}
+    check(mk[next(n for n in mk if n.startswith("Screencast 1"))] == (400, 205) and
+          mk[next(n for n in mk if n.startswith("Screencast 2"))] == (600, 300), f"slot markers shrink / move: {mk}")
+    check(nlexml.xmeml(hc.cut_timeline(tl, [(0, 1800)])) == nlexml.xmeml(tl) and hc.map_frame(550, kept) is None and hc.map_frame(700, kept) == 600,
+          "no cut = the same timeline; a cut frame has no place")
+    check(not nlexml.validate_xmeml(nlexml.xmeml(t2)) and not nlexml.check(t2), "the cut timeline validates")
+
+    # a whole job: his transcript cut → timelines, brief, preview cut; media untouched; Undo = the originals again
+    d = Path(tempfile.mkdtemp(prefix="handoff-cut-"))
+    text = "Welcome back. Here is the example tool home page. It shows the dashboard right away. Thanks for watching."
+    ws = [{"word": w, "start": round(0.2 + 0.5 * i, 3), "end": round(0.5 + 0.5 * i, 3)} for i, w in enumerate(text.split())]
+    (d / "words.json").write_text(json.dumps({"words": ws, "repairs": []}))
+    words = takes.load_words(d / "words.json")
+    by_id = {w["i"]: w for w in words}
+    v = edl.passthrough(words, by_id, 10.0, 30.0, "T")
+    (d / "edl.json").write_text(json.dumps({"fps": 30.0, "fps_num": 30, "fps_den": 1, "videos": [v]}))
+    (d / "request.json").write_text(json.dumps({"title": "T", "handoff": True}))
+    pkg = d / "handoff-01"
+    (pkg / "screencasts").mkdir(parents=True)
+    (pkg / "graphics").mkdir()
+    (pkg / "graphics" / "01-x.mov").write_bytes(b"MEDIA")
+    T = v["frames"]
+    tlj = {"name": "T", "fps_num": 30, "fps_den": 1, "width": 1920, "height": 1080, "frames": T,
+           "video": [{"name": "A-roll", "clips": [{"name": "a-roll", "file": "a-roll.mov", "start": 0, "frames": T, "media_frames": T}]},
+                     {"name": "Screencasts (editor)", "clips": []},
+                     {"name": "overlay", "clips": [{"name": "01-x", "file": "graphics/01-x.mov", "start": 60, "frames": 120,
+                                                    "media_frames": 120, "alpha": True}]}],
+           "audio": [{"name": "Voice", "clips": [{"name": "voice", "file": "audio/voice.wav", "start": 0, "frames": T, "media_frames": T,
+                                                  "role": "dialogue"}]}],
+           "markers": [{"frame": 90, "frames": 150, "name": "Screencast 1 — the home page", "note": ""}]}
+    (pkg / "timeline.xml").write_text(nlexml.xmeml(tlj))
+    fcp0 = json.loads(json.dumps(tlj))
+    fcp0["video"][1]["clips"] = handoff._abut(hc.placeholders_of(tlj))
+    (pkg / "timeline.fcpxml").write_text(nlexml.fcpxml(fcp0))
+    rows = [{"slot": 1, "label": "the home page", "start_tc": "00:00:03:00", "end_tc": "00:00:08:00", "start_s": 3.0, "end_s": 8.0,
+             "duration_s": 5.0, "words_from_s": 3.0, "words_to_s": 8.0, "app": "x", "url": "", "logged_out_us": False,
+             "words": "w", "on_screen": "", "steps": [], "zoom": [], "flags": ["Privacy"], "enter": "cut in", "exit": "runs to the end",
+             "notes": [], "beats": [{"t": 2.7, "tc": "00:00:02:21", "cue": "example", "what": "zoom", "action": "camera.zoom"},
+                                    {"t": 5.2, "tc": "00:00:05:06", "cue": "dashboard", "what": "open", "action": "click"}]}]
+    (pkg / "screencasts" / "slots.json").write_text(json.dumps(rows))
+    (pkg / "screencasts" / "slots.csv").write_text(handoff.slots_csv(rows))
+    (pkg / "screencasts" / "BRIEF.html").write_text("<html>")
+    (d / "preview-01.mp4").write_bytes(b"PREVIEW-WHOLE")
+    files = {r: (pkg / r).stat().st_size for r in hc.KEEP}
+    files.update({"graphics/01-x.mov": 5, "preview.mp4": 13})
+    (d / "handoff-01.json").write_text(json.dumps({"files": files, "frames": T, "slots": [{"n": 1}]}))
+    trims = []
+
+    def fake_trim(src, dst, kept, fps, cancelled=lambda: False):
+        trims.append(kept)
+        Path(dst).write_bytes(b"PREVIEW-CUT")
+    saved = hc.trim_preview
+    hc.trim_preview = fake_trim
+    try:
+        # he removes "example" (id 4) and the sentence "It shows the dashboard right away." (ids 9-14)
+        (d / "plan.edit.json").write_text(json.dumps({"videos": [{"title": "T", "segments": [
+            {"s": 0, "drop": []}, {"s": 1, "drop": [4]}, {"s": 3, "drop": []}]}]}))
+        note = hc.run(d, log=lambda *a: None)
+        t2 = hc.read_xmeml((pkg / "timeline.xml").read_text())
+        man = json.loads((d / "handoff-01.json").read_text())
+        check(t2["frames"] < T and man["frames"] == t2["frames"] and man["cut"]["removed_words"] == 7, f"shorter: {note}")
+        check((pkg / "graphics" / "01-x.mov").read_bytes() == b"MEDIA" and (d / "handoff-01.orig" / "timeline.xml").exists(),
+              "no media touched; the originals kept aside")
+        check((d / "preview-01.mp4").read_bytes() == b"PREVIEW-CUT" and len(trims[0]) == 3, f"the preview cut at both cuts: {trims}")
+        check(man["files"]["timeline.xml"] == (pkg / "timeline.xml").stat().st_size and man["files"]["preview.mp4"] == 11,
+              "the manifest has the new sizes (the Lab zips what it lists)")
+        r2 = json.loads((pkg / "screencasts" / "slots.json").read_text())
+        check(len(r2) == 1 and [b["cue"] for b in r2[0]["beats"]] == ["example"] and "dashboard" not in r2[0]["words"],
+              f"the brief: a beat on cut words goes, the words he kept: {r2}")
+        check("example" in (pkg / "screencasts" / "slots.csv").read_text(), "slots.csv rewritten")
+        fx = (pkg / "timeline.fcpxml").read_text()
+        check(not nlexml.validate_fcpxml(fx) and "slot-01 placeholder" in fx, "the Resolve timeline is cut too (placeholders kept)")
+        # cut again from the ORIGINALS (not the cut one), then Undo
+        (d / "plan.edit.json").write_text(json.dumps({"videos": [{"title": "T", "segments": [
+            {"s": 0, "drop": []}, {"s": 1, "drop": []}, {"s": 2, "drop": []}, {"s": 3, "drop": [16]}]}]}))
+        hc.run(d, log=lambda *a: None)
+        check(hc.read_xmeml((pkg / "timeline.xml").read_text())["frames"] > t2["frames"], "a second cut starts from the originals")
+        (d / "plan.edit.json").unlink()
+        hc.run(d, log=lambda *a: None)
+        check((pkg / "timeline.xml").read_text() == (d / "handoff-01.orig" / "timeline.xml").read_text()
+              and (d / "preview-01.mp4").read_bytes() == b"PREVIEW-WHOLE", "Undo: the original timelines and preview")
+        check(json.loads((d / "handoff-01.json").read_text())["frames"] == T, "Undo: the whole length again")
+    finally:
+        hc.trim_preview = saved
 
 
 if __name__ == "__main__":
@@ -627,4 +680,5 @@ if __name__ == "__main__":
     test_screen_templates()
     test_assets()
     test_creative_cut()
+    test_handoff_cut()
     print(f"test_handoff: {N} checks passed")

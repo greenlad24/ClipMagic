@@ -831,6 +831,10 @@ export async function getJob(id: string) {
   if (status.stages?.music || (queued && (await readJson<any>(path.join(dir, "queue.json")))?.action === "remusic")) {
     stageList.push({ id: "music", title: "Change the music (sound only)" });
   }
+  // a graphics-only job's cut after the run (worker action "trim", aieditor/handoffcut.py)
+  if (status.stages?.trim || (queued && (await readJson<any>(path.join(dir, "queue.json")))?.action === "trim")) {
+    stageList.push({ id: "trim", title: "Cut the timelines, brief and preview (no media re-made)" });
+  }
   // a HELD edit is not a finished edit: its files are kept for inspection, never listed as edits/finals
   const held = await heldOf(dir, status);
   const runner = await readJson<any>(path.join(dir, "runner.json"));
@@ -934,8 +938,8 @@ export async function chainOf(dir: string, req: any): Promise<ChainInfo | null> 
 export async function saveEdits(id: string, videos: unknown) {
   const dir = jobDir(id);
   const req = await readJson<any>(path.join(dir, "request.json"));
-  // a GRAPHICS-ONLY job may be cut after its run (Jake 2026-10-12): the package and preview follow ("render" — the
-  // plan is re-timed by code, no new plan, no new pictures). Other creative edits keep the narration as it is.
+  // a GRAPHICS-ONLY job may be cut after its run (Jake 2026-10-12): action "trim" cuts the package's timelines, brief
+  // and preview only — nothing re-made, on the main box. Other creative edits keep the narration as it is.
   const handoffCut = req?.handoff === true && req?.format === "long" && !req?.excerpt;
   if (workflowOf(req) === "creative" && !handoffCut) {
     throw new Error("A creative edit keeps the narration as it is — there is no cut to edit.");
@@ -954,7 +958,7 @@ export async function saveEdits(id: string, videos: unknown) {
     throw new Error("Cut after the run: wait until the job has finished.");
   }
   await writeJson(path.join(dir, "plan.edit.json"), { videos: clean, saved_at: Date.now() / 1000 });
-  await writeJson(path.join(dir, "queue.json"), { action: handoffCut ? "render" : "rebuild" });
+  await writeJson(path.join(dir, "queue.json"), { action: handoffCut ? "trim" : "rebuild" });
   return { ok: true, rebuilding: handoffCut ? "package" : "cut" };
 }
 
@@ -1098,8 +1102,8 @@ export async function resetEdits(id: string) {
   const dir = jobDir(id);
   const req = await readJson<any>(path.join(dir, "request.json"));
   await fsp.rm(path.join(dir, "plan.edit.json"), { force: true });
-  // a graphics-only job: back to the whole timeline — the package and preview follow
-  await writeJson(path.join(dir, "queue.json"), { action: req?.handoff === true ? "render" : "rebuild" });
+  // a graphics-only job: back to the whole timeline — its original timelines, brief and preview
+  await writeJson(path.join(dir, "queue.json"), { action: req?.handoff === true ? "trim" : "rebuild" });
   return { ok: true };
 }
 

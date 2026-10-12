@@ -309,6 +309,8 @@ def run_job(job, action):
         return run_final(job, fmt)
     if action == "remusic":                                 # "Change music": the sound only (aieditor/music.py)
         return run_remusic(job)
+    if action == "trim":                                    # a graphics-only cut: the sequences + the preview only
+        return run_trim(job)
 
     # 1 download (a Descript link) — or a Lab edit / an uploaded file already on this volume:
     # hard-linked into the job as source.mp4 (aieditor/sources.py; for a factory job that
@@ -380,11 +382,10 @@ def run_job(job, action):
                 "notes": "Creative edit: the narration was already edited, so every word is kept — no cuts.",
             })
         plan = jload(d / "plan.json")
-        # a graphics-only job's cut AFTER the run (Jake 2026-10-12): plan.edit.json from the Lab's transcript — words /
-        # sentences removed; everything else of the timeline stays as recorded (edl.creative_cut)
+        # a graphics-only job's cut AFTER the run (Jake 2026-10-12) lives in plan.edit.json and is applied to the
+        # package's sequences + preview only (action "trim", aieditor/handoffcut.py); the job's timeline stays whole
         cut_p = d / "plan.edit.json"
         cut = takes.validate(jload(cut_p), sents) if handoff.wanted(req) and cut_p.exists() and not req.get("excerpt") else None
-        cut_at = round(cut_p.stat().st_mtime, 3) if cut else None
         jdump(d / "review.json", {
             "sentences": [{"s": n, "start": round(s[0]["s"], 2), "end": round(s[-1]["e"], 2),
                            "words": [{"i": w["i"], "w": w["w"]} for w in s]} for n, s in enumerate(sents)],
@@ -393,25 +394,16 @@ def run_job(job, action):
 
         def do_timeline():
             # optional request.json "excerpt": [[t0, t1], ...] source seconds — a short test of the edit
-            if cut:
-                keep = {w["i"] for w in edl.kept_words(cut["videos"][0], sents)}
-                v = edl.creative_cut(words, by_id, info["duration"], fps, [w["i"] for w in words if w["i"] not in keep],
-                                     plan["videos"][0]["title"], audio=edl.Audio(d / "audio16k.wav"))
-            else:
-                v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"],
-                                    excerpt=req.get("excerpt"))
+            v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"],
+                                excerpt=req.get("excerpt"))
             jdump(d / "edl.json", {"fps": fps, "fps_num": info["fps_num"], "fps_den": info["fps_den"],
                                    "width": info["width"], "height": info["height"], "videos": [v],
-                                   "workflow": "creative", "cut_at": cut_at})
-            if cut:
-                return (f"your cut: {len(v.get('removed') or [])} word(s) removed, {v['cuts']} join(s), "
-                        f"{v['duration']:.0f}s (every other pause as recorded)")
+                                   "workflow": "creative"})
             if v.get("excerpt"):
                 return (f"excerpt kept: {v['duration']:.0f}s of " + ", ".join(f"{a:.0f}–{b:.0f}s" for a, b in v["excerpt"])
                         + f", {len(v['words'])} words")
             return f"whole timeline kept: {v['duration']:.0f}s, {len(v['words'])} words, no cuts"
-        step("timeline", do_timeline, lambda: (d / "edl.json").exists() and (jload(d / "edl.json") or {}).get("cut_at") == cut_at,
-             rerun=rebuild)
+        step("timeline", do_timeline, lambda: (d / "edl.json").exists(), rerun=rebuild)
         if handoff.wanted(req):
             return run_handoff(job, action, req, info, fps, step)
         if action in ("run", "edit"):
@@ -530,9 +522,6 @@ def run_handoff(job, action, req, info, fps, step):
         out = handoff.plan(d, req, e, log=job.log, progress=lambda m=None, f=None: job.progress(m, f))
         job.st["cost_usd"] = round(job.st["cost_usd"] + out["usd"], 4)
         return out["note"] + (f", ${out['usd']:.2f}" if out["usd"] else "")
-    if handoff.can_retime(d):
-        # he cut words after the run: the SAME plan on the new timeline, by code — no plan call, no new pictures
-        handoff.retime(d, e, log=job.log)
     step("preprod", do_plan, lambda: handoff.plan_fresh(d))
 
     def do_assets():
@@ -577,6 +566,9 @@ def run_handoff(job, action, req, info, fps, step):
             except (render.RenderCancelled, InterruptedError):
                 raise Cancelled()
             notes.append(r["note"])
+        if (d / "plan.edit.json").exists():           # his cut after the run, applied to the new package as well
+            from aieditor import handoffcut
+            notes.append(handoffcut.run(d, log=job.log, cancelled=job.cancelled))
         return "; ".join(notes)
     step("handoff", do_package, rerun=True)
 
@@ -963,24 +955,66 @@ def run_final_long(job):
     job.stage("final", "done", f"{len(e['videos'])} final video(s) at {w}×{h}")
 
 
+def run_trim(job):
+    """Queue action "trim" (Lab: a graphics-only job's transcript, "Save & cut" / "Undo all cuts"): plan.edit.json
+    applied to the hand-off package's timelines, brief and preview — nothing re-made, no Claude, no server (Jake
+    2026-10-12: "No need to do reproduction on cuts - only cutting the sequences and the preview")."""
+    from aieditor import handoffcut
+    d = job.d
+    job.stage("trim", "running")
+    job.progress("Cutting the sequences and the preview…", 0)
+    job.log("stage trim start")
+    words = takes.load_words(d / "words.json")
+    sents = takes.sentences(words)
+    plan = jload(d / "plan.json") or {}
+    cut = takes.validate(jload(d / "plan.edit.json"), sents) if (d / "plan.edit.json").exists() else None
+    rv = jload(d / "review.json")
+    if rv:                                                  # the transcript shows the cut that is applied
+        rv.update(videos=(cut or plan)["videos"], edited=bool(cut))
+        jdump(d / "review.json", rv)
+    try:
+        note = handoffcut.run(d, log=job.log, progress=lambda m=None, f=None: job.progress(m, f), cancelled=job.cancelled)
+    except (render.RenderCancelled, InterruptedError):
+        raise Cancelled()
+    job.log(f"stage trim done {note}")
+    job.stage("trim", "done", note)
+
+
 def run_remusic(job):
     """Queue action "remusic" (Lab: "Change music" on a finished job): every finished output gets the music
     request.json "music" asks for — a new soundtrack under the same picture (stream copy), the hand-off's
     music stem + preview sound + zip. Nothing is re-recorded, re-planned, re-aligned or re-cut; on the box
     (no heavy render: the cut's sound alone + remuxes)."""
-    from aieditor import music
+    from aieditor import handoffcut, music
     job.stage("music", "running")
     job.progress("Changing the music…", 0)
     job.log("stage music start")
+    # a graphics-only job he CUT after the run: the music goes under the whole (original) preview, which becomes the
+    # new original, and the cut is applied again — the stems are whole-timeline files anyway
+    cuts = sorted(job.d.glob("handoff-*.orig"))
+    for o in cuts:
+        k = o.name.split("-")[1].split(".")[0]
+        if (o / "preview.mp4").exists():
+            pv = job.d / f"preview-{k}.mp4"
+            pv.unlink(missing_ok=True)
+            os.link(o / "preview.mp4", pv)
     try:
         note = music.remusic(job.d, job.cancelled, lambda m=None, f=None: job.progress(m, f), job.log)
     except (render.RenderCancelled, InterruptedError):
         raise Cancelled()
+    for o in cuts:
+        k = o.name.split("-")[1].split(".")[0]
+        pv = job.d / f"preview-{k}.mp4"
+        if pv.exists():
+            (o / "preview.mp4").unlink(missing_ok=True)
+            os.link(pv, o / "preview.mp4")
+    if cuts:
+        note += "; " + handoffcut.run(job.d, log=job.log, cancelled=job.cancelled)
     job.log(f"stage music done {note}")
     job.stage("music", "done", note)
 
 
-QUICK = ("rebuild", "recut", "remusic")     # Jake's edits: cut + sound check / a music change, minutes
+QUICK = ("rebuild", "recut", "remusic", "trim")     # Jake's edits: cut + sound check / a music change, minutes
 
 
 def claim(skip=None):
