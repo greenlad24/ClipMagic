@@ -2081,7 +2081,8 @@ export default function ScriptGeneratorPage() {
       // of the stored input the moment the job starts, so a race here is a run
       // that quietly ignores the shots the user just added.
       const attached = (run.input.screenshots ?? []).length;
-      if (cpShots.length !== attached) {
+      // only a run still at the checkpoint takes screenshots; a Resume of a started run keeps what it read
+      if (run.status === 'awaiting_confirmation' && cpShots.length !== attached) {
         setAttachingShots(true);
         try {
           await attachScriptShots({ runId: run.runId, screenshots: cpShots });

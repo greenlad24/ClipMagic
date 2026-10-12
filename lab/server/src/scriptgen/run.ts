@@ -262,6 +262,12 @@ export async function startScript(input: ScriptInput): Promise<{ runId: string; 
 export function attachScreenshots(runId: string, screenshots: ScreenshotRef[]): { count: number } {
   const run = getRun(runId);
   if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  // Resume of a run that already started (Jake 2026-10-12: "it's not working now" after a server restart): the page
+  // re-sends the screenshot list it has — empty when it was reopened — which must not block the resume nor drop the
+  // shots the run already read. Nothing to change → nothing to refuse.
+  if (run.status !== "awaiting_confirmation" && screenshots.length === 0) {
+    return { count: (run.input.screenshots ?? []).length };
+  }
   if (run.status !== "awaiting_confirmation") {
     throw new ZiteError({
       code: "BAD_REQUEST",
