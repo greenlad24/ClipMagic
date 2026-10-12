@@ -398,7 +398,10 @@ s = fresh_settings(logged_in_away="wait")
 do = FakeDO(c32=("lon1",))
 cloud.api = do
 check(not cloud.capacity_ok({"workflow": "creative"}, "run"), "a logged-in job waits (stays queued) with SGP1 out")
-check(cloud.capacity_ok({"workflow": "creative", "handoff": {"x": 1}}, "run"), "a hand-off job records nothing → any region")
+check(cloud.capacity_ok({"workflow": "creative", "handoff": {"x": 1}, "handoff_assets": False}, "run"),
+      "a hand-off job without pictures uses no login → any region")
+check(not cloud.capacity_ok({"workflow": "creative", "handoff": {"x": 1}}, "run"),
+      "a hand-off job makes its pictures in the logged-in app (Jake 2026-10-12) → waits for SGP1 like a logged-in job")
 check(cloud.capacity_ok({"workflow": "creative"}, "final"), "the creative job's final render → any region")
 check(cloud.capacity_ok({"workflow": "cut"}, "run"), "a cut → any region")
 try:

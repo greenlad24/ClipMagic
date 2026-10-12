@@ -1047,12 +1047,15 @@ _CAP = {}
 
 
 def logged_in_job(req, action):
-    """Does this run record logged-in screencasts (Scout profiles, Cloudflare-bound to this box's IP)?"""
+    """Does this run use the logged-in app (screencasts, or a graphics-only job's pictures — Scout profiles,
+    Cloudflare-bound to this box's IP)?"""
     req = req or {}
     # "render" redoes the screencasts not recorded yet (graphics rerun, skip_done) — it needs the login too (run 21: a
     # render without it turned all 35 screencasts into "no_scout_login" fallbacks at once)
+    # a graphics-only job makes its pre-production pictures in the logged-in app (handoff stage "assets") unless
+    # request.json "handoff_assets" is false — then it needs no login at all
     return (action in ("run", "edit", "render") and bool(req.get("sites") or req.get("workflow") == "creative")
-            and not req.get("handoff"))
+            and (not req.get("handoff") or req.get("handoff_assets", True) is not False))
 
 
 def needs_home(s, req, action):

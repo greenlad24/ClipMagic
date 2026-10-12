@@ -32,6 +32,7 @@ export function handoffStages(head: { id: string; title: string }[]): { id: stri
     ...head,
     { id: "timeline", title: "Keep the edited timeline (no cuts)" },
     { id: "preprod", title: "Plan the edit (screencast slots + overlays, no browser)" },
+    { id: "assets", title: "Make the pre-production pictures (in the app, off camera)" },
     { id: "graphics", title: "Render the overlays" },
     { id: "handoff", title: "Build the hand-off package (timelines, graphics, stems, brief, preview)" },
   ];

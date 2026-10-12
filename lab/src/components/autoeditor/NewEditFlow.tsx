@@ -154,7 +154,7 @@ const HANDOFF_OPTION: (typeof WORKFLOWS)[number] = {
     'You get one zip: timelines for Premiere and Resolve, every graphic with transparency, audio stems, a brief per screencast slot and a preview.',
   ],
 };
-const handoffPlanned = (stages: string[]) => [...stages.slice(0, 5), 'Plan the edit (no browser)', 'Render the overlays', 'Build the hand-off package'];
+const handoffPlanned = (stages: string[]) => [...stages.slice(0, 5), 'Plan the edit (no browser)', 'Make the pictures (in the app)', 'Render the overlays', 'Build the hand-off package'];
 
 type SourceKind = 'descript' | 'job' | 'upload' | 'library';
 

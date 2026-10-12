@@ -47,7 +47,7 @@ from pathlib import Path
 from . import compose_long, config, director, events as ev_log, graphics_long, longedit, media, planfit, render, sfx, skill
 
 PKG = "handoff-{k:02d}"
-STAGES = ["download", "audio", "transcribe", "align", "timeline", "preprod", "graphics", "handoff"]
+STAGES = ["download", "audio", "transcribe", "align", "timeline", "preprod", "assets", "graphics", "handoff"]
 AROLL_CODECS = ("h264", "prores")          # request.json "handoff_aroll": h264 (default, source quality) | prores (422 HQ)
 # every graphic's alpha comes from an 8-bit source (PNG frames, the mask), so 8 alpha bits lose nothing
 PRORES_4444 = "-c:v prores_ks -profile:v 4 -alpha_bits 8 -vendor apl0 -pix_fmt yuva444p10le"
@@ -150,10 +150,133 @@ def plan(d, req, edl, log=print, progress=None):
     return {"note": note, "usd": round(usd, 4)}
 
 
+# ════════════════════════════ stage "assets": the pre-production pictures ════════════════════════════
+# Jake 2026-10-12: "I want the handoff package to include all of the images and assets generated in the
+# preproduction with it (like it would have done the screencast recording but just downloading all of these assets
+# so the editor can use them)". The SAME producer as a full run's P3 (onboard.route on the picture needs only: the
+# asset agent makes each one in the app's UI, off camera, in chats this job creates; the doodle by code; the same
+# checks, genledger spacing, caps and chat guards) — and nothing of the screencast work (no P2/P4, no dry run, no
+# recording). request.json "handoff_assets": false skips it (then no login is needed).
+
+ASSET_MARK = "handoff-assets.json"
+
+
+def assets_wanted(req):
+    return (req or {}).get("handoff_assets", True) is not False
+
+
+def assets_fresh(d):
+    d = Path(d)
+    return _fresh(d / "preprod" / ASSET_MARK, (d / "preprod" / "plan.json").stat().st_mtime
+                  if (d / "preprod" / "plan.json").exists() else 0)
+
+
+def asset_needs(plan):
+    """The plan's pictures as P3 rows: every asset a beat names (asset_id, or subject "asset:<id>") with the
+    description its first describing beat gives (new_asset), once each — plus the B rows of needs_primitive. A picture
+    the plan names but never describes is left out (logged by the caller): nothing is made from a bare id."""
+    from . import onboard
+    answer = plan.get("answer") or {}
+    descs, order = {}, []
+    for seg in answer.get("segments") or []:
+        for b in seg.get("beats") or []:
+            sub_ = str(b.get("subject") or "")
+            aid = b.get("asset_id") or (sub_[6:] if sub_.startswith("asset:") else None)
+            if not aid:
+                continue
+            if aid not in order:
+                order.append(aid)
+            if b.get("new_asset") and aid not in descs:
+                descs[aid] = (str(b["new_asset"]), b.get("word_id"))
+    rows = [{"group": "B", "code": "new_asset", "why": f"new asset '{aid}' — {descs[aid][0]}", "need": descs[aid][0],
+             "word_ids": [descs[aid][1]] if descs[aid][1] is not None else [],
+             "proposed": {"asset_id": aid, "desc": descs[aid][0], "word_id": descs[aid][1]}} for aid in order if aid in descs]
+    rows += onboard.needs_report(list(plan.get("needs_primitive") or []))["B"]
+    return rows, [aid for aid in order if aid not in descs]
+
+
+def make_assets(d, req, edl, log=print, progress=None, cancelled=None):
+    """Every picture of the plan + the narration's manifest, made as pre-production makes them → preprod/assets.json
+    (+ assets/<id>.png), then the mark. → {"note", "usd"}. Raises genledger.QuotaWait / apiledger.BudgetExceeded /
+    InterruptedError like pre-production (the worker waits / holds / cancels)."""
+    from . import agentrec, onboard, planfit, preflight, preprod, rehearse
+    d = Path(d)
+    out = d / "preprod"
+    pdoc = jload(out / "plan.json") or {}
+    if not (pdoc.get("plan") or {}).get("answer"):
+        return {"note": "no plan to make pictures for", "usd": 0.0}
+    if rehearse.mode() != "agent":
+        # the picture producer of a full run in playbook mode also replays proven screencast actions (reprove): not here
+        log("assets: the asset agent is off (rehearsal mode is not 'agent') — no pictures made")
+        jdump(out / ASSET_MARK, {"at": time.time(), "made": 0, "skipped": "rehearsal mode"})
+        return {"note": "skipped (asset agent off)", "usd": 0.0}
+    v = edl["videos"][0]
+    video = {"title": v.get("title", ""), "duration": v["duration"], "words": v["words"]}
+    job = preprod.EdlJob(d, req, video)
+    url = next((s["url"] for s in pdoc.get("sites") or [] if preprod.adapter_for(s["url"]) and agentrec.scout_for(s["url"])), None)
+    if not url:
+        log("assets: no logged-in app with a picture producer among the plan's sites — no pictures made")
+        jdump(out / ASSET_MARK, {"at": time.time(), "made": 0, "skipped": "no logged-in app"})
+        return {"note": "no logged-in app — no pictures", "usd": 0.0}
+    app = preprod.adapter_for(url)
+    if progress:
+        progress("Pictures: checking the app is logged in…", 0.02)
+    p = preprod.Probe(out / "session", app.site, dark=True)
+    try:
+        checks = app.readiness(p, out)
+        for c in checks:                                   # a failed global check gets one fresh load (as _flow)
+            if c["id"] in preprod.REQUIRED_GLOBAL and c["status"] != "pass":
+                again = {x["id"]: x for x in app.readiness(p, out)}
+                if again.get(c["id"], {}).get("status") == "pass":
+                    c.update(again[c["id"]])
+    finally:
+        p.close()
+    sc = getattr(p, "scout", None) or {}
+    readiness = {"app": app.site, "scout_profile": sc.get("slug"), "logged_in_at": sc.get("logged_in_at"),
+                 "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "checks": checks,
+                 "features": preprod.features_of(app, checks)}
+    jdump(out / "readiness.json", readiness)
+    bad = [c["id"] for c in checks if c["id"] in preprod.REQUIRED_GLOBAL and c["status"] != "pass"]
+    if bad:
+        raise RuntimeError(f"pictures: the app is not ready ({', '.join(bad)}) — nothing generated")
+    if cancelled and cancelled():
+        raise InterruptedError()
+    # the narration's manifest: the doodle by code, the in-app pictures left pending for the producer (no image API)
+    man = preprod.asset_manifest(job)
+    jdump(out / "manifest.json", man)
+    assets = preprod.build_assets(man, out, d / "elements", 0.0, app=app)
+    assets["objects"] = man.get("objects", [])
+    preprod.save_assets(assets, out / "assets.json")
+    rows, bare = asset_needs(pdoc["plan"])
+    if bare:
+        log(f"assets: {len(bare)} picture id(s) the plan never describes — not made: {', '.join(bare[:12])}")
+    pending = sum(1 for a in assets["assets"] if a.get("status") != "ready")
+    preflight.headroom(d.name, len(rows) + pending, per_need_usd=0.25, cap_usd=min(onboard.app_cap(), 4.0))
+    ctx = preprod.make_ctx(job, out, app, readiness, assets, say=log, progress=progress, cancelled=cancelled)
+    try:
+        # the full run's router with the PICTURE needs only: in agent mode the screencast routes (A, C) get nothing
+        # and no proven action is replayed; its patched plan is NOT written (the hand-off plan + brief stay as they are)
+        res = onboard.route(ctx, {**pdoc, "plan": {**pdoc["plan"], "needs_primitive": rows}},
+                            preprod.job_video(job, [job.whole()]), pdoc.get("sites") or [{"url": url}], assets,
+                            lambda a: planfit.Facts(readiness, a))
+    finally:
+        preprod.save_assets(assets, out / "assets.json")
+    ready = [a for a in assets.get("assets") or [] if a.get("status") == "ready" and a.get("file") and Path(a["file"]).exists()]
+    failed = [h["detail"] for h in res.get("held") or []]
+    jdump(out / ASSET_MARK, {"at": time.time(), "made": len(ready), "failed": failed, "usd": res.get("usd", 0.0)})
+    note = f"{len(ready)} picture(s) ready" + (f", {len(failed)} could not be made (listed in the package)" if failed else "")
+    log(f"assets: {note}")
+    return {"note": note, "usd": float(res.get("usd") or 0.0)}
+
+
 # ════════════════════════════ stage "graphics": the overlays ════════════════════════════
 
 def overlays_fresh(d, n_videos):
     d = Path(d)
+    pics = d / "preprod" / ASSET_MARK            # new pictures → the screen templates are made again (their results)
+    if pics.exists() and any(not _fresh(d / f"edit-{k:02d}" / "overlays.json", pics.stat().st_mtime)
+                             for k in range(1, n_videos + 1)):
+        return False
     return all(_fresh(d / f"edit-{k:02d}" / "overlays.json", _edl_at(d)) and _fresh(d / f"edit-{k:02d}" / "direct.json", _edl_at(d))
                for k in range(1, n_videos + 1))
 
@@ -565,6 +688,8 @@ where a file is, point it to this folder once and let it find the rest.
   A2  audio/music.wav       music bed
   A3  audio/sfx.wav         sound effects
   screencasts/BRIEF.html    what to record for every slot, on which word (also slots.csv)
+  assets/                   the pre-production pictures (made in the app, off camera) to use in the screencasts;
+                            assets.csv says what each one shows and the prompt that made it
   preview.mp4               the whole edit with a placeholder card in every slot (and the optional templates shown)
 
 {n} slot(s), {total:.0f} s of screencast in a {dur:.0f} s video.
@@ -572,6 +697,42 @@ where a file is, point it to this folder once and let it find the rest.
 
 
 # ════════════════════════════ stage "handoff": the package ════════════════════════════
+
+def package_assets(d, dst):
+    """preprod/assets.json's READY pictures (+ the job's supplied elements) → dst/<id>.<ext> and dst/assets.csv
+    (file, what it shows, the prompt that made it, where it was made). Not-ready ones are listed with why.
+    → number of files copied."""
+    d, dst = Path(d), Path(dst)
+    doc = jload(d / "preprod" / "assets.json") or {}
+    rows, n = [], 0
+    for a in doc.get("assets") or []:
+        f = Path(a.get("file") or "")
+        ok = a.get("status") == "ready" and f.is_file()
+        name = ""
+        if ok:
+            dst.mkdir(parents=True, exist_ok=True)
+            name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(a["id"]))[:60] + f.suffix.lower()
+            shutil.copyfile(f, dst / name)
+            n += 1
+        src = a.get("source") or {}
+        rows.append([name, a.get("id"), a.get("status"), str(a.get("desc") or "")[:300],
+                     str(a.get("prompt") or src.get("prompt") or "")[:600], str(src.get("type") or "")[:80],
+                     "" if ok else str(a.get("why") or "")[:200]])
+    el = d / "elements"
+    for f in sorted(el.glob("*")) if el.is_dir() else []:
+        if f.is_file():
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(f, dst / f"element-{f.name}")
+            rows.append([f"element-{f.name}", f.stem, "supplied", "a file supplied with the job", "", "supplied", ""])
+            n += 1
+    if rows and n:
+        buf = io.StringIO()
+        wr = csv.writer(buf)
+        wr.writerow(["file", "id", "status", "what it shows", "prompt that made it", "made by", "why not made"])
+        wr.writerows(rows)
+        (dst / "assets.csv").write_text(buf.getvalue())
+    return n
+
 
 def _slug(s, n=28):
     return re.sub(r"[^a-z0-9]+", "-", str(s or "").lower()).strip("-")[:n].strip("-") or "clip"
@@ -981,6 +1142,11 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
              [(tmp_pkg, "/p"), (w, "/w")], cancelled)
         placeholders.append({"name": f"slot-{s['n']:02d} placeholder", "file": rel, "start": F(s["a"]), "frames": frames,
                              "media_frames": frames})
+
+    # 6b the pre-production pictures (stage "assets"), for the editor to use: every ready picture + what it is
+    n_pics = package_assets(d, tmp_pkg / "assets")
+    if n_pics:
+        log(f"hand-off: {n_pics} pre-production picture(s) in assets/")
 
     # 7 the timelines
     progress("Timelines (Premiere XML + FCPXML)…", 0.72)

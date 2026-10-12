@@ -503,8 +503,10 @@ def run_preprod(job, req, info, fps):
 
 def run_handoff(job, action, req, info, fps, step):
     """GRAPHICS ONLY — the editor adds the screencasts (aieditor/handoff.py). The plan (one plan call + check +
-    overlay call, no browser, never held for a missing primitive) → the overlays → the hand-off package. No
-    screencast is recorded, so no Scout account is locked and nothing waits for one."""
+    overlay call, no browser, never held for a missing primitive) → the pre-production pictures (stage "assets": made
+    in the logged-in app by the asset agent, as a full run makes them — Jake 2026-10-12; request.json
+    "handoff_assets": false skips it) → the overlays → the hand-off package (with the pictures in assets/). No
+    screencast is recorded; the account is locked only for the pictures."""
     d = job.d
     e = jload(d / "edl.json")
     size = (info["width"], info["height"])
@@ -515,6 +517,24 @@ def run_handoff(job, action, req, info, fps, step):
         job.st["cost_usd"] = round(job.st["cost_usd"] + out["usd"], 4)
         return out["note"] + (f", ${out['usd']:.2f}" if out["usd"] else "")
     step("preprod", do_plan, lambda: handoff.plan_fresh(d))
+
+    def do_assets():
+        try:
+            out = handoff.make_assets(d, req, e, log=job.log, progress=lambda m=None, f=None: job.progress(m, f),
+                                      cancelled=job.cancelled)
+        except InterruptedError:
+            raise Cancelled()
+        except genledger.QuotaWait as exc:            # the app's generations stop for now: wait, then go on (as preprod)
+            raise Waiting(exc.resume_at, exc.status()) from None
+        except apiledger.BudgetExceeded as exc:
+            if exc.which == "daily":
+                at = apiledger.frees_at(1.0)
+                raise Waiting(at, f"Waiting: the Claude API daily cap is reached — continues about "
+                                  f"{time.strftime('%H:%M', time.gmtime(at + 7 * 3600))} Bangkok time") from None
+            raise Held(longedit.add_held(d, apiledger.BudgetExceeded.reason, str(exc))) from None
+        job.st["cost_usd"] = round(job.st["cost_usd"] + out["usd"], 4)
+        return out["note"] + (f", ${out['usd']:.2f}" if out["usd"] else "")
+    step("assets", do_assets, lambda: (not handoff.assets_wanted(req)) or handoff.assets_fresh(d))
 
     def do_overlays():
         notes, usd = [], 0.0
@@ -1223,7 +1243,8 @@ def main():
         if not cloud.enabled_for(action, req):
             return False
         # one job per logged-in account: a job whose Scout account is in use stays queued
-        if action in ("run", "edit", "render") and (req.get("sites") or workflow_of(req) == "creative") and not handoff.wanted(req):
+        if action in ("run", "edit", "render") and (req.get("sites") or workflow_of(req) == "creative") \
+                and (not handoff.wanted(req) or handoff.assets_wanted(req)):
             try:
                 slugs = cloud.scout_slugs(req, d)
                 if any(accountlock.busy(slug) for slug in slugs):

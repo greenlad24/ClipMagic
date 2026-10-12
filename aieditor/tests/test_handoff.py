@@ -307,8 +307,9 @@ def test_worker():
     finally:
         llm.TRANSPORT, graphics_long.render, W.handoff.build, sites_mod.scout_tools = saved
     st = job.st["stages"]
-    for s in ("timeline", "preprod", "graphics", "handoff"):
+    for s in ("timeline", "preprod", "assets", "graphics", "handoff"):
         check(st[s]["state"] == "done", f"{s} done: {st[s]}")
+    check("no logged-in app" in st["assets"]["note"], f"a site without a picture producer: no pictures, never a stop: {st['assets']}")
     check("preview" not in st and "compose" not in st, "no preview / compose stage (nothing is recorded)")
     check(calls.count("overlays") == 1 and 1 <= calls.count("plan") <= 1 + config.PLAN_REASKS and "other" not in calls,
           f"one plan call (+ re-asks) and one overlay call: {calls}")
@@ -464,10 +465,93 @@ def test_screen_templates():
     check(list(csv.reader(io.StringIO(handoff.slots_csv(rows))))[1][-1].endswith("prompt_highlight.mov"), "slots.csv lists it")
 
 
+def test_assets():
+    """Jake 2026-10-12: the graphics-only lane makes the pre-production pictures as a full run does (the asset agent in
+    the logged-in app, the picture needs only) and the package carries them in assets/."""
+    from aieditor import agentrec, cloud, onboard, preflight, preprod, rehearse
+    plan = {"answer": {"segments": [{"beats": [
+        {"asset_id": "hook_sketch", "new_asset": "Rough mouse sketch of a hot sauce bottle", "word_id": 3, "subject": "asset:hook_sketch"},
+        {"asset_id": "hook_photo", "new_asset": "ChatGPT's realistic photo of the sketch", "word_id": 9},
+        {"subject": "asset:hook_photo", "word_id": 12},
+        {"subject": "asset:mystery", "word_id": 14}]}]},
+        "needs_primitive": [{"code": "onboard", "why": "the Markup tool"}]}
+    rows, bare = handoff.asset_needs(plan)
+    check([r["proposed"]["asset_id"] for r in rows] == ["hook_sketch", "hook_photo"] and all(r["group"] == "B" for r in rows),
+          f"each described picture once, as a P3 row; screencast needs are not pictures: {rows}")
+    check(rows[1]["proposed"]["word_id"] == 9 and bare == ["mystery"], f"its first describing beat; a bare id is listed: {bare}")
+    # the login: a graphics-only job uses the logged-in app for its pictures — unless it asks for none
+    r = {"workflow": "creative", "handoff": True}
+    check(cloud.logged_in_job(r, "run") and not cloud.logged_in_job({**r, "handoff_assets": False}, "run"),
+          "graphics only + pictures → logged in; handoff_assets false → no login")
+    check(handoff.assets_wanted({}) and not handoff.assets_wanted({"handoff_assets": False}), "pictures on by default")
+
+    # make_assets end to end with fakes: readiness → manifest → the router with the picture needs ONLY → assets.json
+    d = Path(tempfile.mkdtemp(prefix="handoff-assets-"))
+    (d / "preprod" / "assets").mkdir(parents=True)
+    pdoc = {"plan": plan, "handoff": True, "sites": [{"url": "https://chatgpt.com/"}]}
+    (d / "preprod" / "plan.json").write_text(json.dumps(pdoc))
+    edl_ = {"videos": [{"title": "T", "duration": 20.0, "words": [{"i": i, "word": "w", "start": i * 0.5, "end": i * 0.5 + 0.4} for i in range(30)]}]}
+    pic = d / "preprod" / "assets" / "hook_photo.png"
+    pic.write_bytes(b"\x89PNG fake")
+    seen = {}
+
+    class App:
+        site = "https://chatgpt.com/"
+        def readiness(self, p, out):
+            return [{"id": x, "status": "pass"} for x in preprod.REQUIRED_GLOBAL]
+
+    class Probe:
+        scout = {"slug": "chatgpt", "logged_in_at": "now"}
+        def __init__(self, *a, **k): pass
+        def close(self): pass
+
+    def fake_route(ctx, pd, video, sites, assets, facts_fn, held_reasons=None):
+        seen["rows"] = pd["plan"]["needs_primitive"]
+        assets["assets"].append({"id": "hook_photo", "status": "ready", "file": str(pic), "kind": "app_generation",
+                                 "desc": "ChatGPT's realistic photo", "prompt": "Turn this rough sketch into a realistic photo",
+                                 "source": {"type": "in-app generation (off camera, asset agent)"}})
+        assets["assets"].append({"id": "hook_sketch", "status": "needs_asset", "why": "4 tries failed"})
+        return {"plan": {"rewritten": True}, "held": [{"detail": "hook_sketch: 4 tries failed"}], "usd": 0.42}
+    saved = (agentrec.scout_for, preprod.adapter_for, preprod.Probe, preprod.asset_manifest, preprod.build_assets,
+             preprod.make_ctx, onboard.route, preflight.headroom, rehearse.mode)
+    try:
+        agentrec.scout_for = lambda url: {"slug": "chatgpt", "profile": "/x"}
+        preprod.adapter_for = lambda url: App() if "chatgpt" in url else None
+        preprod.Probe = Probe
+        preprod.asset_manifest = lambda job: {"shots": [], "assets": [], "objects": []}
+        preprod.build_assets = lambda man, out, el, budget, app=None: {"assets": [], "image_api_usd": 0}
+        preprod.make_ctx = lambda *a, **k: object()
+        onboard.route = fake_route
+        preflight.headroom = lambda *a, **k: None
+        rehearse.mode = lambda: "agent"
+        out = handoff.make_assets(d, {"handoff": True, "workflow": "creative"}, edl_, log=lambda *a: None)
+    finally:
+        (agentrec.scout_for, preprod.adapter_for, preprod.Probe, preprod.asset_manifest, preprod.build_assets,
+         preprod.make_ctx, onboard.route, preflight.headroom, rehearse.mode) = saved
+    check([r["proposed"]["asset_id"] for r in seen["rows"]] == ["hook_sketch", "hook_photo"], f"the router got the pictures only: {seen}")
+    check(json.loads((d / "preprod" / "plan.json").read_text()) == pdoc, "the hand-off plan is NOT rewritten by the router")
+    check(out["usd"] == 0.42 and "1 picture(s) ready" in out["note"] and "1 could not" in out["note"], f"note: {out}")
+    check(handoff.assets_fresh(d), "the mark makes the stage reusable")
+    # new pictures → the overlays (screen templates with the real result) are made again
+    (d / "edit-01").mkdir()
+    (d / "edit-01" / "overlays.json").write_text("[]")
+    (d / "edit-01" / "direct.json").write_text("{}")
+    os.utime(d / "edit-01" / "overlays.json", (1, 1))
+    check(not handoff.overlays_fresh(d, 1), "overlays older than the pictures are rendered again")
+    # the package: every ready picture + what it is; a failed one listed with why
+    n = handoff.package_assets(d, d / "pkg" / "assets")
+    check(n == 1 and (d / "pkg" / "assets" / "hook_photo.png").read_bytes() == pic.read_bytes(), "the ready picture is copied")
+    rows_ = list(csv.reader(io.StringIO((d / "pkg" / "assets" / "assets.csv").read_text())))
+    check(rows_[1][0] == "hook_photo.png" and "realistic photo" in rows_[1][4] and rows_[2][6] == "4 tries failed",
+          f"assets.csv: what it shows, its prompt; a failed one with why: {rows_}")
+    check(handoff.package_assets(Path(tempfile.mkdtemp()), d / "none") == 0 and not (d / "none").exists(), "no pictures → no folder")
+
+
 if __name__ == "__main__":
     test_nlexml()
     test_slots_and_brief()
     test_package_maths()
     test_worker()
     test_screen_templates()
+    test_assets()
     print(f"test_handoff: {N} checks passed")
