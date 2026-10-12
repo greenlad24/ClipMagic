@@ -460,6 +460,11 @@ check(t[1] in ("prompt_highlight", "long_prompt_scroll") or not MT.is_on("prompt
       f"a typed step → the app's prompt box (MO06/MO07): {t}")
 check(t[3] is None and "presenter" in rows[2]["fallback"], "no template fits → the presenter, logged as such (never silent)")
 check(json.loads((TMP / "fb" / "fallbacks.json").read_text())["fallbacks"] == rows, "fallbacks.json")
+for raw, want in [("s box 'make this label look aged and slightly water-stained", "make this label look aged and slightly water-stained"),
+                  ("s regret as the name 'grandma's regret", "grandma's regret"),
+                  ("Turn grandma's sketch into a photo", "Turn grandma's sketch into a photo"),
+                  ('"Put this bottle on a sunny cafe table."', "Put this bottle on a sunny cafe table.")]:
+    check(preflight.clean_prompt(raw) == want, f"a typed prompt cut at an apostrophe → his words only: {raw!r} → {preflight.clean_prompt(raw)!r}")
 check(json.loads((TMP / "fb" / "fallbacks.json").read_text())["events"] == json.loads(json.dumps(evs)),
       "fallbacks.json keeps the full events (params too): the draft-size overlay re-render needs them (run 22)")
 _le = (ROOT / "aieditor" / "longedit.py").read_text()

@@ -706,6 +706,23 @@ def _phrases(text, n=2):
     return out or [str(text or "")[:40]]
 
 
+_OPEN_Q = re.compile(r"(?:^|(?<=\s))[\"'“‘]")
+
+
+def clean_prompt(t):
+    """A typed prompt as the plan carries it → the words he types. The plan sometimes cuts it out of the narration
+    at an apostrophe ("ChatGPT's box 'make this label look aged…'" → "s box 'make this label look aged…"): text
+    that opens with a split-word fragment, or that quotes the prompt inside other words, keeps only the quoted part.
+    An apostrophe inside a word (grandma's) is never a quote."""
+    t = str(t or "").strip()
+    m = _OPEN_Q.search(t)
+    if m and (m.start() > 0 or re.match(r"^[a-z]{1,2}\s", t)):
+        t = t[m.end():]
+    elif re.match(r"^[a-z]{1,2}\s", t):
+        t = t.split(None, 1)[1] if len(t.split(None, 1)) > 1 else t
+    return t.strip().strip("\"'“”‘’").strip()
+
+
 def fallback_event(seg, assets, video, why):
     """A screencast that cannot be recorded → an approved motion template of its step in the app's UI kit (the REAL
     result when there is one), or None (then the presenter shows it — logged as such by the caller).
@@ -714,8 +731,8 @@ def fallback_event(seg, assets, video, why):
     beats = seg.get("beats") or []
     # his on-screen words, wherever the plan keeps them (run 22: the plan's beats carry "text" / "typed_text", not
     # params.text — every fallback found no prompt and fell to the bare presenter, nothing demonstrated)
-    prompt = next((str(t) for b in beats for t in ((b.get("params") or {}).get("text"), b.get("typed_text"), b.get("text"))
-                   if isinstance(t, str) and len(t.split()) >= 2), "")
+    prompt = next((clean_prompt(t) for b in beats for t in ((b.get("params") or {}).get("text"), b.get("typed_text"), b.get("text"))
+                   if isinstance(t, str) and len(clean_prompt(t).split()) >= 2), "")
     by = {a.get("id"): a for a in (assets or {}).get("assets") or []}
     res = None
     for b in beats:

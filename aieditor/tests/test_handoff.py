@@ -425,9 +425,49 @@ def test_package_maths():
           "a cropped overlay at its box")
 
 
+def test_screen_templates():
+    """Jake 2026-10-12: the graphics-only lane uses our motion templates for what goes on screen — OPTIONAL for the
+    editor (own track, OFF), shown in the preview; a step with nothing to show keeps its card."""
+    words = [{"i": i, "word": w, "start": 10 + i * 0.4, "end": 10.3 + i * 0.4} for i, w in enumerate(
+        "now type a hot sauce bottle on a picnic table and send it".split())]
+    video = {"title": "T", "duration": 60.0, "words": words, "script": ""}
+    segs = [{"t0": 10.0, "t1": 18.0, "app": "chatgpt", "beats": [
+                {"action": "show"}, {"action": "type", "params": {"text": "A hot sauce bottle on a picnic table"}}]},
+            {"t0": 30.0, "t1": 36.0, "app": "chatgpt", "beats": [{"action": "show"}, {"action": "show"}]}]
+    evs = handoff.screen_templates(segs, video, None, log=lambda *a: None)
+    from aieditor import motiontemplates as MT
+    if any(MT.is_on(t) for t in ("prompt_highlight", "long_prompt_scroll", "prompt_menu", "prompt_card_3d")):
+        check(len(evs) == 1 and evs[0]["screen_template"]["seg"] == 0, f"only the step with his words gets one: {evs}")
+        check(evs[0]["fields"]["prompt"] == "A hot sauce bottle on a picnic table", "his prompt, verbatim")
+        check("fallback" not in evs[0] and evs[0]["t0"] == 10.0, "marked as a screen template, timed on its step")
+    # the timeline: its own track right above the editor's screencasts, every clip OFF (both formats)
+    g = [{"group": "screen", "name": "01-screen-template-slot-01-prompt_highlight",
+          "file": "graphics/01-screen-template-slot-01-prompt_highlight.mov", "start": 300, "frames": 240,
+          "media_frames": 240, "alpha": True, "enabled": False}]
+    slots = [{"n": 1, "label": "type the prompt", "start": 300, "frames": 300, "note": ""}]
+    tl, fcp = handoff.timeline_model("T", 30000, 1001, 1920, 1080, 1800, 1800, g, slots, [], 1800)
+    check(tl["video"][2]["name"] == handoff.SCREEN_TRACK and tl["video"][1]["name"] == "Screencasts (editor)",
+          f"the optional track sits right above the editor's: {[t['name'] for t in tl['video']]}")
+    check(tl["video"][1]["clips"] == [], "the editor's screencast track stays empty")
+    xm, fx = nlexml.xmeml(tl), nlexml.fcpxml(fcp)
+    check(not nlexml.validate_xmeml(xm) and not nlexml.validate_fcpxml(fx), "both timelines still validate")
+    clip = [c for c in ET.fromstring(xm).iter("clipitem") if "screen-template" in (c.findtext("name") or "")]
+    check(clip and clip[0].findtext("enabled") == "FALSE", "Premiere: the template clip is OFF")
+    check('enabled="0"' in fx and "screen-template" in fx, "FCPXML: the template clip is OFF")
+    # the brief names it per slot
+    rows = [{"slot": 1, "label": "x", "start_tc": "00:00:10:00", "end_tc": "00:00:18:00", "duration_s": 8.0, "start_s": 10.0, "end_s": 18.0, "enter": "cut in",
+             "exit": "runs to the end", "app": "chatgpt", "url": "", "logged_out_us": False, "words": "w", "on_screen": "",
+             "steps": [], "beats": [], "zoom": [], "flags": ["Privacy"], "notes": [],
+             "template": "graphics/01-screen-template-slot-01-prompt_highlight.mov"}]
+    page = handoff.brief_html(rows, {"title": "T", "width": 1920, "height": 1080, "fps_label": "29.97 fps"})
+    check("Optional motion template" in page and "switched off" in page and "preview shows it" in page, "the brief says it is optional")
+    check(list(csv.reader(io.StringIO(handoff.slots_csv(rows))))[1][-1].endswith("prompt_highlight.mov"), "slots.csv lists it")
+
+
 if __name__ == "__main__":
     test_nlexml()
     test_slots_and_brief()
     test_package_maths()
     test_worker()
+    test_screen_templates()
     print(f"test_handoff: {N} checks passed")

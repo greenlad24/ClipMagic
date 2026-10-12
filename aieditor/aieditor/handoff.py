@@ -158,6 +158,35 @@ def overlays_fresh(d, n_videos):
                for k in range(1, n_videos + 1))
 
 
+SCREEN_TRACK = "Screen templates (optional, off: switch on to use)"
+
+
+def screen_templates(segments, video, assets=None, log=print):
+    """Jake 2026-10-12: the graphics-only lane uses our motion templates for what goes ON SCREEN too — OPTIONAL for
+    the editor (its own track, switched OFF in both timelines), SHOWN in the preview. Each planned screencast step
+    with his words (a typed prompt, or a prompt of his script the narration reads) → its approved template, exactly
+    as a screencast fallback makes it (preflight.fallback_event: the app's real UI kit, his prompt verbatim, the
+    REAL result picture when the job has one). A step with nothing to show keeps its card — never a generic graphic.
+    → events marked "screen_template" ({seg, screencast_t})."""
+    from . import preflight
+    out = []
+    for i, seg in enumerate(segments or []):
+        try:
+            ev, note = preflight.fallback_event(seg, assets or {"assets": []}, video, "graphics only: the editor's slot")
+        except Exception as e:  # noqa: BLE001 — an optional template never breaks the package
+            log(f"screen template {i + 1}: skipped ({e})")
+            continue
+        if ev is None:
+            continue
+        ev.pop("fallback", None)
+        ev["screen_template"] = {"seg": i, "screencast_t": [round(float(seg["t0"]), 3), round(float(seg["t1"]), 3)]}
+        ev["why"] = "graphics only: an optional motion template of this screen step (the editor may record it instead)"
+        out.append(ev)
+    log(f"screen templates: {len(out)} of {len(segments or [])} screen step(s) ({', '.join(sorted({e['template'] for e in out})) or 'none'})"
+        " — optional for the editor, shown in the preview")
+    return out
+
+
 def overlays(d, k, v, fps, size, cancelled=lambda: False, progress=lambda m, f=None: None, log=print):
     """edit-NN/direct.json (the plan) + every overlay rendered at 1920 (the preview, tag gfx) and at the source
     width when it differs (the package, tag gfx-W). → (note, usd)"""
@@ -177,16 +206,22 @@ def overlays(d, k, v, fps, size, cancelled=lambda: False, progress=lambda m, f=N
         usd += float(meta.get("usd") or 0)
         jdump(w / "direct.json", {"plan": p, "raw": raw, "meta": meta, "sites": [], "handoff": True})
     plan_ = jload(w / "direct.json")["plan"]
+    req = jload(d / "request.json") or {}
+    screens = screen_templates(plan_.get("segments") or [], {**video, "script": req.get("script") or ""},
+                               jload(d / "preprod" / "assets.json"), log=log)
+    todo = (plan_.get("overlays") or []) + screens
     progress("Rendering the overlays…", 0.1)
-    evs = graphics_long.render(w, plan_.get("overlays") or [], video, fps, tag="gfx", cancelled=cancelled,
+    evs = graphics_long.render(w, todo, video, fps, tag="gfx", cancelled=cancelled,
                                progress=lambda m, f: progress(m, 0.1 + 0.4 * f))
     jdump(w / "overlays.json", evs)
     W, H = size
     if W != 1920:
         progress(f"Overlays at {W}×{H}…", 0.5)
-        graphics_long.render(w, plan_.get("overlays") or [], video, fps, size=(W, H), tag=f"gfx-{W}", cancelled=cancelled,
+        graphics_long.render(w, todo, video, fps, size=(W, H), tag=f"gfx-{W}", cancelled=cancelled,
                              progress=lambda m, f: progress(m, 0.5 + 0.5 * f))
-    return f"{len(plan_.get('segments') or [])} slot(s), {len(evs)} overlay(s)", usd
+    n_scr = sum(1 for e in evs if e.get("screen_template"))
+    return (f"{len(plan_.get('segments') or [])} slot(s), {len(evs) - n_scr} overlay(s)"
+            + (f", {n_scr} optional screen template(s)" if n_scr else "")), usd
 
 
 # ════════════════════════════ slots and the brief (pure) ════════════════════════════
@@ -432,7 +467,7 @@ def slots_csv(rows):
     wr = csv.writer(f)
     wr.writerow(["slot", "start_tc", "end_tc", "start_s", "end_s", "duration_s", "app", "url", "logged_out_us_browser",
                  "words", "on_screen", "beats (time - word: action / what / typed text)", "zoom_targets", "rules", "enter", "exit",
-                 "steps (n start-end: words)", "notes"])
+                 "steps (n start-end: words)", "notes", "optional_motion_template"])
     for r in rows:
         beats = " | ".join(
             f"{b['tc']} '{b['cue']}': " + " / ".join(x for x in (b["action"], b["what"], f"type: {b['text']}" if b.get("text") else "",
@@ -442,7 +477,7 @@ def slots_csv(rows):
                      "yes" if r["logged_out_us"] else "no", r["words"], r["on_screen"], beats, "; ".join(r["zoom"]),
                      "; ".join(r["flags"]), r["enter"], r["exit"],
                      " | ".join(f"{st['step']} {st['start_tc']}-{st['end_tc']}: {st['words']}" for st in r.get("steps") or []),
-                     " | ".join(r.get("notes") or [])])
+                     " | ".join(r.get("notes") or []), r.get("template") or ""])
     return f.getvalue()
 
 
@@ -483,6 +518,7 @@ def brief_html(rows, meta):
 {('<p><b>Zoom targets:</b> ' + e('; '.join(r['zoom'])) + '</p>') if r['zoom'] else ''}
 <p class=flags><b>Rules here:</b> {e(', '.join(r['flags']))}</p>
 {''.join(f'<p class=note>Note: {e(n)}</p>' for n in r['notes'])}
+{f'<p class=tmpl><b>Optional motion template:</b> <code>{e(r["template"])}</code> — on the track “{e(SCREEN_TRACK)}”, switched off. Switch it on to use it instead of recording this step, or ignore it. The preview shows it.</p>' if r.get('template') else ''}
 </section>""")
     total = sum(r["duration_s"] for r in rows)
     return f"""<!doctype html>
@@ -497,7 +533,7 @@ h1{{font-size:24px;margin:0 0 4px}} h2{{font-size:18px;margin:0 0 6px}} h2 span{
 .time{{color:var(--accent);margin:0 0 8px}} blockquote{{margin:4px 0 10px;padding:8px 12px;background:var(--card);border-left:3px solid var(--accent);border-radius:4px}}
 table{{border-collapse:collapse;width:100%;margin:6px 0}} th,td{{text-align:left;vertical-align:top;border-top:1px solid var(--line);padding:6px 8px}}
 th{{font-size:12px;color:var(--muted);font-weight:600}} td.tc{{white-space:nowrap;font-variant-numeric:tabular-nums}}
-.sub{{font-size:13px;color:var(--muted)}} .flags{{font-size:13px}} .note{{font-size:13px;color:#9a5b00}}
+.sub{{font-size:13px;color:var(--muted)}} .tmpl{{font-size:13px;color:var(--accent)}} .flags{{font-size:13px}} .note{{font-size:13px;color:#9a5b00}}
 ol li{{margin:4px 0}} h3{{font-size:15px;margin:10px 0 4px}} ol.steps{{padding-left:20px}} ol.steps>li{{margin:10px 0}}
 </style></head><body>
 <h1>Screencast brief</h1>
@@ -518,6 +554,8 @@ where a file is, point it to this folder once and let it find the rest.
 
   V1  a-roll.mov            the presenter, camera moves baked in ({w}x{h}, {fps})
   V2  (empty)               YOUR SCREENCASTS — one marker "Screencast N" per slot
+  V3  graphics/*screen-template*.mov  OPTIONAL motion templates of some screen steps (his prompt in the app's
+                            real UI) — switched OFF; switch one on to use it instead of recording, or ignore it
   V3+ graphics/*.mov        overlays, text gradient, facecam bubble, end fade (ProRes 4444, straight alpha)
                             The bubble and most overlays are SMALLER than the frame and placed at their position
                             at 100 % (no scaling). If your app scaled them to fit the frame, set the clip's scaling
@@ -527,7 +565,7 @@ where a file is, point it to this folder once and let it find the rest.
   A2  audio/music.wav       music bed
   A3  audio/sfx.wav         sound effects
   screencasts/BRIEF.html    what to record for every slot, on which word (also slots.csv)
-  preview.mp4               the whole edit with a placeholder card in every slot
+  preview.mp4               the whole edit with a placeholder card in every slot (and the optional templates shown)
 
 {n} slot(s), {total:.0f} s of screencast in a {dur:.0f} s video.
 """
@@ -611,6 +649,8 @@ def timeline_model(name, fps_num, fps_den, W, H, total, aroll_frames, graphics, 
     video = [{"name": "A-roll", "clips": [{"name": "a-roll", "file": "a-roll.mov", "start": 0, "frames": aroll_frames,
                                             "media_frames": aroll_frames}]},
              {"name": "Screencasts (editor)", "clips": []}]
+    for n, t in enumerate(_alloc_tracks(by.get("screen") or [])):
+        video.append({"name": SCREEN_TRACK + (f" {n + 1}" if n else ""), "clips": t})
     for grp in ("gradient", "overlay", "bubble", "fade"):
         cs = by.get(grp) or []
         if not cs:
@@ -808,6 +848,11 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
             continue
         n = min(n, total - ev["start_frame"])
         box = None if ev.get("full_frame") else boxes.get(ev["frames_dir"])
+        if ev.get("screen_template"):
+            slot = next((s["n"] for s in slots if s["t0"] - 0.05 <= float(ev["t0"]) < s["t1"]), None)
+            gfx.append({"group": "screen", "kind": "overlay", "ev": ev, "start": ev["start_frame"], "frames": n, "box": box,
+                        "slot": slot, "label": f"screen-template-slot-{slot or 0:02d}-{ev.get('template')}"})
+            continue
         gfx.append({"group": "overlay", "kind": "overlay", "ev": ev, "start": ev["start_frame"], "frames": n, "box": box,
                     "label": f"{ev.get('template')}-{_slug(' '.join(str(x) for x in (ev.get('fields') or {}).values() if isinstance(x, str)) or ev.get('template'), 22)}"})
     for a, b in compose_long.gradient_spans(events, fps):
@@ -849,6 +894,8 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                 g["clips"][0].update(x=x0, y=y0, width=cw, height=ch)
             _run(f"ffmpeg -v error -y -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
                  f"-frames:v {g['frames']} -vf format=rgba{crop} {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p")], cancelled)
+            if g["group"] == "screen":
+                g["clips"][0]["enabled"] = False             # OPTIONAL: the editor switches it on, or records the slot
         elif g["kind"] == "gradient":
             G = compose_long.TEXT_GRADIENT
             a, b = g["span"]
@@ -918,6 +965,7 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     rows = brief_rows(slots, video["words"], fps_num, fps_den, notes=pdoc.get("editor_notes") or [])
     for s, r in zip(slots, rows):
         s["label"] = r["label"]
+        r["template"] = next((g["file"] for g in gfx if g["group"] == "screen" and g.get("slot") == s["n"]), "")
     meta = {"title": v.get("title") or (jload(d / "request.json") or {}).get("title") or d.name, "width": W, "height": H,
             "fps_label": _fps_label(fps_num, fps_den)}
     (tmp_pkg / "screencasts" / "slots.csv").write_text(slots_csv(rows))
