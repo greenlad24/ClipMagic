@@ -19,6 +19,7 @@
  *
  * Visuals are pure CSS animation on the client (Jake, 2026-10-01: no AI images).
  */
+import { enforceSpokenRules } from "../scriptgen/spokenRules.js";
 import { db } from "../db/index.js";
 import { makeTable, stories, type StoryRecord } from "./db.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
@@ -584,12 +585,12 @@ const STRUCTURE = `STRUCTURE — the same way Jake's videos are built. Payoff fi
 1. "title" — the hook. The heading is the most impressive or surprising thing this does, not a news-style label.
 2. THE PAYOFF — show it working, right away. If a company video is available (see below), this section is "media" with that video. If not, show the single most impressive concrete thing it does, as a real example ("statement", "stats" or "bullets" with a before → after).
 3. WHY YOU SHOULD CARE — what this changes for a regular person using AI tools, with an everyday example. One clear reason, not a list of features.
-4+. HOW TO USE IT (where to get it, what it costs, what you'd actually do with it) and/or HOW IT WORKS (simply) and HOW IT COMPARES (vs the old way, vs rivals). Numbers go where they make a point land.
+4+. HOW TO USE IT (where to get it, what it costs, what you'd actually do with it) and/or HOW IT WORKS (simply) and HOW IT COMPARES (vs the old way, vs rivals). The screen can show a figure; Jake says what it MEANS — as few numbers out loud as possible (FEWER NUMBERS).
 Late: THE CATCH (limits, price, what's unconfirmed, criticism) and WHAT HAPPENS NEXT. Background / "how we got here" only if it is genuinely surprising, and never before the payoff and the why.
 Last: "takeaways".
 
 KEEP IT INTERESTING THE WHOLE WAY THROUGH (this is a live show — nobody can skip ahead):
-- Every section must reveal something NEW: a number, a result, a twist, a comparison. A section that only restates or sets up context gets cut or merged.
+- Every section must reveal something NEW: a result, a twist, a comparison. A section that only restates or sets up context gets cut or merged.
 - Re-hook every 2-3 sections: a beat that opens a question the next sections answer ("and the price is where it gets weird — we'll get there").
 - Alternate the energy: no two text-heavy sections ("bullets", "statement") back to back; follow a list with something visual ("stats", "compare", "bars", "timeline", "media", "quote").
 - Put the strongest material early and save one good surprise for the second half so it doesn't sag.`;
@@ -691,12 +692,13 @@ const DEEP_DIVE_RULES = `THIS IS A DEEP-DIVE SEGMENT, NOT A NEWS SEGMENT:
 - One topic, about 10 minutes out loud: 1,350 to 1,600 words in total. Each section below says about how many words it gets — hit those numbers (within ~15%). Running short is the usual failure: ten minutes is long, so explain more, use the research's details and a second everyday example rather than ending sections early.
 - The opener (section 1) is a hook that makes a regular person want the next ten minutes: lead with the payoff — the most impressive thing this does. No "welcome back", no "today we're going to", no subscribe/like asks.
 - Section 2 is the payoff: show it working. If it's a video, talk over what's on screen ("watch what happens when…") instead of explaining the background. Section 3 answers "why should you care" with an everyday example. Background and history come later, and only if they're interesting.
-- Keep it interesting the whole way: every section opens with something new (a result, a number, a twist), and every 2-3 sections a line opens a question the next part answers ("and the price is where this gets weird — we'll get to that"). No section is just setup.
+- Keep it interesting the whole way: every section opens with something new (a result, a twist, a comparison), and every 2-3 sections a line opens a question the next part answers ("and the price is where this gets weird — we'll get to that"). No section is just setup.
 - The closer (last section) lands the takeaways. End with ONE concrete thought, not a summary of everything. No sign-off, no "that's it for today" — the show continues after this.
 - It is ONE continuous talk. Each section picks up where the last one left off, with a natural bridge ("So how did we get here?", "Now, here's the catch."). Never restart or re-introduce the topic.
 - The audience is looking at the screen. Where a section has a VISUAL ON SCREEN (a real screenshot, GIF or demo clip), talk about what it shows — walk them through it ("see that panel on the right? that's the dot's own browser") the way Jake narrates a demo. Never read on-screen text out word for word — add to it.
 - Use 5-9 phrases from the conversational phrase menu across the whole segment, never two in a row, never the same one twice.
 - Endings within sections vary. The banned endings and the ban on opening an opinion with "My take" apply to every section.
+- SIMPLE ENGLISH: the script generator's rules at the end of the style guide apply to every sentence — everyday words, fewer numbers, no insider terms. Where a section shows figures on screen, say what they mean for the viewer, not the figures.
 - BEATS: a section with several items (points, numbers, timeline events, comparison rows, bars) shows them ONE AT A TIME — Jake presses → to bring in the next. Where a section says "N beats", put the marker [next] on its own between beats — EXACTLY N−1 markers — and talk about item 1 before the first [next], item 2 after it, and so on, so what he says lines up with what appears. A section with a highlighted statement has 2 beats: the statement, then [next] the highlight lands.`;
 
 async function writeScripts(d: DeepDiveRecord, pack: ResearchPack, brief: string, count: number, beats: number[] = []): Promise<string[]> {
@@ -744,7 +746,8 @@ Check every sentence:
 3. An example about running a business or agency? Swap it for an everyday situation.
 4. Does each section bridge naturally from the one before? Is anything repeated across sections? Cut repeats.
 5. Is any ending a banned ending, or any opinion opened with "My take"? Rewrite it.
-6. Total length 1,350-1,600 words, each section near the word count in its brief. If it's SHORT, expand the thinnest sections with more explanation, details from the research or a second everyday example — never with padding or repetition. If it's long, trim padding first.
+6. The script generator's rules (end of the style guide): any banned word, AI-sounding phrase or insider term gets rewritten in everyday words; more than one number in a paragraph gets cut down to the one that matters, rounded, said the way people say it.
+7. Total length 1,350-1,600 words, each section near the word count in its brief. If it's SHORT, expand the thinnest sections with more explanation, details from the research or a second everyday example — never with padding or repetition. If it's long, trim padding first.
 
 THE SECTION BRIEF (with each section's word target):
 ${brief}
@@ -758,15 +761,21 @@ SCRIPT TO REVIEW:
 ${draft}
 
 Output ONLY the final script with the same ### SECTION n marker lines — nothing else.`;
+  let final = parts;
   try {
     const reviewed = await callNewsModel(review, "news-deepdive-script", "director");
     const r = splitScripts(reviewed, count);
-    if (r.filter(Boolean).length === parts.filter(Boolean).length) return r.map((t, i) => fitMarkers(t || parts[i], beats[i] ?? 1));
+    if (r.filter(Boolean).length === parts.filter(Boolean).length) final = r.map((t, i) => t || parts[i]);
   } catch (err) {
     console.warn("[news-deepdive] review pass failed, keeping the draft:", err);
   }
+  // the script generator's checks in code + ONE patch pass per section (Jake 2026-10-12: simpler English, fewer
+  // numbers, fewer technical terms) — before fitMarkers, which keeps the [next] beats exact either way
+  const enforced = await Promise.all(final.map(async (t, i) => (t ? (await enforceSpokenRules(t,
+    (q) => callNewsModel(q, "news-deepdive-script", "director"),
+    (m) => console.log(`[news-deepdive] section ${i + 1}: ${m}`))).script : t)));
   // Exactly beats−1 [next] marks per section, whatever the model did.
-  return parts.map((t, i) => fitMarkers(t, beats[i] ?? 1));
+  return enforced.map((t, i) => fitMarkers(t, beats[i] ?? 1));
 }
 
 /* ── 4. videos ────────────────────────────────────────────────────────────── */

@@ -15,6 +15,7 @@
  * the result screen itself. Shots are copied into the dive's asset dir so the
  * show never depends on the Scout's job folder.
  */
+import { enforceSpokenRules, SPOKEN_RULES_BLOCK } from "../scriptgen/spokenRules.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -130,12 +131,16 @@ async function narrate(topic: string, steps: Step[]): Promise<string> {
   const fallback = steps.map((s) => `${s.caption}.`).join(" [next] ");
   try {
     const text = await callNewsModel(
-      `Jake Dawson narrates a live demo on his AI show while an AI agent uses "${topic}" on screen. Write what he says over each step — 1-2 short, casual sentences per step, a normal American talking to friends, plain words, no hype. Talk about what's on screen ("watch — it's typing the request itself"). Exactly ${steps.length} parts separated by the marker [next] on its own. Output only the words.\n\nSTEPS:\n${steps.map((s, i) => `${i + 1}. ${s.caption}`).join("\n")}`,
+      `Jake Dawson narrates a live demo on his AI show while an AI agent uses "${topic}" on screen. Write what he says over each step — 1-2 short, casual sentences per step, a normal American talking to friends, plain words, no hype. Talk about what's on screen ("watch — it's typing the request itself"). Exactly ${steps.length} parts separated by the marker [next] on its own. Output only the words.\n\n${SPOKEN_RULES_BLOCK}\n\nSTEPS:\n${steps.map((s, i) => `${i + 1}. ${s.caption}`).join("\n")}`,
       "news-deepdive-script",
       "fast",
     );
     const parts = text.split(/\s*\[next\]\s*/i).map((x) => x.trim()).filter(Boolean);
-    return parts.length === steps.length ? parts.join(" [next] ") : fallback;
+    if (parts.length !== steps.length) return fallback;
+    // the script generator's checks + one patch pass; kept only if every [next] survived
+    const joined = parts.join(" [next] ");
+    const r = await enforceSpokenRules(joined, (q) => callNewsModel(q, "news-deepdive-script", "fast"));
+    return r.script.split(/\s*\[next\]\s*/i).filter((x) => x.trim()).length === steps.length ? r.script : joined;
   } catch { return fallback; }
 }
 

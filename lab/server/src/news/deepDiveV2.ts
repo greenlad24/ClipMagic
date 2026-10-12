@@ -18,6 +18,7 @@
  * screenshot pool (deepDiveVisuals) → outline over that catalogue → resolve
  * (cut the chosen clips, locate the click targets) → script with [next] marks.
  */
+import { enforceSpokenRules } from "../scriptgen/spokenRules.js";
 import fs from "node:fs";
 import path from "node:path";
 import { db } from "../db/index.js";
@@ -329,7 +330,8 @@ const V2_SCRIPT_RULES = `THIS IS A LIVE DEEP-DIVE SEGMENT IN CHAPTERS:
 - One continuous talk with natural bridges between chapters; never re-introduce the topic.
 - Every 2-3 chapters, a line opens a question a later chapter answers.
 - The closer lands ONE concrete thought. No sign-off — the show continues after this.
-- Use 5-9 phrases from the conversational phrase menu across the whole segment, never two in a row.`;
+- Use 5-9 phrases from the conversational phrase menu across the whole segment, never two in a row.
+- SIMPLE ENGLISH: the script generator's rules at the end of the style guide apply to every sentence — everyday words, fewer numbers, no insider terms. Where the screen shows figures, say what they mean for the viewer, not the figures.`;
 
 async function writeScriptsV2(d: DeepDiveRecord, pack: ResearchPack, chapters: { kind: Kind; heading: string; eyebrow: string; data: any; notes: string[] }[]): Promise<string[]> {
   const beats = chapters.map((c) => beatCountOf(c.kind, c.data));
@@ -375,7 +377,7 @@ OUTPUT FORMAT — exactly ${chapters.length} chapters, each starting with its ma
 
 ${V2_SCRIPT_RULES}
 
-Review this live deep-dive script. Rewrite anything unclear, stiff or complex: a 14-year-old's reading level, a normal American talking to a friend. Keep an official term the story is about and explain it right after. Cut repeats across chapters. Fix banned endings. Keep the facts, the order, the ### SECTION n lines and EXACTLY the [next] markers each chapter has (their count must not change). Total 1,450-1,700 words; if it is short, expand the thinnest beats with research details, never padding.
+Review this live deep-dive script. Rewrite anything unclear, stiff or complex: a 14-year-old's reading level, a normal American talking to a friend. Keep an official term the story is about and explain it right after. Cut repeats across chapters. Fix banned endings. Apply the script generator's rules (end of the style guide): every banned word, AI-sounding phrase or insider term rewritten in everyday words; more than one number in a paragraph cut to the one that matters. Keep the facts, the order, the ### SECTION n lines and EXACTLY the [next] markers each chapter has (their count must not change). Total 1,450-1,700 words; if it is short, expand the thinnest beats with research details, never padding.
 
 THE CHAPTER BRIEF:
 ${brief}
@@ -393,7 +395,13 @@ Output ONLY the final script with the same marker lines.`;
   } catch (err) {
     console.warn("[news-deepdive-v2] review pass failed, keeping the draft:", err);
   }
-  return parts.map((p, i) => fitMarkers(p, beats[i]));
+  const final = parts;
+  // the script generator's checks in code + ONE patch pass per section (Jake 2026-10-12: simpler English, fewer
+  // numbers, fewer technical terms) — before fitMarkers, which keeps the [next] beats exact either way
+  const enforced = await Promise.all(final.map(async (t, i) => (t ? (await enforceSpokenRules(t,
+    (q) => callNewsModel(q, "news-deepdive-script", "director"),
+    (m) => console.log(`[news-deepdive-v2] section ${i + 1}: ${m}`))).script : t)));
+  return enforced.map((p, i) => fitMarkers(p, beats[i]));
 }
 
 /** Moved to deepDiveBeats.ts (shared with classic slides, 2026-10-06); re-exported for callers. */

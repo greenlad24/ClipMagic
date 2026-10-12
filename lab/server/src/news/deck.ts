@@ -7,6 +7,7 @@
  */
 import { stories, decks, slides, todayDate, type SlideRecord } from './db.js';
 import { callNewsModel } from './ai.js';
+import { enforceSpokenRules, SPOKEN_RULES_BLOCK, spokenBannedList } from '../scriptgen/spokenRules.js';
 import { pickReadableSource } from './access.js';
 import { findVideoForStory, slideVideoFields, uniqueVideos, type VideoResult } from './video.js';
 import { generateStageForStory, type StoryStage } from './stage.js';
@@ -18,7 +19,7 @@ interface BlogSource { company: string; url: string; title: string; isOfficial: 
 interface ArticleSource { outlet: string; url: string; title: string; }
 
 // ── Jake Dawson Script Style Guide (full) ─────────────────────────────────────
-export const JAKE_STYLE_GUIDE = `You write scripts that Jake Dawson reads out loud on camera. Jake runs a YouTube channel about AI tools and how to use them. His audience is regular people who are curious about AI: some are just starting out with ChatGPT, Claude or Gemini, others already make images, videos or apps with AI. They are NOT engineers and they are not reading tech news all day. The news show is where he tells them what happened in AI and robotics and what it means for them.
+const JAKE_STYLE_BASE = `You write scripts that Jake Dawson reads out loud on camera. Jake runs a YouTube channel about AI tools and how to use them. His audience is regular people who are curious about AI: some are just starting out with ChatGPT, Claude or Gemini, others already make images, videos or apps with AI. They are NOT engineers and they are not reading tech news all day. The news show is where he tells them what happened in AI and robotics and what it means for them.
 
 THE TOP RULE: conversational American English a 14-year-old can follow.
 This rule sits above every other style rule. Only accuracy ranks higher.
@@ -46,7 +47,7 @@ Write to reduce confusion, not to sound smart. Before explaining a technical det
 - Official terms are the exception. When a term is the official name the story itself is about (for example "misaligned," a model's name, a law's name), keep it — it's the word the viewer will see in headlines — and explain it in plain words right after.
 - At most one or two explained terms per segment. If a story needs more, you're telling too much of it.
 - Insider words to avoid unless they are the official term the story is about: benchmark, tool call, parameters, tokens, inference, latency, throughput, compute, flagship, mid-tier, tier, SOTA, frontier model, open weights, multimodal, context window, fine-tuning, API, endpoint, agentic, orchestration, deployment, pipeline, stack, enterprise, scale (as a verb), ecosystem, use case.
-- Model and product names: the first time, say what it is in a few everyday words. "Sonnet, which is the everyday version of Claude," not "the mid-tier model."
+- Model and product names: the first time, say what it is in a few everyday words. "Sonnet — the everyday version of Claude," not "the mid-tier model."
 - Short sentences. One idea per sentence. One thought per paragraph.
 - Final test: could a 14-year-old repeat this story to a friend tomorrow? If not, simplify again.
 
@@ -55,7 +56,7 @@ How to explain a complex topic (use every time):
 2. If a hard word has to stay, explain it right away.
 3. Use an everyday comparison linked to something a teenager knows.
 4. One new idea at a time.
-5. Turn numbers into pictures.
+5. Turn numbers into pictures — and use as few as you can (see FEWER NUMBERS).
 6. Show it in a real day the viewer might have: "Let's say you're planning a trip…", "Say you use ChatGPT for homework…", "Let's say you're making a video for your channel…" Not "Let's say you run a small agency." Most viewers don't run a business.
 7. Land the "so what."
 8. Cut what they don't need.
@@ -104,21 +105,21 @@ STORY LOOP (each main story):
 2. What it actually is. Explain simply. If technical, explain by taking things away.
 3. A concrete example from everyday life. "Let's say you're selling your old bike online…"
 4. Why it matters (or doesn't) for the viewer. Be honest.
-5. Caveat. What we don't know yet, what it costs, what's limited.
+5. The catch. What we don't know yet, what it costs, what's limited.
 6. Jake's take. Short, owned as opinion, positive with some realism. It can sit anywhere after the facts, not only at the end.
 7. The ending. Different every story (each segment is assigned its own ending shape). Never the same "my take → don't act yet → keep an eye on it" close.
 
 CONVERSATIONAL PHRASE MENU (use 4-8 per episode, from 4-6 different slots, never repeat, never stack two in a row):
 
-Story openers: "So, I'm going to start with [X], just because…" / "A couple neat things in [X]." / "But then there's this new feature…" / "Now, [X] got a big update as well." / "And then there's also…"
+Story openers: "So, I'm going to start with [X], just because…" / "A couple of things I like in [X]." / "But then there's this new feature…" / "Now, [X] got a big update as well." / "And then there's also…"
 
 Real-time thinking: "Like…" / "So…" / "I mean…" / "You know…" / "…kind of…" / "…basically…" / "…essentially…"
 
 Soft hedges: "…I think." / "I'm not sure how I feel about [X], to be honest." / "Maybe it's just me, but…" / "We'll see." / "…if it works…" / "…if they get this right, that's a real win."
 
-Credit-giving: "…it's a different take on it. I'll give them credit for that." / "It's a genuinely smart idea." / "What's clever about this is…" / "That's a huge win." / "You love to see it."
+Credit-giving: "…it's a different take on it. I'll give them credit for that." / "It's a smart idea." / "What I like about this is…" (then say what it does for the viewer)
 
-Anticipation: "Now, here's the thing…" / "And the part I keep coming back to is…"
+Anticipation: "Now, here's the thing…" / "And the part that stuck with me is…"
 
 Concrete example pivot: "But let's say you're [specific situation]…" / "Well, if you have [X], it can actually…" / "…without you having to [the manual pain]."
 
@@ -146,6 +147,11 @@ OUTPUT FORMAT:
 - Plain text only. Natural speech. Contractions throughout. Em dashes and ellipses where natural.
 - Only use facts from the source material provided.`;
 
+// Jake 2026-10-12: "more simple English — less numbers and less technical terms. It needs to follow the exact rules of
+// the script generator". The generator's own rule text (scriptgen/spokenRules.ts — sliced from its prompt files, never
+// copied) rides at the end of the guide and overrides anything above that contradicts it.
+export const JAKE_STYLE_GUIDE = `${JAKE_STYLE_BASE}\n\n${SPOKEN_RULES_BLOCK}`;
+
 // ── Endings (Jake 2026-10-01) ─────────────────────────────────────────────────
 // Every segment used to close the same way: "My take… don't act yet… keep an eye
 // on it." Scripts are written in parallel, so they can't see each other — each
@@ -153,7 +159,7 @@ OUTPUT FORMAT:
 // in the deck, and the stock closers are banned outright.
 export const SCRIPT_ENDINGS = [
   'TRY IT: end on one concrete thing the viewer can actually do with it today (where to find it, what to type, who gets it). Only if it is really available; otherwise use the next shape.',
-  'SURPRISING FACT: end on the single most surprising number or detail in the story, said plainly, then stop. No lesson after it.',
+  'SURPRISING DETAIL: end on the single most surprising detail in the story — a thing, not a figure — said plainly, then stop. No lesson after it.',
   'OPEN QUESTION: end on the one honest question this raises — a real question Jake is curious about, not a rhetorical "what do you think?"',
   'WHAT HAPPENS NEXT: end on who has to respond now or what this sets up (a rival, a regulator, a next launch), stated concretely.',
   'PUNCHY VERDICT: end on a short, confident one-line verdict. No hedging, no "but we\'ll see".',
@@ -203,7 +209,7 @@ Write a teleprompter script for this ONE news segment. This is one segment in a 
 SEGMENT-SPECIFIC RULES (non-negotiable):
 - TARGET: 120–200 words. These are 60–90 second segments, not explainers.
 - START MID-THOUGHT. First sentence states what happened. No "Alright guys, let's dive into…" No throat-clearing openers.
-- FOLLOW THE STORY LOOP: what happened → what it actually is (explain simply) → concrete example → why it matters or doesn't → caveat → Jake's take → what to do. Not every beat needs to be long — compress smaller stories. But every segment must answer "what happened" and "does it matter to me."
+- FOLLOW THE STORY LOOP: what happened → what it actually is (explain simply) → concrete example → why it matters or doesn't → the catch → Jake's take → what to do. Not every beat needs to be long — compress smaller stories. But every segment must answer "what happened" and "does it matter to me."
 - NO RECAP PADDING. Once the news is delivered, do not re-explain or summarize what was just said.
 - ONE REACTION THEN DONE. After the facts, give one honest take then stop.
 - NO FILLER CLOSERS. No "stay tuned," "that's all for today," or any sign-off. This is one segment in a longer show.
@@ -233,12 +239,18 @@ Write the script now. Plain text only. No formatting. No markdown. No headers. N
   // is the 14-year-old test. The first draft keeps the jargon it explains
   // ("benchmarks — those are the tests…"); this pass cuts it instead. If the
   // review fails, the draft still goes on air rather than an empty slide.
+  let script = draft;
   try {
     const reviewed = await callNewsModel(buildReviewPrompt(draft, headline, sourceLines, ending), 'news-script', 'director');
-    return reviewed || draft;
+    script = reviewed || draft;
   } catch {
-    return draft;
+    script = draft;
   }
+  // the script generator's checks in code, then ONE patch pass (its Stage 7.5) — never fatal
+  const r = await enforceSpokenRules(script, (p) => callNewsModel(p, 'news-script', 'director'),
+    (m) => console.log(`[news:script] ${headline.slice(0, 60)}: ${m}`));
+  if (r.remaining.length) console.log(`[news:script] ${headline.slice(0, 60)}: ${r.remaining.length} rule finding(s) left after the fix pass`);
+  return r.script;
 }
 
 function buildReviewPrompt(draft: string, headline: string, sourceLines: string, ending: string): string {
@@ -253,7 +265,9 @@ Check every sentence:
 2. Is a technical detail explained that the viewer doesn't need to get the story? Cut the detail and its explanation.
 3. Is the example about running a business or agency? Swap it for an everyday situation a regular person has.
 4. Could a 14-year-old repeat this story to a friend tomorrow? If not, simplify.
-5. Read it out loud in your head. Does it sound like a normal American talking to a friend — not a news anchor, not a press release, not an article being read? Anything stiff, written-sounding or formal gets rewritten the way a person would actually say it: contractions, everyday American phrasing ("pretty much," "kind of," "here's the thing"), short spoken sentences, numbers said the way people say them ("thirty percent," "twenty bucks a month").
+5. Read it out loud in your head. Does it sound like a normal American talking to a friend — not a news anchor, not a press release, not an article being read? Anything stiff, written-sounding or formal gets rewritten the way a person would actually say it: contractions, everyday American phrasing ("pretty much," "kind of," "here's the thing"), short spoken sentences, numbers said the way people say them ("thirty percent," "twenty bucks a month") — and as few numbers as the story allows.
+
+7. Apply the script generator's rules at the end of the guide above: no banned word, no AI-sounding phrase, no insider term, at most one number per paragraph.
 
 6. Does the ending follow the assigned shape below and avoid every banned ending? If it ends on "keep an eye on it", "wait and see", "I'd wait" or anything like it, rewrite the last two sentences to the assigned shape. If the opinion starts with "My take", reword it as the OPINION line says.
 
@@ -300,7 +314,7 @@ RULES:
 5. "talkingAngle": 1-2 sentences — what should the audience actually DO after hearing this?
 6. "suggestedTimeSeconds": 60-180 based on complexity.
 7. Voice: Conversational, plain English a 14-year-old understands, active voice. Say what a thing does instead of using insider words (benchmark, tool call, parameters, tokens, flagship, inference). Keep an official term the story is about (e.g. "misaligned") but explain it in plain words.
-8. Banned words: leverage, delve, robust, seamless, empower, unlock, revolutionary, game-changer, groundbreaking, transformative, cutting-edge.
+8. Never write: ${spokenBannedList()}.
 
 Respond ONLY with valid JSON (no markdown):
 {"whyItMatters":"...","keyPoints":["fact 1","fact 2","fact 3"],"talkingAngle":"...","suggestedTimeSeconds":90}`;
