@@ -298,6 +298,31 @@ await check("parseRange", () => {
   assert.equal(hz.safeRel("graphics/01 a.mov"), true);
 });
 
+await check("a result VIDEO shares too: page + seekable file, no session; package paths and other files stay 404", async () => {
+  put("final-01.mp4", Buffer.alloc(80_000, 5));
+  const v = await share.createShare(JOB, "final-01.mp4");
+  const pg = await get(v.path);
+  assert.equal(pg.status, 200);
+  const html = await pg.text();
+  assert.match(html, /Final render/);
+  assert.match(html, /video\.mp4/);
+  const full = await get(v.path + "/video.mp4");
+  assert.equal(full.status, 200);
+  assert.equal((await full.arrayBuffer()).byteLength, 80_000);
+  const part = await get(v.path + "/video.mp4", { headers: { Range: "bytes=10-19" } });
+  assert.equal(part.status, 206);
+  assert.equal((await part.arrayBuffer()).byteLength, 10);
+  assert.match((await get(v.path + "/video.mp4?dl=1")).headers.get("content-disposition") || "", /attachment/);
+  for (const sub of ["/download", "/preview.mp4", "/brief", "/../source.mp4"]) assert.equal((await get(v.path + sub)).status, 404, sub);
+  await assert.rejects(share.createShare(JOB, "source.mp4"), /Unknown hand-off package or video/);
+  await assert.rejects(share.createShare(JOB, "edit-09.mp4"), /does not exist/);
+  // a package token cannot reach a video path
+  const pk = (await share.createShare(JOB, "handoff-01")).path;
+  assert.equal((await get(pk + "/video.mp4")).status, 404);
+  await share.revokeShare(JOB, v.id);
+  assert.equal((await get(v.path + "/video.mp4")).status, 404);
+});
+
 server.close();
 fs.rmSync(jobs, { recursive: true, force: true });
 console.log(`\naieditor-share: ${passed} passed${process.exitCode ? " — FAILURES above" : ""}`);

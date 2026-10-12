@@ -48,6 +48,7 @@ import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
 import { HandoffShare } from '@/components/autoeditor/HandoffShare';
+import { VideoShare } from '@/components/autoeditor/VideoShare';
 import { JobMusic } from '@/components/autoeditor/MusicPicker';
 import { OverlayCatalog, overlayName, overlayTemplate } from '@/components/autoeditor/overlayTemplates';
 
@@ -439,6 +440,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   <Download className="h-3.5 w-3.5" /> Download {finalFile.name}
                 </a>
               </Button>
+              <VideoShare jobId={job.id} file={finalFile.name} />
             </div>
           )}
           {/* "Graphics only — editor adds screencasts": the package for the editor (aieditor/handoff.py) */}
@@ -475,6 +477,11 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
           ) : (
             <div className={cn('flex w-full items-center justify-center rounded-md bg-muted/40 text-xs text-muted-foreground', vertical ? 'aspect-[9/16]' : 'aspect-video')}>
               {running ? 'Rendering…' : 'No preview yet'}
+            </div>
+          )}
+          {shownFile && (
+            <div className="flex justify-end">
+              <VideoShare jobId={job.id} file={shownFile.name} className="h-6 gap-1 px-2 text-[11px]" />
             </div>
           )}
           {info && (

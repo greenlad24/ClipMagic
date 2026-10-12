@@ -1,6 +1,11 @@
 /**
  * Auto Editor — a PUBLIC SHARE LINK for an editor hand-off package (Jake 2026-10-09: "it needs to produce a
- * public link I can send to an editor").
+ * public link I can send to an editor") or for one result VIDEO of a job — preview/listen/edit/draft/final-NN.mp4
+ * (Jake 2026-10-12: "I want to be able to send these links (of the lab results) without a sign in").
+ *
+ *   a video:  /share/<token>            a page with the video playing and a Download button
+ *             /share/<token>/video.mp4  the file (Range, so the player seeks; ?dl=1 → as an attachment)
+ *   a package:
  *
  *   /share/<token>              a small page: the job's title, the package size, the preview playing, a big
  *                               Download button and a link to the brief
@@ -9,7 +14,7 @@
  *   /share/<token>/brief        screencasts/BRIEF.html, readable in the browser
  *
  * ⚠️ THE ONLY ROUTE OUTSIDE THE SIGN-IN GATE FOR THE AUTO EDITOR. It is mounted BEFORE requireSession (index.ts),
- * like the AI News follower route, and answers ONLY those four GET/HEAD paths — anything else under /share is a
+ * like the AI News follower route, and answers ONLY the GET/HEAD paths listed above — anything else under /share is a
  * 404 from this router, never the SPA or another route.
  *
  * THE TOKEN IS THE CREDENTIAL: base64url({v, j: job id, p: "handoff-NN", e: expiry (epoch s), n: 128-bit nonce})
@@ -36,6 +41,9 @@ export function setJobsDir(dir: string): void {
 
 export const JOB_RE = /^[a-z0-9][a-z0-9-]{2,63}$/;
 export const PKG_RE = /^handoff-(\d{2})$/;
+/** a result video of the job — the same names /api/aieditor/files serves (index.ts); never source.mp4 */
+export const VIDEO_RE = /^(preview|listen|edit|draft|final)-(\d{2})\.mp4$/;
+const isTarget = (p: unknown): p is string => typeof p === "string" && (PKG_RE.test(p) || VIDEO_RE.test(p));
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,400}\.[A-Za-z0-9_-]{43}$/;
 export const DEFAULT_DAYS = 14;
 const MAX_DAYS = 90;
@@ -82,7 +90,7 @@ export function verifyShare(token: unknown, now = Date.now(), key = secret()): S
   } catch {
     return null;
   }
-  if (!p || p.v !== 1 || typeof p.j !== "string" || !JOB_RE.test(p.j) || typeof p.p !== "string" || !PKG_RE.test(p.p)) return null;
+  if (!p || p.v !== 1 || typeof p.j !== "string" || !JOB_RE.test(p.j) || !isTarget(p.p)) return null;
   if (typeof p.n !== "string" || !/^[A-Za-z0-9_-]{16,64}$/.test(p.n)) return null;
   if (typeof p.e !== "number" || !Number.isFinite(p.e) || p.e * 1000 <= now) return null;
   return p;
@@ -155,11 +163,13 @@ export async function listShares(job: string, pkg?: string): Promise<ShareView[]
 
 export async function createShare(job: unknown, pkg: unknown, days: unknown = DEFAULT_DAYS): Promise<ShareView> {
   if (typeof job !== "string" || !JOB_RE.test(job)) throw new Error("Unknown job.");
-  if (typeof pkg !== "string" || !PKG_RE.test(pkg)) throw new Error("Unknown hand-off package.");
+  if (!isTarget(pkg)) throw new Error("Unknown hand-off package or video.");
   if (!secret()) throw new Error("Share links need the Lab's session secret (SESSION_SECRET), which is not set.");
   const d = days === undefined || days === null ? DEFAULT_DAYS : Number(days);
   if (!Number.isFinite(d) || d <= 0 || d > MAX_DAYS) throw new Error(`A link lasts 1 to ${MAX_DAYS} days.`);
-  if (!(await packageEntries(path.join(JOBS, job), pkg)) && !fs.existsSync(path.join(JOBS, job, `${pkg}.zip`))) {
+  const video = VIDEO_RE.test(pkg as string);
+  if (video && !(await jobFile(job, pkg as string))) throw new Error("That video does not exist (or is still being copied back).");
+  if (!video && !(await packageEntries(path.join(JOBS, job), pkg)) && !fs.existsSync(path.join(JOBS, job, `${pkg}.zip`))) {
     throw new Error("That hand-off package is not finished (or is still being copied back).");
   }
   const now = Date.now();
@@ -171,7 +181,7 @@ export async function createShare(job: unknown, pkg: unknown, days: unknown = DE
   };
   await writeLinks(job, [...(await readLinks(job)), link]);
   // warm the zip index (CRC-32 of every file) so the editor's first download starts at once
-  void packageZip(path.join(JOBS, job), pkg).catch(() => undefined);
+  if (!video) void packageZip(path.join(JOBS, job), pkg).catch(() => undefined);
   return view(job, link, now);
 }
 
@@ -262,7 +272,34 @@ ${o.preview ? `<div class=card><video controls preload=metadata src="/share/${t}
 </main></body></html>`;
 }
 
-/** The public router, mounted at /share BEFORE requireSession. GET/HEAD only; four paths; everything else 404. */
+const VIDEO_LABEL: Record<string, string> = {
+  final: "Final render", edit: "Edit", draft: "Draft edit", preview: "Preview", listen: "Sound check",
+};
+
+function videoPage(o: { token: string; title: string; size: number; expires: number }): string {
+  const t = esc(o.token);
+  const kind = VIDEO_LABEL[VIDEO_RE.exec(verifyShare(o.token)?.p ?? "")?.[1] ?? ""] ?? "Video";
+  const exp = new Date(o.expires * 1000).toUTCString().replace(/ GMT$/, " UTC");
+  return `<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><meta name=robots content="noindex,nofollow">
+<title>${esc(o.title)}</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#16181d;--muted:#5b6270;--line:#dfe3e8;--accent:#2457d6;--accent-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;--muted:#9aa4b2;--line:#2a313c;--accent:#4c8dff;--accent-fg:#fff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,Segoe UI,Inter,Helvetica,Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}h1{font-size:22px;margin:0 0 4px}.muted{color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}
+video{width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;display:block}
+.dl{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600;padding:10px 18px;border-radius:10px;margin-top:12px}
+</style></head><body><main>
+<h1>${esc(o.title)}</h1>
+<p class=muted>${kind} · ${gb(o.size)} · link valid until ${esc(exp)}</p>
+<div class=card><video controls preload=metadata playsinline src="/share/${t}/video.mp4"></video>
+<a class=dl href="/share/${t}/video.mp4?dl=1">Download (${gb(o.size)})</a></div>
+</main></body></html>`;
+}
+
+/** The public router, mounted at /share BEFORE requireSession. GET/HEAD only; five paths; everything else 404. */
 export function sharePublicRouter(): express.Router {
   const r = express.Router();
   r.use((req, res, next) => {
@@ -278,6 +315,13 @@ export function sharePublicRouter(): express.Router {
   r.get("/:token", async (req, res) => {
     const p = await resolve(req, res);
     if (!p) return;
+    if (VIDEO_RE.test(p.p)) {
+      const f = await jobFile(p.j, p.p);
+      if (!f) return notFound(res);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'");
+      return res.type("html").send(videoPage({ token: req.params.token, title: await titleOf(p.j), size: (await fsp.stat(f)).size, expires: p.e }));
+    }
     const nn = PKG_RE.exec(p.p)![1];
     const size = await zipSizeOf(p.j, p.p);
     if (size === null) return notFound(res);
@@ -301,9 +345,19 @@ export function sharePublicRouter(): express.Router {
       }),
     );
   });
+  r.get("/:token/video.mp4", async (req, res) => {
+    const p = await resolve(req, res);
+    if (!p) return;
+    const f = VIDEO_RE.test(p.p) ? await jobFile(p.j, p.p) : null;
+    if (!f) return notFound(res);
+    res.setHeader("Cache-Control", "private");
+    if (req.query.dl === "1") res.attachment(`${(await titleOf(p.j)).replace(/[\\/:*?"<>|]+/g, " ").trim()} - ${p.p}`);
+    res.sendFile(f, { dotfiles: "deny" });
+  });
   r.get("/:token/download", async (req, res) => {
     const p = await resolve(req, res);
     if (!p) return;
+    if (!PKG_RE.test(p.p)) return notFound(res);
     const name = `${(await titleOf(p.j)).replace(/[\\/:*?"<>|]+/g, " ").trim()} - ${p.p}.zip`;
     const legacy = await jobFile(p.j, `${p.p}.zip`); // a package built before the zip was streamed
     if (legacy) {
@@ -318,6 +372,7 @@ export function sharePublicRouter(): express.Router {
   r.get("/:token/preview.mp4", async (req, res) => {
     const p = await resolve(req, res);
     if (!p) return;
+    if (!PKG_RE.test(p.p)) return notFound(res);
     const f = await jobFile(p.j, `preview-${PKG_RE.exec(p.p)![1]}.mp4`);
     if (!f) return notFound(res);
     res.setHeader("Cache-Control", "private");
@@ -326,6 +381,7 @@ export function sharePublicRouter(): express.Router {
   r.get("/:token/brief", async (req, res) => {
     const p = await resolve(req, res);
     if (!p) return;
+    if (!PKG_RE.test(p.p)) return notFound(res);
     const f = await jobFile(p.j, `${p.p}/screencasts/BRIEF.html`);
     if (!f) return notFound(res);
     res.setHeader("Cache-Control", "no-store");
