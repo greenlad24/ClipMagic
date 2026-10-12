@@ -35,7 +35,7 @@ import { sectionsToChapters } from './v2/adapt';
 import { flatten, firstBeatOf } from './v2/types';
 import { sectionBeatCount, sectionsToUnits } from './beats';
 import TemplatePicker from './TemplatePicker';
-import { templateFor, type DeckTemplate } from './templates';
+import { STORYLINES, storylineIdOf, templateFor, type DeckTemplate } from './templates';
 import { BubbleControl, useBubbleSettings, type BubbleSettings } from './bubble';
 
 export default function DeepDiveEditorPage() {
@@ -169,7 +169,17 @@ function Editor() {
   const chooseTemplate = async (template: string) => {
     const before = dive?.template ?? '';
     setDive((d) => (d ? { ...d, template } : d));
-    try { await updateDeepDive({ id, template }); toast.success(`Template: ${templateFor(template).name} — the screen and every preview use it now.`); }
+    try {
+      await updateDeepDive({ id, template });
+      const built = storylineIdOf(dive?.storyline), next = storylineIdOf(template);
+      if (sections.length && built !== next) {
+        // a different STORYLINE: the design changes at once; the chapters follow the new structure only on a rebuild
+        toast(`Template: ${templateFor(template).name} — its design is on now. Its storyline is "${STORYLINES[next].name}" (${STORYLINES[next].label}); this deep dive was built as "${STORYLINES[built].name}".`, {
+          duration: 12000,
+          action: { label: 'Regenerate with this storyline', onClick: () => regenerate(false) },
+        });
+      } else toast.success(`Template: ${templateFor(template).name} — the screen and every preview use it now.`);
+    }
     catch (e) { setDive((d) => (d ? { ...d, template: before } : d)); toast.error(e instanceof Error ? e.message : String(e)); }
   };
 
@@ -346,7 +356,7 @@ function Editor() {
       <Dialog open={pickTemplate} onOpenChange={setPickTemplate}>
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4">
           <DialogTitle className="text-sm">Template — the design the whole presentation is built in</DialogTitle>
-          <p className="-mt-1 text-xs text-muted-foreground">Each preview is this deep dive drawn in that template. Picking one re-skins the screen, the presenter's previews and every thumbnail at once — the content, beats and script stay as they are, and Regenerate keeps it.</p>
+          <p className="-mt-1 text-xs text-muted-foreground">Each preview is this deep dive drawn in that template. Picking one re-skins the screen and every preview at once. Each template also tells the story its own way (its storyline) — when that differs from how this deep dive was built, you'll be offered a regenerate.</p>
           <TemplatePicker value={dive.template ?? ''} format={isV2 ? 'v2' : 'v1'} chapters={chaptersV2} sections={sections} diveId={id} title={title}
             onChange={(t) => { void chooseTemplate(t); setPickTemplate(false); }} />
         </DialogContent>

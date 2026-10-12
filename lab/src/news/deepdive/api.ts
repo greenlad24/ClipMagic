@@ -102,6 +102,8 @@ export interface DeepDive {
   demoUrl?: string;
   /** The design (templates.ts TemplateId); empty = the format's default look. */
   template?: string;
+  /** the storyline the sections were built with ('' = before storylines: the original payoff-first one) */
+  storyline?: string;
   /** Shift on the stage / presenter: the official video the dive was built around (server heroVideoOf). */
   heroVideo?: { kind: 'youtube' | 'vimeo' | 'file'; videoId: string | null; url: string | null; title: string; channel: string } | null;
 }

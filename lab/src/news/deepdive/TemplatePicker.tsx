@@ -12,7 +12,7 @@ import type { Section } from './api';
 import { SceneThumb } from './Scene';
 import { ChapterThumb } from './v2/Show';
 import { beatCount, type Chapter } from './v2/types';
-import { TEMPLATES, templateFor, type DeckTemplate, type TemplateId } from './templates';
+import { STORYLINES, TEMPLATES, templateFor, type DeckTemplate, type TemplateId } from './templates';
 
 const SAMPLE_CHAPTERS: Chapter[] = [
   {
@@ -113,6 +113,7 @@ export default function TemplatePicker({ value, onChange, format, chapters, sect
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold">{t.name}{t.id === 'jake' ? ' (default)' : ''}</span>
                 {on && <Check className="h-4 w-4 shrink-0 text-primary" />}
               </div>
+              <p className="mt-0.5 text-[11px] font-medium leading-snug">Storyline: {STORYLINES[t.id].name} — {STORYLINES[t.id].label}</p>
               <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{t.blurb}</p>
             </button>
           );

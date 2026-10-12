@@ -26,6 +26,30 @@ export type TemplateId =
   | 'jake' | 'aurora' | 'editorial' | 'midnight' | 'neon' | 'terminal'
   | 'sunset' | 'mint' | 'swiss' | 'royal' | 'ocean' | 'mono';
 
+/**
+ * Each template's OWN STORYLINE (Jake 2026-10-12: "each template should have a different storyline structure …
+ * completely unique in all aspects"). The steps live on the server (server/src/news/deepDiveTemplates.ts, same ids);
+ * these are the picker's labels.
+ */
+export const STORYLINES: Record<TemplateId, { name: string; label: string }> = {
+  jake: { name: 'Payoff First', label: 'See it work → why → how → the catch' },
+  aurora: { name: 'The Mystery', label: 'An unexplained result → clues → the reveal' },
+  editorial: { name: 'The Feature Story', label: 'A real moment → the big idea → the evidence → the other side' },
+  midnight: { name: 'The Countdown', label: '#5 → #1' },
+  neon: { name: 'Myth vs Reality', label: 'What people think → what\'s true, round after round' },
+  terminal: { name: 'The Build', label: 'From zero to a working result, step by step' },
+  sunset: { name: 'Before & After', label: 'A normal day without it → the same day with it' },
+  mint: { name: 'The Experiment', label: 'The claim → three tests → the scorecard' },
+  swiss: { name: 'The Explainer', label: 'One question, answered in layers' },
+  royal: { name: 'The Showdown', label: 'X vs Y, round by round → who wins for whom' },
+  ocean: { name: 'How We Got Here', label: 'The turning points → today → what\'s next' },
+  mono: { name: 'The Verdict', label: 'A bold claim → for → against → the call' },
+};
+/** The storyline a template id tells (no / an unknown template = the original payoff-first one, like the server). */
+export function storylineIdOf(template: string | null | undefined): TemplateId {
+  return (template && template in STORYLINES ? template : 'jake') as TemplateId;
+}
+
 export type Surfaces = 'alternate' | 'dark' | 'light';
 export type Deco = 'none' | 'dots' | 'grid' | 'lines' | 'glow' | 'aurora' | 'scan' | 'waves' | 'sun';
 

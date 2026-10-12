@@ -21,6 +21,7 @@
  */
 import { enforceSpokenRules } from "../scriptgen/spokenRules.js";
 import { db } from "../db/index.js";
+import { storylineFor, storylinePrompt, storylineScriptLine } from "./deepDiveTemplates.js";
 import { makeTable, stories, type StoryRecord } from "./db.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { callNewsModel } from "./ai.js";
@@ -80,6 +81,8 @@ for (const [c, t] of [["format", "TEXT"], ["demo_agent", "INTEGER"], ["demo_url"
 }
 // Templates (2026-10-06): the design the dive is presented in (web: src/news/deepdive/templates.ts).
 if (!hasCol("news_deep_dives", "template")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN template TEXT`);
+// the storyline the sections were BUILT with (deepDiveTemplates.ts) — a template whose storyline differs offers a rebuild
+if (!hasCol("news_deep_dives", "storyline")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN storyline TEXT`);
 
 /**
  * The template ids the web app draws (src/news/deepdive/templates.ts). A
@@ -125,6 +128,7 @@ export interface DeepDiveRecord {
   mediaJson?: string;
   /** The design template id (DEEP_DIVE_TEMPLATES); empty = the format's default. */
   template?: string;
+  storyline?: string | null;
   generatedAt?: string;
   updatedAt?: string;
   createdAt?: number;
@@ -172,6 +176,7 @@ export const deepDives = makeTable<DeepDiveRecord>(
     demoUrl: ["demo_url", "text"],
     mediaJson: ["media_json", "text"],
     template: ["template", "text"],
+    storyline: ["storyline", "text"],
     generatedAt: ["generated_at", "text"],
     updatedAt: ["updated_at", "text"],
     createdAt: ["created_at", "num"],
@@ -406,6 +411,8 @@ export function deepDiveOut(d: DeepDiveRecord) {
     demoAgent: !!d.demoAgent,
     demoUrl: d.demoUrl ?? "",
     template: d.template ?? "",
+    /** the storyline the sections were built with ("" = before storylines existed, i.e. the original "jake") */
+    storyline: d.storyline ?? "",
     heroVideo: heroVideoOf(d),
     generatedAt: d.generatedAt ?? null,
     updatedAt: d.updatedAt ?? null,
@@ -620,6 +627,9 @@ KEEP IT INTERESTING THE WHOLE WAY THROUGH (this is a live show — nobody can sk
 - Alternate the energy: no two text-heavy sections ("bullets", "statement") back to back; follow a list with something visual ("stats", "compare", "bars", "timeline", "media", "quote").
 - Put the strongest material early and save one good surprise for the second half so it doesn't sag.`;
 
+/** The rules every storyline keeps (the template storylines append it to their own steps). */
+const KEEP_INTERESTING = STRUCTURE.slice(STRUCTURE.indexOf("KEEP IT INTERESTING"));
+
 function visualsList(pool: Visual[]): string {
   if (!pool.length) return "VISUALS: none were found — sections stand on their own design.";
   const kindName: Record<string, string> = { image: "screenshot/photo", gif: "GIF", video: "video clip", clip: "moment from the company's video" };
@@ -634,9 +644,14 @@ VISUAL RULES (Jake: "the presentation should always include screenshots or GIFs 
 }
 
 async function outline(d: DeepDiveRecord, pack: ResearchPack, payoff: VideoFields | null, pool: Visual[]): Promise<Outline> {
-  const video = payoff && (payoff.videoId || payoff.videoUrl)
-    ? `COMPANY VIDEO AVAILABLE for the payoff section (section 2, kind "media"): "${payoff.videoTitle}" by ${payoff.videoChannel || "the company"}. Write that section's caption and beats around what this video shows.`
-    : `NO COMPANY VIDEO was found — section 2 shows the payoff with a concrete example instead of "media". Use "media" later only if the research clearly points to another official video.`;
+  const sl = storylineFor(d.template);
+  const video = sl.payoffSecond
+    ? (payoff && (payoff.videoId || payoff.videoUrl)
+      ? `COMPANY VIDEO AVAILABLE for the payoff section (section 2, kind "media"): "${payoff.videoTitle}" by ${payoff.videoChannel || "the company"}. Write that section's caption and beats around what this video shows.`
+      : `NO COMPANY VIDEO was found — section 2 shows the payoff with a concrete example instead of "media". Use "media" later only if the research clearly points to another official video.`)
+    : (payoff && (payoff.videoId || payoff.videoUrl)
+      ? `COMPANY VIDEO AVAILABLE: "${payoff.videoTitle}" by ${payoff.videoChannel || "the company"}. Use it as ONE "media" section at the step of the storyline that shows it working, and write that section's caption and beats around what it shows.`
+      : `NO COMPANY VIDEO was found — the storyline's "shown working" step uses a concrete example instead of "media".`);
   const prompt = `You are the producer of a ~10-minute live deep-dive segment on Jake Dawson's AI show. Jake presents it; the audience sees an animated, full-screen presentation that steps one section at a time. Design what goes ON SCREEN for each section.
 
 TOPIC: ${d.topic}
@@ -646,7 +661,7 @@ ${JSON.stringify(pack).slice(0, 24000)}
 
 ${KIND_SPEC}
 
-${STRUCTURE}
+${storylinePrompt(sl, "v1", STRUCTURE, KEEP_INTERESTING)}
 
 ${video}
 
@@ -654,7 +669,7 @@ ${visualsList(pool)}
 
 RULES:
 1. 8 to 12 sections. The first is "title", the last is "takeaways".
-2. Follow the STRUCTURE above. Merge or skip beats the research can't support.
+2. Follow the ${sl.legacy ? "STRUCTURE" : "STORYLINE"} above. Merge or skip beats the research can't support.
 3. Variety: NEVER the same kind twice in a row (check the list before answering — "bullets" then "bullets" is wrong; turn one into a statement, stats, compare or quote). Use at least one "stats", and at least one of "compare" / "bars" / "timeline". Use "quote" only with a real quote from the research.
 4. The SCREEN IS NOT THE SCRIPT. On-screen text is short and punchy — a 14-year-old gets it at a glance. Jake does the explaining out loud.
 5. Every number, date, name and quote must come from the research. Nothing invented. Rumors get "Rumor:" or "Unconfirmed" in the eyebrow.
@@ -726,13 +741,23 @@ const DEEP_DIVE_RULES = `THIS IS A DEEP-DIVE SEGMENT, NOT A NEWS SEGMENT:
 - SIMPLE ENGLISH: the script generator's rules at the end of the style guide apply to every sentence — everyday words, fewer numbers, no insider terms. Where a section shows figures on screen, say what they mean for the viewer, not the figures.
 - BEATS: a section with several items (points, numbers, timeline events, comparison rows, bars) shows them ONE AT A TIME — Jake presses → to bring in the next. Where a section says "N beats", put the marker [next] on its own between beats — EXACTLY N−1 markers — and talk about item 1 before the first [next], item 2 after it, and so on, so what he says lines up with what appears. A section with a highlighted statement has 2 beats: the statement, then [next] the highlight lands.`;
 
+/** DEEP_DIVE_RULES for the dive's storyline: the payoff-first lines are the original's own; any other storyline
+ * swaps them for its arc. */
+export function deepDiveRulesFor(d: DeepDiveRecord): string {
+  const sl = storylineFor(d.template);
+  if (sl.legacy) return DEEP_DIVE_RULES;
+  return DEEP_DIVE_RULES
+    .replace(/- The opener \(section 1\)[^\n]*\n/, `- The opener (section 1) is a hook that makes a regular person want the next ten minutes, the way the "${sl.name}" storyline opens. No "welcome back", no "today we're going to", no subscribe/like asks.\n`)
+    .replace(/- Section 2 is the payoff[^\n]*\n/, `${storylineScriptLine(sl)}\n`);
+}
+
 async function writeScripts(d: DeepDiveRecord, pack: ResearchPack, brief: string, count: number, beats: number[] = []): Promise<string[]> {
   const facts = JSON.stringify(pack).slice(0, 20000);
   const prompt = `${JAKE_STYLE_GUIDE}
 
 ---
 
-${DEEP_DIVE_RULES}
+${deepDiveRulesFor(d)}
 
 Write the teleprompter script for this deep-dive segment, section by section. Jake reads it live while the screen shows each section.
 
@@ -761,7 +786,7 @@ OUTPUT FORMAT — exactly ${count} sections, each starting with its marker line 
 
 ---
 
-${DEEP_DIVE_RULES}
+${deepDiveRulesFor(d)}
 
 You are reviewing the teleprompter script for a live deep-dive segment. Rewrite anything that's unclear, stiff, or uses complex language. Aim for a 14-year-old's reading level and a normal American talking to a friend — not a news anchor, not an article being read.
 
@@ -914,8 +939,9 @@ export async function generateDeepDive(
     const repeats = planned.filter((p, i) => i > 0 && planned[i - 1].kind === p.kind).length;
     if (repeats) console.warn(`[news-deepdive] outline has ${repeats} back-to-back repeat(s) of a section kind`);
     // Payoff first, whatever the outline did: with a video, the first media
-    // section moves to position 2 (or one is added there).
-    if (hasPayoff && planned.length > 1) {
+    // section moves to position 2 (or one is added there) — the payoff-first storyline only; the others place it
+    // where their own steps show it working (deepDiveTemplates.ts).
+    if (hasPayoff && planned.length > 1 && storylineFor(d.template).payoffSecond) {
       const at = planned.findIndex((p, i) => i > 0 && p.kind === "media");
       if (at > 1) planned.splice(1, 0, planned.splice(at, 1)[0]);
       else if (at < 0) {
@@ -937,6 +963,7 @@ export async function generateDeepDive(
     const media = planned.map((p, i) => (p.kind === "media" ? i : -1)).filter((i) => i >= 0);
     const videos: Record<number, VideoFields> = {};
     if (hasPayoff && planned[1]?.kind === "media") videos[1] = payoff;
+    else if (hasPayoff && media.length && !storylineFor(d.template).payoffSecond) videos[media[0]] = payoff;
     const rest = media.filter((i) => !videos[i]);
     if (rest.length) {
       await prog(`Finding the company's own video for ${rest.length} more section${rest.length === 1 ? "" : "s"}…`, 87);
@@ -974,6 +1001,7 @@ export async function generateDeepDive(
       status: "ready",
       title: s(o.title, 120) || d.topic,
       subtitle: s(o.subtitle, 200),
+      storyline: storylineFor(d.template).id,
       generatedAt: nowIso,
       updatedAt: nowIso,
     });

@@ -27,6 +27,7 @@ import { callNewsModel } from "./ai.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { fitMarkers } from "./deepDiveBeats.js";
+import { storylineFor, storylinePrompt, storylineScriptLine } from "./deepDiveTemplates.js";
 import { L, SCREEN_HOOKED, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 import {
   deepDives, deepDiveSections, sectionsOf, setGenerating, isGenerating,
@@ -150,7 +151,11 @@ LESS TEXT, MORE DEMONSTRATION (Jake): use every demonstration kind the material 
 
 interface OutChapter { kind: Kind; eyebrow: string; heading: string; island: { q: string; a: string } | null; data: any; notes: string[] }
 
+/** What every storyline keeps on the demo-first format (Jake: less text, more demonstration). */
+const V2_SHARED = STRUCTURE_V2.slice(STRUCTURE_V2.indexOf("LESS TEXT, MORE DEMONSTRATION"));
+
 async function outlineV2(d: DeepDiveRecord, pack: ResearchPack, media: MediaCatalog, pool: Visual[]): Promise<{ title: string; subtitle: string; chapters: OutChapter[] }> {
+  const sl = storylineFor(d.template);
   const prompt = `You are the producer of a ~10-minute live deep-dive segment on Jake Dawson's AI show ("Use AI like the pros — no code, no BS"). Jake presents it live; the audience sees a minimal, animated, full-screen show that he clicks through. Design every chapter.
 
 TOPIC: ${d.topic}
@@ -163,12 +168,12 @@ ${catalogText(media, pool)}
 
 ${KINDS_SPEC}
 
-${STRUCTURE_V2}
+${storylinePrompt(sl, "v2", STRUCTURE_V2, V2_SHARED)}
 
 RULES:
 1. 8 to 11 chapters. First "title", last "takeaways". About 32-45 beats in total (each beat ≈ 15-20 seconds of Jake talking).
 2. "heading": ${spec(L.heading)}, NO final period, and exactly ONE accent phrase of 1-3 words wrapped in *asterisks* (it is set in italic with a yellow underline) — e.g. "Watch a dot *do the job*".
-3. "eyebrow": ${spec(L.eyebrow)}, e.g. "The payoff · OpenAI's own demo". Rumors say "Unconfirmed".
+3. "eyebrow": ${spec(L.eyebrow)}, e.g. ${sl.legacy ? `"The payoff · OpenAI's own demo"` : "the storyline's own labels (see its rules)"}. Rumors say "Unconfirmed".
 4. "island": a tiny question → answer chip for the chapter, {"q":"max 3 words, ends with ?","a":"max 3 words"} — e.g. {"q":"Who types?","a":"Mostly the dot"}. null for title and takeaways.
 5. "notes": one note per BEAT, in order, for the scriptwriter: what Jake says while that beat is on screen, with the specific facts. The number of notes = the number of beats (demo: total steps; clip: clips; article: highlights; reveal: cards (+1 if good/bad); stats/versus/flow/timeline/list/takeaways: items; title/quote: 1).
 6. Every number, date, name and quote comes from the research or the material. Nothing invented.
@@ -333,6 +338,14 @@ const V2_SCRIPT_RULES = `THIS IS A LIVE DEEP-DIVE SEGMENT IN CHAPTERS:
 - Use 5-9 phrases from the conversational phrase menu across the whole segment, never two in a row.
 - SIMPLE ENGLISH: the script generator's rules at the end of the style guide apply to every sentence — everyday words, fewer numbers, no insider terms. Where the screen shows figures, say what they mean for the viewer, not the figures.`;
 
+/** V2_SCRIPT_RULES for the dive's storyline (the payoff-first opener line swapped for the storyline's arc). */
+export function v2ScriptRulesFor(d: DeepDiveRecord): string {
+  const sl = storylineFor(d.template);
+  if (sl.legacy) return V2_SCRIPT_RULES;
+  return V2_SCRIPT_RULES.replace(/- The opener is a hook: lead with the payoff\.[^\n]*\n/,
+    `- The opener is a hook, the way the "${sl.name}" storyline opens. No "welcome back", no "today we're going to", no subscribe asks.\n${storylineScriptLine(sl)}\n`);
+}
+
 async function writeScriptsV2(d: DeepDiveRecord, pack: ResearchPack, chapters: { kind: Kind; heading: string; eyebrow: string; data: any; notes: string[] }[]): Promise<string[]> {
   const beats = chapters.map((c) => beatCountOf(c.kind, c.data));
   const totalBeats = beats.reduce((a, b) => a + b, 0);
@@ -350,7 +363,7 @@ SAY, BEAT BY BEAT: ${c.notes.map((n, k) => `(${k + 1}) ${n}`).join(" ")}`;
 
 ---
 
-${V2_SCRIPT_RULES}
+${v2ScriptRulesFor(d)}
 
 Write Jake's teleprompter script for this deep dive, chapter by chapter.
 
@@ -375,7 +388,7 @@ OUTPUT FORMAT — exactly ${chapters.length} chapters, each starting with its ma
 
 ---
 
-${V2_SCRIPT_RULES}
+${v2ScriptRulesFor(d)}
 
 Review this live deep-dive script. Rewrite anything unclear, stiff or complex: a 14-year-old's reading level, a normal American talking to a friend. No technical term stays in the script, not even explained (product, model, company and law names are fine); where the screen shows something technical, say what it means. Cut repeats across chapters. Keep them watching: the opener leads with the most interesting thing, every chapter reveals something new, any dragging stretch becomes something new or goes, three dry funny lines across the segment. Fix banned endings. Apply the script generator's rules (end of the style guide): every banned word, AI-sounding phrase or insider term rewritten in everyday words; more than one number in a paragraph cut to the one that matters. Keep the facts, the order, the ### SECTION n lines and EXACTLY the [next] markers each chapter has (their count must not change). Total 1,450-1,700 words; if it is short, expand the thinnest beats with research details, never padding.
 
@@ -602,7 +615,7 @@ export async function generateDeepDiveV2(
     }
 
     const nowIso = new Date().toISOString();
-    deepDives.update(id, { status: "ready", title: s(o.title, 120) || d.topic, subtitle: s(o.subtitle, 200), generatedAt: nowIso, updatedAt: nowIso });
+    deepDives.update(id, { status: "ready", title: s(o.title, 120) || d.topic, subtitle: s(o.subtitle, 200), storyline: storylineFor(d.template).id, generatedAt: nowIso, updatedAt: nowIso });
     await prog(`Done — ${built.length} chapters, ${demoish} demonstrations, ~${Math.round(words / 150)} min${agentNote}.`, 100);
     return { success: true, sections: built.length, message: `Created ${built.length} chapters` };
   } catch (err) {
