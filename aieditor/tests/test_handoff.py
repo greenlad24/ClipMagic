@@ -108,7 +108,15 @@ def test_nlexml():
     b1 = next(c for c in gfx if c.findtext("name") == "04-facecam-bubble-slot01")
     check(b1.findtext("end") == "700", f"back-to-back bubbles abut, no overlap: {b1.findtext('end')}")
     atr = seq.findall("media/audio/track")
-    check(len(atr) == 3 and all(t.get("premiereTrackType") == "Stereo" for t in atr), "three stereo audio tracks")
+    check(len(atr) == 6 and all(t.get("premiereTrackType") == "Stereo" for t in atr)
+          and [t.get("currentExplodedTrackIndex") for t in atr] == ["0", "1"] * 3
+          and [t.findtext("outputchannelindex") for t in atr] == ["1", "2"] * 3,
+          "three stereo tracks, each a left/right PAIR as Premiere writes them (Jake's editor: no audio tracks before)")
+    right = atr[1].find("clipitem")
+    check(right.find("file").get("id") == atr[0].find("clipitem").find("file").get("id") and right.find("file/pathurl") is None
+          and right.findtext("sourcetrack/trackindex") == "2", "the right half names the same file by id, channel 2")
+    lk = [(l.findtext("linkclipref"), l.findtext("trackindex")) for l in atr[0].find("clipitem").findall("link")]
+    check(lk == [(atr[0].find("clipitem").get("id"), "1"), (right.get("id"), "2")], f"the halves are linked: {lk}")
     a1 = atr[0].find("clipitem")
     check(a1.findtext("file/pathurl") == "audio/voice.wav" and a1.findtext("file/media/audio/channelcount") == "2"
           and a1.findtext("sourcetrack/mediatype") == "audio", "A1 voice stem")

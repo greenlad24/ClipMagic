@@ -105,7 +105,9 @@ def read_xmeml(text):
     for n, tr in enumerate(seq.findall("media/video/track")):
         tl["video"].append({"name": f"V{n + 1}", "clips": [clip(ci, "video") for ci in tr.findall("clipitem")]})
     roles = ("dialogue", "music", "effects")
-    for n, tr in enumerate(seq.findall("media/audio/track")):
+    # a stereo track is a left/right PAIR of XML tracks (nlexml.xmeml): the right half (exploded index 1) is the
+    # same clips again — one track in the model
+    for n, tr in enumerate([t for t in seq.findall("media/audio/track") if t.get("currentExplodedTrackIndex", "0") == "0"]):
         cs = [clip(ci, "audio") for ci in tr.findall("clipitem")]
         for c in cs:
             c["role"] = roles[n] if n < len(roles) else "effects"

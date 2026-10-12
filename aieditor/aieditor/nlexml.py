@@ -308,13 +308,52 @@ def xmeml(tl):
         _sub(g, "numchannels", 1)
         _sub(g, "downmix", 0)
         _sub(_sub(g, "channel"), "index", ch)
+    # ⚠️ A STEREO TRACK IS TWO XML TRACKS IN PREMIERE'S OWN FILES ("exploded": left = source channel 1, right =
+    # channel 2, currentExplodedTrackIndex 0/1 of totalExplodedTrackCount 2, output channels 1/2), every clip once in
+    # each half — the right half naming the SAME file by id — and the two halves linked. Written as ONE track with one
+    # half (until 2026-10-12), Premiere imported the sequence with a single empty audio track (Jake's editor: "there
+    # are no audio tracks in the timeline").
+    xml_track = 0
     for tr in tl.get("audio") or []:
-        t = _sub(audio, "track", premiereTrackType="Stereo")
-        for c in sorted(tr.get("clips") or [], key=lambda c: c["start"]):
-            clipitem(t, c, "audio")
-        _sub(t, "enabled", "TRUE")
-        _sub(t, "locked", "FALSE")
-        _sub(t, "outputchannelindex", 1)
+        clips = sorted(tr.get("clips") or [], key=lambda c: c["start"])
+        stereo = all(int(c.get("channels", 2)) == 2 for c in clips)
+        if not stereo:                                  # mono: one track, as is
+            t = _sub(audio, "track")
+            xml_track += 1
+            for c in clips:
+                clipitem(t, c, "audio")
+            _sub(t, "enabled", "TRUE")
+            _sub(t, "locked", "FALSE")
+            _sub(t, "outputchannelindex", 1)
+            continue
+        trk_l = _sub(audio, "track", currentExplodedTrackIndex="0", totalExplodedTrackCount="2", premiereTrackType="Stereo")
+        trk_r = _sub(audio, "track", currentExplodedTrackIndex="1", totalExplodedTrackCount="2", premiereTrackType="Stereo")
+        na, nb = xml_track + 1, xml_track + 2
+        xml_track += 2
+        for k, c in enumerate(clips, 1):
+            ca = clipitem(trk_l, c, "audio")
+            ids["clip"] += 1
+            cb = ET.fromstring(ET.tostring(ca))         # the right half: the same clip …
+            cb.set("id", f"clipitem-{ids['clip']}")
+            fa = ca.find("file")
+            for i, ch in enumerate(list(cb)):
+                if ch.tag == "file":                    # … naming the left half's file by id
+                    cb.remove(ch)
+                    cb.insert(i, ET.Element("file", {"id": fa.get("id")}))
+            cb.find("sourcetrack/trackindex").text = "2"
+            trk_r.append(cb)
+            for el in (ca, cb):
+                for cid, tix in ((ca.get("id"), na), (cb.get("id"), nb)):
+                    lk = _sub(el, "link")
+                    _sub(lk, "linkclipref", cid)
+                    _sub(lk, "mediatype", "audio")
+                    _sub(lk, "trackindex", tix)
+                    _sub(lk, "clipindex", k)
+                    _sub(lk, "groupindex", 1)
+        for t, out in ((trk_l, 1), (trk_r, 2)):
+            _sub(t, "enabled", "TRUE")
+            _sub(t, "locked", "FALSE")
+            _sub(t, "outputchannelindex", out)
     tc = _sub(seq, "timecode")
     _rate(tc, tb, ntsc)
     _sub(tc, "string", "00:00:00:00")
@@ -579,12 +618,15 @@ def validate_xmeml(text):
             probs.append(f"sequence has no {tag}")
     total = int(seq.findtext("duration") or 0)
     tb = seq.findtext("rate/timebase")
+    defined = {f.get("id") for f in seq.iter("file") if f.find("pathurl") is not None}
     for kind in ("video", "audio"):
         for n, tr in enumerate(seq.findall(f"media/{kind}/track"), 1):
             last_end = -1
             for ci in tr.findall("clipitem"):
                 name = ci.findtext("name")
                 for tag in ("name", "start", "end", "in", "out", "duration", "rate/timebase", "file/pathurl"):
+                    if tag == "file/pathurl" and ci.find("file") is not None and ci.find("file").get("id") in defined:
+                        continue                       # the file named by id (a stereo pair's right half)
                     if ci.find(tag) is None:
                         probs.append(f"{kind} {n} clipitem {name} has no {tag}")
                 s, e = int(ci.findtext("start")), int(ci.findtext("end"))
