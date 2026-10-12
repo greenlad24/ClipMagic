@@ -46,6 +46,15 @@ export const SKOOL_CATEGORIES = [
   "Community Resources",
 ];
 
+/**
+ * The category a post lands in when the drafter named none of the above (an empty category made the taught
+ * "createPost" stop at its {{category}} click: the Sunday 2026-10-11 post was abandoned after 12 tries).
+ */
+export const DEFAULT_CATEGORY = "General Discussion";
+export function categoryOr(c: string | null | undefined): string {
+  return c && c.trim() ? c : DEFAULT_CATEGORY;
+}
+
 export interface SkoolPost {
   id: string;
   /** The URL slug — `…/ai-automations-for-sales/<slug>`. */

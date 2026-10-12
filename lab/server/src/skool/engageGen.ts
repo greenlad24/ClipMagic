@@ -38,6 +38,7 @@ import { allowedCourseSlugs, type Entitlement } from "./access.js";
 import { youtubeUrl, videosForSubject } from "./channelVideos.js";
 import { policyBlock } from "./safety.js";
 import { linksIn } from "./outgoing.js";
+import { DEFAULT_CATEGORY } from "./community.js";
 
 /**
  * Something the composer attaches to a post, beyond its words.
@@ -1856,7 +1857,8 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
   const category =
     req.categories.find((c) => c.toLowerCase() === String(parsed.category ?? "").toLowerCase()) ??
     req.preferredCategory ??
-    null;
+    // a category the model made up (or none): never an uncategorised post — the publish step needs one to click
+    (req.categories.includes(DEFAULT_CATEGORY) ? DEFAULT_CATEGORY : req.categories[0] ?? null);
 
   const attachment = attachmentFrom(parsed.attach, req.videoCandidates ?? []);
   const body = req.kind === "ask" ? withPollCommentAsk(String(parsed.body).trim(), attachment) : String(parsed.body).trim();

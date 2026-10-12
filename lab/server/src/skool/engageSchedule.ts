@@ -42,7 +42,7 @@ import { getSkoolSettings } from "../db/skool.js";
 import { createPost } from "./engageActions.js";
 import { commentOnPost } from "./postComment.js";
 import { readComments } from "./comments.js";
-import { readFeed, SKOOL_CATEGORIES } from "./community.js";
+import { categoryOr, readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
 import { videosForSubject } from "./channelVideos.js";
@@ -1457,7 +1457,7 @@ async function attemptSlot(
     communityUrl,
     title: draft.title,
     body: draft.body,
-    category: draft.category,
+    category: categoryOr(draft.category),
     // One email a week, on the week's first posting day — see `emailNotify` in
     // the config above. Skool would refuse the other two anyway; deciding it
     // here is what makes WHICH post gets it a choice instead of a race.
@@ -1756,7 +1756,7 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
     communityUrl,
     title: slot.title,
     body: slot.body,
-    category: slot.category,
+    category: categoryOr(slot.category),
     emailNotify: cfg.emailNotify && isEmailSlot(slotKey, cfg.days),
     // The attachment the slot already settled on — same reason the words are
     // replayed rather than re-drafted.
