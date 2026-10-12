@@ -189,8 +189,11 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const [plan, setPlan] = useState<AutoVideoPlan[]>(review.videos);
   const [tab, setTab] = useState(0);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setPlan(review.videos), [review.videos]);
-  const dirty = JSON.stringify(plan) !== JSON.stringify(review.videos);
+  // the page polls the job: every poll is a NEW review.videos array — reset his unsaved clicks only when the SAVED
+  // transcript really changed (Jake 2026-10-12: "I clicked it and then after a few seconds it comes back")
+  const savedKey = JSON.stringify(review.videos);
+  useEffect(() => setPlan(JSON.parse(savedKey)), [savedKey]);
+  const dirty = JSON.stringify(plan) !== savedKey;
   const running = job.status.state === 'running' || job.status.state === 'queued';
   // workflow 2: the narration was already edited — the transcript is for reference, not for cutting
   const creative = (job.workflow ?? job.request.workflow) === 'creative';
