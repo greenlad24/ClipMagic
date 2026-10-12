@@ -933,7 +933,11 @@ export async function chainOf(dir: string, req: any): Promise<ChainInfo | null> 
 /** Jake's edits on the review screen: the kept sentences (and dropped words) per video. */
 export async function saveEdits(id: string, videos: unknown) {
   const dir = jobDir(id);
-  if (workflowOf(await readJson<any>(path.join(dir, "request.json"))) === "creative") {
+  const req = await readJson<any>(path.join(dir, "request.json"));
+  // a GRAPHICS-ONLY job may be cut after its run (Jake 2026-10-12): the package and preview follow ("render" — the
+  // plan is re-timed by code, no new plan, no new pictures). Other creative edits keep the narration as it is.
+  const handoffCut = req?.handoff === true && req?.format === "long" && !req?.excerpt;
+  if (workflowOf(req) === "creative" && !handoffCut) {
     throw new Error("A creative edit keeps the narration as it is — there is no cut to edit.");
   }
   if (!Array.isArray(videos) || videos.length === 0) throw new Error("Nothing to save.");
@@ -946,9 +950,12 @@ export async function saveEdits(id: string, videos: unknown) {
   }));
   const st = await readJson<any>(path.join(dir, "status.json"));
   if (st?.state === "running") throw new Error("Wait for the current step to finish.");
+  if (handoffCut && (st?.state !== "done" || (await exists(path.join(dir, "queue.json"))))) {
+    throw new Error("Cut after the run: wait until the job has finished.");
+  }
   await writeJson(path.join(dir, "plan.edit.json"), { videos: clean, saved_at: Date.now() / 1000 });
-  await writeJson(path.join(dir, "queue.json"), { action: "rebuild" });
-  return { ok: true };
+  await writeJson(path.join(dir, "queue.json"), { action: handoffCut ? "render" : "rebuild" });
+  return { ok: true, rebuilding: handoffCut ? "package" : "cut" };
 }
 
 /**
@@ -1089,8 +1096,10 @@ export async function audioSlice(id: string, from: number, to: number): Promise<
 
 export async function resetEdits(id: string) {
   const dir = jobDir(id);
+  const req = await readJson<any>(path.join(dir, "request.json"));
   await fsp.rm(path.join(dir, "plan.edit.json"), { force: true });
-  await writeJson(path.join(dir, "queue.json"), { action: "rebuild" });
+  // a graphics-only job: back to the whole timeline — the package and preview follow
+  await writeJson(path.join(dir, "queue.json"), { action: req?.handoff === true ? "render" : "rebuild" });
   return { ok: true };
 }
 

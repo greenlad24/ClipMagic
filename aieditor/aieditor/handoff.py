@@ -150,6 +150,101 @@ def plan(d, req, edl, log=print, progress=None):
     return {"note": note, "usd": round(usd, 4)}
 
 
+# ════════════════════════════ a cut after the run: the plan re-timed in code ════════════════════════════
+# Jake 2026-10-12: "allow me to cut sentences/words after the preview or run is done … and make the changes in the
+# preview and all the other files for the handoff". The plan is word-id based: after his cut the SAME plan is snapped
+# to the words that are left and checked again by code (director.recheck) — no plan call, no new pictures.
+
+def can_retime(d):
+    """A hand-off plan with its model answer that is OLDER than the timeline (he cut words since)."""
+    d = Path(d)
+    doc = jload(d / "preprod" / "plan.json") or {}
+    return bool(doc.get("handoff") and (doc.get("plan") or {}).get("answer")) and not plan_fresh(d)
+
+
+def _snap(a, b, kept):
+    """[a, b] word ids → the first/last KEPT id inside it, or None when he removed all of it."""
+    if a is None or b is None:
+        return None
+    ids = [i for i in range(int(a), int(b) + 1) if i in kept]
+    return (ids[0], ids[-1]) if ids else None
+
+
+def snap_answer(answer, overlays, kept):
+    """The model's answer + its raw overlays on the words that are left: spans snap inward to kept words, a span with
+    none left goes, a beat on a removed word goes. → (answer, overlays, dropped counts)."""
+    import copy
+    ans = copy.deepcopy(answer or {})
+    n = {"segments": 0, "beats": 0, "aroll": 0, "plates": 0, "overlays": 0}
+    segs = []
+    for sg in ans.get("segments") or []:
+        sp = _snap(sg.get("start_word"), sg.get("end_word"), kept)
+        if not sp:
+            n["segments"] += 1
+            continue
+        beats = []
+        for b in sg.get("beats") or []:
+            if b.get("word_id") is not None and b["word_id"] not in kept:
+                n["beats"] += 1
+                continue
+            if b.get("wait_end_word") is not None and b["wait_end_word"] not in kept:
+                b = {**b, "wait_end_word": None}
+            beats.append(b)
+        segs.append({**sg, "start_word": sp[0], "end_word": sp[1], "beats": beats})
+    ans["segments"] = segs
+    for key in ("aroll", "plates"):
+        keep = []
+        for x in ans.get(key) or []:
+            sp = _snap(x.get("start_word"), x.get("end_word"), kept)
+            if sp:
+                keep.append({**x, "start_word": sp[0], "end_word": sp[1]})
+            else:
+                n[key] += 1
+        if key in ans:
+            ans[key] = keep
+    ovs = []
+    for o in overlays or []:
+        sp = _snap(o.get("start"), o.get("end"), kept)
+        if not sp:
+            n["overlays"] += 1
+            continue
+        o = {**o, "start": sp[0], "end": sp[1]}
+        if isinstance(o.get("beats"), dict):
+            o["beats"] = {k: v for k, v in o["beats"].items() if not isinstance(v, int) or v in kept}
+        ovs.append(o)
+    return ans, ovs, n
+
+
+def retime(d, e, log=print):
+    """preprod/plan.json → the same plan on the cut timeline (edl.json), by code. Writes plan.json (newer than the
+    timeline, so the plan stage is reused) and keeps the pictures' mark fresh. → note."""
+    from . import director
+    d = Path(d)
+    p_ = d / "preprod" / "plan.json"
+    doc = jload(p_)
+    v = e["videos"][0]
+    video = {"title": v.get("title", ""), "duration": v["duration"], "words": v["words"]}
+    kept = {w["i"] for w in v["words"]}
+    # ALWAYS from the plan as it was made (kept on the first re-time): a second cut, or words he puts back, re-times
+    # the original — a restored sentence gets its beats and overlays back
+    orig = doc.get("original") or {"answer": doc["plan"]["answer"], "overlays": (doc.get("raw") or {}).get("overlays") or [],
+                                   "notes": doc.get("editor_notes") or []}
+    ans, ovs, n = snap_answer(orig["answer"], orig["overlays"], kept)
+    plan_, raw = director.recheck(ans, video, doc.get("sites") or [], planfit.Facts(), overlays=ovs, handoff=True)
+    plan_["needs_primitive"], plan_["held"] = [], False          # a hand-off is never held (as handoff.plan)
+    notes = [x for x in orig["notes"] if not x.get("word_ids") or any(i in kept for i in x["word_ids"])]
+    jdump(p_, {**doc, "plan": plan_, "raw": raw, "editor_notes": notes, "original": orig,
+               "retimed": {"at": time.time(), "words": len(kept), "dropped": n}})
+    mark = d / "preprod" / ASSET_MARK
+    if mark.exists():
+        os.utime(mark)                                   # the pictures stand: a cut makes none again
+    gone = ", ".join(f"{k} {c}" for k, c in n.items() if c)
+    note = (f"plan re-timed to the cut by code (no plan call): {len(plan_.get('segments') or [])} screencast(s), "
+            f"{len(plan_.get('overlays') or [])} overlay(s)" + (f"; removed with the words: {gone}" if gone else ""))
+    log(note)
+    return note
+
+
 # ════════════════════════════ stage "assets": the pre-production pictures ════════════════════════════
 # Jake 2026-10-12: "I want the handoff package to include all of the images and assets generated in the
 # preproduction with it (like it would have done the screencast recording but just downloading all of these assets

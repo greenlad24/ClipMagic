@@ -194,6 +194,10 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const running = job.status.state === 'running' || job.status.state === 'queued';
   // workflow 2: the narration was already edited — the transcript is for reference, not for cutting
   const creative = (job.workflow ?? job.request.workflow) === 'creative';
+  // a GRAPHICS-ONLY job can be cut after its run (Jake 2026-10-12): the package + preview follow — the plan is
+  // re-timed by code (no new plan, no new pictures); other creative edits keep the narration as it is
+  const handoffCut = creative && job.request.handoff === true && job.request.format === 'long' && !job.request.excerpt;
+  const canCut = !creative || (handoffCut && job.status.state === 'done');
 
   const sentence = useMemo(() => new Map(review.sentences.map((s) => [s.s, s])), [review.sentences]);
   const startOf = useCallback((n: number) => sentence.get(n)?.start ?? 0, [sentence]);
@@ -278,7 +282,9 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
     setSaving(true);
     try {
       await autoEditorSaveEdits({ id: job.id, videos: plan });
-      toast.success('Saved — rebuilding the cut and the sound check (a few minutes, no video render).');
+      toast.success(handoffCut
+        ? 'Saved — rebuilding the package and the preview with your cut (same plan and pictures, no new Claude cost).'
+        : 'Saved — rebuilding the cut and the sound check (a few minutes, no video render).');
       onSaved();
     } catch (err) {
       toast.error(errText(err));
@@ -289,7 +295,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const reset = async () => {
     try {
       await autoEditorResetEdits({ id: job.id });
-      toast.success("Back to Claude's cut — rebuilding the sound check.");
+      toast.success(handoffCut ? 'Every word back — rebuilding the package and the preview.' : "Back to Claude's cut — rebuilding the sound check.");
       onSaved();
     } catch (err) {
       toast.error(errText(err));
@@ -571,20 +577,24 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
-              {creative
+              {handoffCut
+                ? job.status.state === 'done'
+                  ? 'Click a word (or Remove a line) to cut it, then Save: the preview and every file of the package follow.'
+                  : 'Transcript — you can cut words here once the job has finished.'
+                : creative
                 ? 'Transcript (for reference — nothing is cut in a creative edit)'
                 : 'Click a word to cut or restore it. Struck-through lines show why they went.'}
             </p>
-            {!creative && (
+            {canCut && (
             <div className="flex gap-1.5">
               {review.edited && (
                 <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => void reset()} disabled={running}>
-                  <Undo2 className="h-3.5 w-3.5" /> Claude's cut
+                  <Undo2 className="h-3.5 w-3.5" /> {handoffCut ? 'Undo all cuts' : "Claude's cut"}
                 </Button>
               )}
               <Button size="sm" className="gap-1.5" disabled={!dirty || saving || running} onClick={() => void save()}>
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Save
+                {handoffCut ? 'Save & rebuild' : 'Save'}
               </Button>
             </div>
             )}
@@ -608,9 +618,9 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                       return (
                         <span
                           key={w.i}
-                          onClick={kept && !creative ? () => toggleWord(s, w.i) : undefined}
+                          onClick={kept && canCut ? () => toggleWord(s, w.i) : undefined}
                           className={cn(
-                            kept && !creative && 'cursor-pointer rounded hover:bg-primary/20',
+                            kept && canCut && 'cursor-pointer rounded hover:bg-primary/20',
                             dropped ? 'text-muted-foreground line-through' : 'text-foreground',
                           )}
                         >
@@ -633,7 +643,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                       Takes ({alts.length + 1})
                     </button>
                   )}
-                  {!creative && (
+                  {canCut && (
                   <button
                     type="button"
                     onClick={() => toggleSentence(s, !kept)}

@@ -3830,7 +3830,9 @@ export interface AutoJobDetail {
     title: string | null;
     sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn;
     /** "creative" = a Full edit's cut job; chained_from = the cut job a chained creative edit started from */
-    chain?: 'creative'; chained_from?: string; handoff?: boolean };
+    chain?: 'creative'; chained_from?: string; handoff?: boolean;
+    /** a short test of a creative edit: source seconds kept */
+    excerpt?: [number, number][] };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
     cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;

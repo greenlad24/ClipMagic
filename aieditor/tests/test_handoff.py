@@ -337,6 +337,43 @@ def test_worker():
     finally:
         llm.TRANSPORT, graphics_long.render, W.handoff.build = saved
     check(calls == [] and built == [1], f"render reuses the plan, rebuilds the package: {calls} {built}")
+
+    # Jake 2026-10-12: he CUTS words after the run (the Lab's transcript → plan.edit.json, queued "render"): the timeline
+    # loses only those words (every other pause as recorded), the SAME plan is re-timed by code — no plan call, no
+    # pictures — and the package is rebuilt; undoing the cut brings the original plan back
+    def run_render():
+        calls.clear()
+        built.clear()
+        saved_ = (llm.TRANSPORT, graphics_long.render, W.handoff.build)
+        try:
+            llm.TRANSPORT = fake_transport
+            graphics_long.render = lambda w, evs, video, fps, **kw: []
+            W.handoff.build = lambda *a, **kw: built.append(1) or {"note": "again"}
+            W.run_job(W.Job(d), "render")
+        finally:
+            llm.TRANSPORT, graphics_long.render, W.handoff.build = saved_
+    (d / "plan.edit.json").write_text(json.dumps({"videos": [{"title": "T", "segments": [
+        {"s": 1, "drop": [4]}, {"s": 2, "drop": []}, {"s": 3, "drop": []}]}]}))
+    run_render()
+    e_ = json.loads((d / "edl.json").read_text())
+    v_ = e_["videos"][0]
+    check(v_["removed"] == [0, 1, 4] and 4 not in [w["i"] for w in v_["words"]] and v_["cuts"] >= 1,
+          f"the timeline lost exactly his words: {v_.get('removed')}, {v_['cuts']} cut(s)")
+    check(v_["duration"] < 12.0 and e_["cut_at"], f"shorter, and marked with the cut it was made from: {v_['duration']}")
+    check(calls == [] and built == [1], f"no plan call (re-timed by code), the package rebuilt: {calls} {built}")
+    pd_ = json.loads((d / "preprod" / "plan.json").read_text())
+    beats_ = [b["word_id"] for sg in pd_["plan"]["answer"]["segments"] for b in sg.get("beats") or []]
+    check(pd_.get("retimed") and 4 not in beats_ and pd_["original"]["answer"]["segments"][0]["beats"][0]["word_id"] == 4,
+          f"the beat on a removed word goes; the original plan is kept: {beats_}")
+    check(json.loads((d / "review.json").read_text())["edited"], "the transcript shows his cut")
+    check(handoff.plan_fresh(d) and not handoff.can_retime(d), "the re-timed plan is current (a Continue makes no new plan)")
+    (d / "plan.edit.json").unlink()
+    run_render()
+    v_ = json.loads((d / "edl.json").read_text())["videos"][0]
+    pd_ = json.loads((d / "preprod" / "plan.json").read_text())
+    check(not v_.get("removed") and v_["cuts"] == 0 and calls == [], "undo: the whole timeline again, still no plan call")
+    check([b["word_id"] for sg in pd_["plan"]["answer"]["segments"] for b in sg.get("beats") or []] == [4],
+          "undo: the original plan's beats come back")
     check(handoff.wanted({"handoff": True, "workflow": "creative", "format": "long"}), "wanted")
     check(not handoff.wanted({"handoff": True, "workflow": "cut", "format": "long"})
           and not handoff.wanted({"handoff": True, "workflow": "creative", "format": "short"}), "creative long-form only")
@@ -547,6 +584,41 @@ def test_assets():
     check(handoff.package_assets(Path(tempfile.mkdtemp()), d / "none") == 0 and not (d / "none").exists(), "no pictures → no folder")
 
 
+def test_creative_cut():
+    """edl.creative_cut: only his removed words go; every other pause stays as recorded."""
+    from aieditor import edl
+    ws = [{"i": i, "w": f"w{i}", "s": s_, "e": e_} for i, (s_, e_) in enumerate(
+        [(0.5, 0.9), (1.0, 1.4), (2.4, 2.8), (2.9, 3.3), (5.0, 5.4), (5.5, 5.9)])]
+    by = {w["i"]: w for w in ws}
+    full = edl.passthrough(ws, by, 8.0, 30.0)
+    same = edl.creative_cut(ws, by, 8.0, 30.0, [])
+    check(same["duration"] == full["duration"] and same["cuts"] == 0, "no cut = the whole timeline")
+    v = edl.creative_cut(ws, by, 8.0, 30.0, [2, 3])
+    check(v["cuts"] == 1 and [w["i"] for w in v["words"]] == [0, 1, 4, 5], f"two pieces, his words gone: {v['words']}")
+    a_end = v["pieces"][0]["src_b"] if "src_b" in v["pieces"][0] else None
+    gap = next(w for w in v["words"] if w["i"] == 4)["start"] - next(w for w in v["words"] if w["i"] == 1)["end"]
+    check(0.3 <= gap <= 0.42, f"the join keeps ~0.21 + 0.14 s of his own silence (whole frames): {gap:.3f}")
+    w1 = next(w for w in v["words"] if w["i"] == 1)
+    w0 = next(w for w in v["words"] if w["i"] == 0)
+    check(abs((w1["start"] - w0["end"]) - 0.1) < 0.04, "a pause he did not cut is untouched")
+    tail = edl.creative_cut(ws, by, 8.0, 30.0, [5])
+    check(tail["cuts"] == 0 and tail["words"][-1]["i"] == 4 and tail["duration"] < 6.0, "a cut at the end just ends earlier")
+    try:
+        edl.creative_cut(ws, by, 8.0, 30.0, [w["i"] for w in ws])
+        check(False, "cutting every word must fail")
+    except ValueError:
+        pass
+    # snapping the plan to the words that are left
+    ans = {"segments": [{"start_word": 1, "end_word": 4, "beats": [{"word_id": 2}, {"word_id": 4, "wait_end_word": 3}]},
+                        {"start_word": 2, "end_word": 3, "beats": []}],
+           "aroll": [{"start_word": 0, "end_word": 1}]}
+    a2, o2, n = handoff.snap_answer(ans, [{"template": "x", "start": 2, "end": 3}, {"template": "y", "start": 3, "end": 5}], {0, 1, 4, 5})
+    check([(s_["start_word"], s_["end_word"]) for s_ in a2["segments"]] == [(1, 4)] and n["segments"] == 1,
+          f"spans snap inward; one with nothing left goes: {a2['segments']}")
+    check(a2["segments"][0]["beats"] == [{"word_id": 4, "wait_end_word": None}] and n["beats"] == 1, "beats on removed words go")
+    check([(o["start"], o["end"]) for o in o2] == [(4, 5)] and n["overlays"] == 1, f"overlays snap / go: {o2}")
+
+
 if __name__ == "__main__":
     test_nlexml()
     test_slots_and_brief()
@@ -554,4 +626,5 @@ if __name__ == "__main__":
     test_worker()
     test_screen_templates()
     test_assets()
+    test_creative_cut()
     print(f"test_handoff: {N} checks passed")

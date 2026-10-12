@@ -380,24 +380,38 @@ def run_job(job, action):
                 "notes": "Creative edit: the narration was already edited, so every word is kept — no cuts.",
             })
         plan = jload(d / "plan.json")
+        # a graphics-only job's cut AFTER the run (Jake 2026-10-12): plan.edit.json from the Lab's transcript — words /
+        # sentences removed; everything else of the timeline stays as recorded (edl.creative_cut)
+        cut_p = d / "plan.edit.json"
+        cut = takes.validate(jload(cut_p), sents) if handoff.wanted(req) and cut_p.exists() and not req.get("excerpt") else None
+        cut_at = round(cut_p.stat().st_mtime, 3) if cut else None
         jdump(d / "review.json", {
             "sentences": [{"s": n, "start": round(s[0]["s"], 2), "end": round(s[-1]["e"], 2),
                            "words": [{"i": w["i"], "w": w["w"]} for w in s]} for n, s in enumerate(sents)],
-            "videos": plan["videos"], "reasons": {}, "notes": plan.get("notes", ""), "edited": False,
+            "videos": (cut or plan)["videos"], "reasons": {}, "notes": plan.get("notes", ""), "edited": bool(cut),
         })
 
         def do_timeline():
             # optional request.json "excerpt": [[t0, t1], ...] source seconds — a short test of the edit
-            v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"],
-                                excerpt=req.get("excerpt"))
+            if cut:
+                keep = {w["i"] for w in edl.kept_words(cut["videos"][0], sents)}
+                v = edl.creative_cut(words, by_id, info["duration"], fps, [w["i"] for w in words if w["i"] not in keep],
+                                     plan["videos"][0]["title"], audio=edl.Audio(d / "audio16k.wav"))
+            else:
+                v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"],
+                                    excerpt=req.get("excerpt"))
             jdump(d / "edl.json", {"fps": fps, "fps_num": info["fps_num"], "fps_den": info["fps_den"],
                                    "width": info["width"], "height": info["height"], "videos": [v],
-                                   "workflow": "creative"})
+                                   "workflow": "creative", "cut_at": cut_at})
+            if cut:
+                return (f"your cut: {len(v.get('removed') or [])} word(s) removed, {v['cuts']} join(s), "
+                        f"{v['duration']:.0f}s (every other pause as recorded)")
             if v.get("excerpt"):
                 return (f"excerpt kept: {v['duration']:.0f}s of " + ", ".join(f"{a:.0f}–{b:.0f}s" for a, b in v["excerpt"])
                         + f", {len(v['words'])} words")
             return f"whole timeline kept: {v['duration']:.0f}s, {len(v['words'])} words, no cuts"
-        step("timeline", do_timeline, lambda: (d / "edl.json").exists(), rerun=rebuild)
+        step("timeline", do_timeline, lambda: (d / "edl.json").exists() and (jload(d / "edl.json") or {}).get("cut_at") == cut_at,
+             rerun=rebuild)
         if handoff.wanted(req):
             return run_handoff(job, action, req, info, fps, step)
         if action in ("run", "edit"):
@@ -516,6 +530,9 @@ def run_handoff(job, action, req, info, fps, step):
         out = handoff.plan(d, req, e, log=job.log, progress=lambda m=None, f=None: job.progress(m, f))
         job.st["cost_usd"] = round(job.st["cost_usd"] + out["usd"], 4)
         return out["note"] + (f", ${out['usd']:.2f}" if out["usd"] else "")
+    if handoff.can_retime(d):
+        # he cut words after the run: the SAME plan on the new timeline, by code — no plan call, no new pictures
+        handoff.retime(d, e, log=job.log)
     step("preprod", do_plan, lambda: handoff.plan_fresh(d))
 
     def do_assets():
@@ -1243,8 +1260,7 @@ def main():
         if not cloud.enabled_for(action, req):
             return False
         # one job per logged-in account: a job whose Scout account is in use stays queued
-        if action in ("run", "edit", "render") and (req.get("sites") or workflow_of(req) == "creative") \
-                and (not handoff.wanted(req) or handoff.assets_wanted(req)):
+        if cloud.logged_in_job(req, action):
             try:
                 slugs = cloud.scout_slugs(req, d)
                 if any(accountlock.busy(slug) for slug in slugs):

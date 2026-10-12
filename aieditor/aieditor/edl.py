@@ -602,6 +602,56 @@ def excerpt_ranges(words, duration, excerpt):
     return out
 
 
+CUT_TAIL_S = 0.21          # at a join he made: at most this much of the silence after the last kept word …
+CUT_HEAD_S = 0.14          # … and before the next one (the long-form 0.35 s pause, split as TAIL_SHARE)
+
+
+def creative_cut(words, by_id, duration, fps, drop, title="Video 1", audio=None):
+    """A finished graphics-only / creative timeline with words or sentences Jake REMOVED afterwards (Jake 2026-10-12:
+    "allow me to cut sentences/words after the preview or run is done"). Unlike build(), nothing else changes: every
+    natural pause stays as recorded (no pause re-timing, no room tone) — only each removed run of words goes, joined
+    in its own silences: at most CUT_TAIL_S after the last kept word and CUT_HEAD_S before the next, never more
+    silence than was there (with `audio`, a removed word's sliver inside a whole-frame edge becomes room tone).
+    No drop → passthrough(). Same shape as build()/passthrough()."""
+    drop = set(drop or [])
+    if not drop:
+        return passthrough(words, by_id, duration, fps, title)
+    n = max(1, int(math.floor(duration * fps + 1e-6)))
+    end = n / fps
+    ws = sorted(words, key=lambda w: w["s"])
+    cuts, k = [], 0
+    while k < len(ws):
+        if ws[k]["i"] not in drop:
+            k += 1
+            continue
+        j = k
+        while j + 1 < len(ws) and ws[j + 1]["i"] in drop:
+            j += 1
+        prev = ws[k - 1] if k > 0 else None
+        nxt = ws[j + 1] if j + 1 < len(ws) else None
+        a = prev["e"] + min(CUT_TAIL_S, max(0.0, ws[k]["s"] - prev["e"])) if prev else ws[k]["s"]
+        b = nxt["s"] - min(CUT_HEAD_S, max(0.0, nxt["s"] - ws[j]["e"])) if nxt else end
+        cuts.append((max(0.0, a), min(end, max(a, b))))
+        k = j + 1
+    ranges, t = [], 0.0
+    for a, b in cuts:
+        if a - t >= 1.0 / fps:
+            ranges.append((t, a, [w for w in ws if w["i"] not in drop and t - 1e-6 <= w["s"] < a], []))
+        t = max(t, b)
+    if end - t >= 1.0 / fps:
+        ranges.append((t, end, [w for w in ws if w["i"] not in drop and w["s"] >= t - 1e-6], []))
+    ranges = [r for r in ranges if r[2]]             # a stretch with no kept word (the silence before a removed opening)
+    if not ranges:
+        raise ValueError("every word was removed — nothing left to edit")
+    pieces, frames = pieces_for(ranges, fps, audio)    # a removed word's sliver in a whole-frame edge → room tone
+    kept = [w for w in ws if w["i"] not in drop]
+    return {"title": title, "pieces": pieces, "frames": frames,
+            "duration": round(frames / fps, 3), "cuts": max(0, len(pieces) - 1),
+            "words": output_words(pieces, by_id, fps), "joins": joins_for(pieces, by_id, fps),
+            "text": " ".join(w["w"] for w in kept), "warnings": [], "passthrough": True,
+            "removed": sorted(drop)}
+
+
 def passthrough(words, by_id, duration, fps, title="Video 1", excerpt=None):
     """Workflow 2 ("Creative Edit an edited narration", Jake 2026-10-08): the narration is
     ALREADY edited, so the whole timeline is kept as it is — one piece from the first frame
