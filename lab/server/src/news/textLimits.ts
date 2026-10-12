@@ -95,6 +95,8 @@ export const L = {
 /** Jake 2026-10-12: "the presentations should be less technical — it can demonstrate a little bit technical things on
  * the screen (just a little bit) — but never in the script". The slide prompts' rule. */
 export const SCREEN_PLAIN = "PLAIN SCREENS: every heading, label and card in everyday words a 14-year-old gets at a glance. A LITTLE technical detail may appear on screen only where it SHOWS the thing (a real setting name, one short line of code or a prompt in a demo, an official model name) — at most one such detail per story/chapter, never a slide built on jargon, never technical terms as headings. Numbers on screen are fine but few: one figure per slide at most.";
+/** Jake 2026-10-12: "the content inside of the presentation … should always be interesting" — the slide prompts' rule. */
+export const SCREEN_HOOKED = "SLIDES THAT KEEP THEM WATCHING: every slide shows the most interesting thing about its idea — the surprising result, a real picture or video, a before → after, a striking comparison, the one detail people will repeat. The heading is that interesting claim in everyday words, never a topic label (\"Free for everyone, starting today\", not \"Pricing\"). No slide that only restates what Jake just said. The strongest slide early, and keep one surprise for later.";
 export const SHORT_WORDS = "Use short everyday words on screen — no word longer than 12 letters in card, step or list text (a long word can't fit a card at full size).";
 
 /** "max 6 words / 40 characters" — what the prompts say. */

@@ -64,6 +64,37 @@ export const FEWER_TECH_TERMS_RULE = `NO TECHNICAL TERMS IN THE SCRIPT (this ove
 - If the screen shows something technical (a setting, a line of code, a chart label), the script says what it means for the viewer — never reads the technical part out.
 - Words that never appear in the script: ${NEWS_TECH_TERMS.join(", ")}.`;
 
+/** Text of a prompt file from the line starting with `from` through the line containing `to` (both kept). */
+function between(md: string, from: string, to: string): string {
+  const a = md.indexOf(from);
+  if (a < 0) return "";
+  const b = md.indexOf(to, a);
+  return md.slice(a, b < 0 ? undefined : md.indexOf("\n", b) < 0 ? undefined : md.indexOf("\n", b)).trim();
+}
+
+/**
+ * KEEP THEM WATCHING — Jake 2026-10-12: "The presentation and script should be engaging — the goal of those
+ * presentations is to keep viewers hooked into watching more … the content inside of the presentation and script
+ * should always be interesting". The generator's own casting rule (stage2-outline) and watchability checks
+ * (stage7-review) verbatim, plus what a live news segment / deep dive needs on top.
+ */
+export const ENGAGEMENT_BLOCK: string = (() => {
+  const outline = loadPrompt("stage2-outline");
+  const review = loadPrompt("stage7-review");
+  return [
+    "KEEP THEM WATCHING — every presentation's job is to keep the viewer watching the next minute. Interesting beats complete.",
+    "- Lead with the most interesting thing: the result, the surprise, the \"wait, really?\" detail — never background first.",
+    "- Every paragraph reveals something NEW (a result, a twist, a comparison, a consequence for the viewer). A paragraph that only sets up or restates gets cut or merged.",
+    "- Open a question the next part answers (\"and the price is where it gets weird — we'll get there\"), and pay it off. Save one good surprise for late so it never sags.",
+    "- Make it about the viewer's life: what changes for them, in a concrete everyday moment.",
+    "- If a story has nothing surprising in it, say the one thing that IS interesting and keep it short — never pad a dull story.",
+    "THE SCRIPT GENERATOR'S CASTING RULE:",
+    between(outline, "Given two examples that teach the same lesson", "re-order the sections until it lands last."),
+    "THE SCRIPT GENERATOR'S WATCHABILITY CHECKS (for a news story: at least one dry, funny line; for a deep dive: three):",
+    between(review, "**Watchability", "or cut it."),
+  ].filter(Boolean).join("\n");
+})();
+
 const plainBanned = (): string[] => BANNED_WORDS.filter((w) => /^[a-z][a-z' -]*$/i.test(w));
 /** Phrases written out (pattern entries stay in the code check, where they can be matched). */
 const plainSlop = (): string[] => AI_SLOP_PHRASES.filter((w) => /^[a-z][a-z' ,.-]*$/i.test(w));
@@ -79,6 +110,7 @@ export const SPOKEN_RULES_BLOCK: string = (() => {
   const s5 = loadPrompt("stage5-section");
   return [
     "THE SCRIPT GENERATOR'S RULES — these override anything above that contradicts them:",
+    ENGAGEMENT_BLOCK,
     sections(amend, [7, 8, 10]),
     block(s5, "SENTENCE STRUCTURE:"),
     block(s5, "WORD SWAPS"),

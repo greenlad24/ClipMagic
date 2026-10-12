@@ -267,7 +267,9 @@ Check every sentence:
 4. Could a 14-year-old repeat this story to a friend tomorrow? If not, simplify.
 5. Read it out loud in your head. Does it sound like a normal American talking to a friend — not a news anchor, not a press release, not an article being read? Anything stiff, written-sounding or formal gets rewritten the way a person would actually say it: contractions, everyday American phrasing ("pretty much," "kind of," "here's the thing"), short spoken sentences, numbers said the way people say them ("thirty percent," "twenty bucks a month") — and as few numbers as the story allows.
 
-7. Apply the script generator's rules at the end of the guide above: no banned word, no AI-sounding phrase, no insider term, at most one number per paragraph.
+7. Would a viewer keep watching to the end of this segment? It opens on the most interesting thing, every paragraph adds something new, there's one dry, funny line, nothing restates. A flat paragraph gets the interesting detail or gets cut (KEEP THEM WATCHING, end of the guide).
+
+8. Apply the script generator's rules at the end of the guide above: no banned word, no AI-sounding phrase, no insider term, at most one number per paragraph.
 
 6. Does the ending follow the assigned shape below and avoid every banned ending? If it ends on "keep an eye on it", "wait and see", "I'd wait" or anything like it, rewrite the last two sentences to the assigned shape. If the opinion starts with "My take", reword it as the OPINION line says.
 

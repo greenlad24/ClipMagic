@@ -28,7 +28,7 @@ import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { findVideoForStory, parseVideoId } from "./video.js";
 import { gatherVisuals, type Visual } from "./deepDiveVisuals.js";
 import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
-import { L, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
+import { L, SCREEN_HOOKED, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS news_deep_dives (
@@ -636,7 +636,7 @@ RULES:
 6. "eyebrow" = a 1-3 word label above the heading (e.g. "The numbers", "How we got here"). "heading" = ${spec(L.headingV1)} (for "statement" and "quote" the heading is a short label; the big text is in data).
 7. "beats" = 2-4 notes for the scriptwriter: what Jake should say on this section, with the specific facts to use.
 8b. ${SHORT_WORDS}
-8. ${SCREEN_PLAIN} The "beats" notes for the scriptwriter are plain too: what Jake says, never the technical terms.
+8. ${SCREEN_PLAIN} ${SCREEN_HOOKED} The "beats" notes for the scriptwriter are plain too: what Jake says, never the technical terms.
 
 Reply with ONLY this JSON (no markdown):
 {"title":"max 8 words","subtitle":"max 14 words","sections":[{"kind":"title","eyebrow":"","heading":"","data":{},"beats":["..."],"visual":""}]}`;
@@ -746,6 +746,7 @@ Check every sentence:
 3. An example about running a business or agency? Swap it for an everyday situation.
 4. Does each section bridge naturally from the one before? Is anything repeated across sections? Cut repeats.
 5. Is any ending a banned ending, or any opinion opened with "My take"? Rewrite it.
+5b. Would a viewer keep watching through every section? Any stretch that only sets up, restates or drags gets cut or turned into something new; the opener leads with the most interesting thing; there are three dry, funny lines across the segment (KEEP THEM WATCHING, end of the style guide).
 6. The script generator's rules (end of the style guide): any banned word, AI-sounding phrase or insider term gets rewritten in everyday words; more than one number in a paragraph gets cut down to the one that matters, rounded, said the way people say it.
 7. Total length 1,350-1,600 words, each section near the word count in its brief. If it's SHORT, expand the thinnest sections with more explanation, details from the research or a second everyday example — never with padding or repetition. If it's long, trim padding first.
 

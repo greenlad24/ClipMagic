@@ -23,7 +23,7 @@
  * v2 (1–2 slides, one item per beat) and v1 stages still render on the web.
  */
 import { callNewsModel } from "./ai.js";
-import { L, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
+import { L, SCREEN_HOOKED, SCREEN_PLAIN, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
 export const STAGE_KINDS = ["number", "quote", "meaning", "compare", "timeline", "facts", "picture"] as const;
 export type StageKind = (typeof STAGE_KINDS)[number];
@@ -230,6 +230,7 @@ RULES:
 7. TITLE — each slide has a "title": its name on Jake's teleprompter ("▶ BEAT 1 · 722 MATH RESULTS"), ${spec(L.beatTitle)}, 2-4 plain words that say what the slide shows (e.g. "722 math results", "Free plan ends", "Who's backing it"). No punctuation, no full sentence. Required for every slide.
 8. ${SHORT_WORDS}
 8b. ${SCREEN_PLAIN}
+8c. ${SCREEN_HOOKED}
 9. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
 
 STORY: "${input.headline}"
