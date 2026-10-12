@@ -1,0 +1,52 @@
+/*
+ * Deep Dive CLASSIC slides — the same per-template motion sets as the demo-first show (v2/motion.css, whose
+ * keyframe library this reuses): how a slide LEAVES (.dd-scene.out-up/out-down) and how its parts ARRIVE (.dd-in,
+ * staggered by --d). Keyed by data-motion (= the template id) on the stage frame (Scene.tsx StageFrame). "jake"
+ * and an unset template keep the original rise/blur. Static thumbnails (.dd-static) and reduced motion are
+ * switched off by deepdive.css as before.
+ * ⚠️ .dd-in is opacity 0 at rest (deepdive.css) and the shared keyframes only describe their START — so every set
+ * here makes it visible at rest and holds the first frame through the delay (fill both), or a slide stays blank.
+ */
+@keyframes moc-out-fade { to { opacity: 0; } }
+@keyframes moc-out-blur { to { opacity: 0; filter: blur(calc(var(--u) * 1.5)); transform: scale(1.03); } }
+@keyframes moc-out-left { to { opacity: 0; transform: translateX(-30%); } }
+@keyframes moc-out-zoom { to { opacity: 0; transform: scale(1.3); } }
+@keyframes moc-out-center { to { clip-path: inset(0 50% 0 50%); } }
+@keyframes moc-out-down { to { opacity: 0; transform: translateY(calc(var(--u) * 6)); } }
+@keyframes moc-out-shrink { to { opacity: 0; transform: scale(.88); } }
+@keyframes moc-out-snap { to { transform: translateX(-100%); } }
+@keyframes moc-out-skew { to { opacity: 0; transform: translateX(-60%) skewX(6deg); } }
+@keyframes moc-out-sweep { to { clip-path: inset(0 100% 0 0); transform: translateX(-20%); } }
+
+[data-motion="aurora"] .dd-scene.out-up, [data-motion="aurora"] .dd-scene.out-down { animation: moc-out-blur 1.2s var(--ease, ease) forwards; }
+[data-motion="aurora"] .dd-scene .dd-in, [data-motion="aurora"] .dd-scene.back .dd-in { animation-name: mo-unblur; animation-duration: 1.6s; opacity: 1; animation-fill-mode: both; }
+
+[data-motion="editorial"] .dd-scene.out-up, [data-motion="editorial"] .dd-scene.out-down { animation: moc-out-left .8s cubic-bezier(.7,0,.2,1) forwards; }
+[data-motion="editorial"] .dd-scene .dd-in, [data-motion="editorial"] .dd-scene.back .dd-in { animation-name: mo-wipe-up; animation-duration: .9s; opacity: 1; animation-fill-mode: both; }
+
+[data-motion="midnight"] .dd-scene.out-up, [data-motion="midnight"] .dd-scene.out-down { animation: moc-out-zoom .6s cubic-bezier(.6,0,.2,1) forwards; }
+[data-motion="midnight"] .dd-scene .dd-in, [data-motion="midnight"] .dd-scene.back .dd-in { animation-name: mo-punch; animation-duration: .6s; opacity: 1; animation-fill-mode: both; }
+
+[data-motion="neon"] .dd-scene.out-up, [data-motion="neon"] .dd-scene.out-down { animation: moc-out-center .5s cubic-bezier(.8,0,.2,1) forwards; }
+[data-motion="neon"] .dd-scene .dd-in, [data-motion="neon"] .dd-scene.back .dd-in { animation-name: mo-wipe-center; animation-duration: .6s; animation-timing-function: cubic-bezier(.8,0,.2,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="terminal"] .dd-scene.out-up, [data-motion="terminal"] .dd-scene.out-down { animation: moc-out-fade .1s linear forwards; }
+[data-motion="terminal"] .dd-scene .dd-in, [data-motion="terminal"] .dd-scene.back .dd-in { animation-name: mo-type; animation-duration: .8s; animation-timing-function: steps(24); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="sunset"] .dd-scene.out-up, [data-motion="sunset"] .dd-scene.out-down { animation: moc-out-down 1.2s cubic-bezier(.45,0,.15,1) forwards; }
+[data-motion="sunset"] .dd-scene .dd-in, [data-motion="sunset"] .dd-scene.back .dd-in { animation-name: mo-rise; animation-duration: 1.3s; animation-timing-function: cubic-bezier(.45,0,.15,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="mint"] .dd-scene.out-up, [data-motion="mint"] .dd-scene.out-down { animation: moc-out-shrink .45s ease-in forwards; }
+[data-motion="mint"] .dd-scene .dd-in, [data-motion="mint"] .dd-scene.back .dd-in { animation-name: mo-pop; animation-duration: .6s; animation-timing-function: cubic-bezier(.34,1.56,.64,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="swiss"] .dd-scene.out-up, [data-motion="swiss"] .dd-scene.out-down { animation: moc-out-snap .45s cubic-bezier(.9,0,.1,1) forwards; }
+[data-motion="swiss"] .dd-scene .dd-in, [data-motion="swiss"] .dd-scene.back .dd-in { animation-name: mo-from-left; animation-duration: .4s; animation-timing-function: cubic-bezier(.9,0,.1,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="royal"] .dd-scene.out-up, [data-motion="royal"] .dd-scene.out-down { animation: moc-out-skew .45s ease-in forwards; }
+[data-motion="royal"] .dd-scene .dd-in, [data-motion="royal"] .dd-scene.back .dd-in { animation-name: mo-drop; animation-duration: .55s; animation-timing-function: cubic-bezier(.2,1.3,.4,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="ocean"] .dd-scene.out-up, [data-motion="ocean"] .dd-scene.out-down { animation: moc-out-sweep 1s cubic-bezier(.65,0,.35,1) forwards; }
+[data-motion="ocean"] .dd-scene .dd-in, [data-motion="ocean"] .dd-scene.back .dd-in { animation-name: mo-wipe-right; animation-duration: 1.1s; animation-timing-function: cubic-bezier(.65,0,.35,1); opacity: 1; animation-fill-mode: both; }
+
+[data-motion="mono"] .dd-scene.out-up, [data-motion="mono"] .dd-scene.out-down { animation: moc-out-fade .01s steps(1) forwards; }
+[data-motion="mono"] .dd-scene .dd-in, [data-motion="mono"] .dd-scene.back .dd-in { animation-name: mo-stamp; animation-duration: .45s; animation-timing-function: cubic-bezier(.2,.9,.3,1); opacity: 1; animation-fill-mode: both; }

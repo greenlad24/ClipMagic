@@ -10,6 +10,8 @@
  * the scene replays it.
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import './v2/motion.css';
+import './motion-classic.css';
 import { youtubeEmbedUrl } from '../api';
 import { sectionMedia, visualStill, NO_VISUAL, type Section, type Stat, type Visual } from './api';
 import { templateStyle, type DeckTemplate } from './templates';
@@ -469,7 +471,7 @@ export function StageFrame({ index, total, hue, still = false, children, footer,
   const style = { ...(template ? templateStyle(template, 'v1', { paper }) : {}), ...(b.style ?? {}) };
   return (
     <div className={`dd-stage ${still ? 'dd-static' : ''} ${template ? 'dd-tpl' : ''}`} style={style}
-      data-deco={template?.deco} data-blobs={aurora ? undefined : '0'} data-paper={paper ? '1' : undefined} data-bubble={b['data-bubble']}>
+      data-deco={template?.deco} data-motion={template?.id} data-blobs={aurora ? undefined : '0'} data-paper={paper ? '1' : undefined} data-bubble={b['data-bubble']}>
       <div className="dd-canvas">
         <div className="dd-bg" style={{ filter: h ? `hue-rotate(${h}deg)` : undefined }}>
           <div className="dd-blob b1" />

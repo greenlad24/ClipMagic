@@ -73,6 +73,8 @@ function StageV1({ dive, sections }: { dive: DeepDive; sections: Section[] }) {
   const bubbleRef = useRef(bubble);
   bubbleRef.current = bubble;
   const hero = useMemo(() => heroMedia(dive.heroVideo), [dive.heroVideo]);
+  // ?template=<id>: look at this dive in another template without changing it (preview only)
+  const previewTemplate = new URLSearchParams(window.location.search).get('template') || '';
   const { flat, beats, cursorHidden, videoOn } = useBeatStage({
     diveId: dive.id,
     units,
@@ -116,7 +118,7 @@ function StageV1({ dive, sections }: { dive: DeepDive; sections: Section[] }) {
   return (
     <div className="fixed inset-0 select-none" style={{ cursor: cursorHidden ? 'none' : 'default' }}>
       {/* No footer (Jake, 2026-10-01: "AI Deep Dive" at the bottom isn't needed). */}
-      <StageFrame index={current} total={total} template={dive.template ? templateFor(dive.template, 'v1') : null} bubble={bubble}
+      <StageFrame index={current} total={total} template={(previewTemplate || dive.template) ? templateFor(previewTemplate || dive.template, 'v1') : null} bubble={bubble}
         overlay={<BubbleLayer settings={bubble} scope=".dd-scene:not(.out-up):not(.out-down)" trigger={flat} />}>
         <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
           {nearby.map((i) => {
