@@ -775,10 +775,10 @@ export async function getJob(id: string) {
   const graphics: { t0: number; t1: number; template: string; fields: unknown; why?: string }[][] = [];
   try {
     for (const f of (await fsp.readdir(dir)).sort()) {
-      const m = /^(preview|listen|edit|final)-\d{2}\.mp4$/.exec(f);
+      const m = /^(preview|listen|edit|draft|final)-\d{2}\.mp4$/.exec(f);
       if (m) {
         const s = await fsp.stat(path.join(dir, f));
-        const list = { preview: previews, edit: edits, final: finals, listen: listens }[m[1] as "preview"];
+        const list = { preview: previews, edit: edits, draft: edits, final: finals, listen: listens }[m[1] as "preview"];
         list.push({ name: f, bytes: s.size, modifiedAt: s.mtimeMs / 1000 });
       }
       const g = /^graphics-(\d{2})\.json$/.exec(f);

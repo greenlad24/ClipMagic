@@ -344,8 +344,8 @@ app.use(
   "/api/aieditor/files",
   auth,
   (req, res, next) => {
-    // + the editor hand-off package (handoff-NN.zip, aieditor/handoff.ts)
-    if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/((preview|listen|edit|final)-\d{2}\.mp4|handoff-\d{2}\.zip)$/.test(req.path)) {
+    // draft-NN = the factory's 540p draft edit; + the editor hand-off package (handoff-NN.zip, aieditor/handoff.ts)
+    if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/((preview|listen|edit|draft|final)-\d{2}\.mp4|handoff-\d{2}\.zip)$/.test(req.path)) {
       res.status(404).end();
       return;
     }

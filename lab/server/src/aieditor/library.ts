@@ -123,7 +123,7 @@ let probe: typeof ffprobe = ffprobe;
 export function setProbe(fn: typeof ffprobe) { probe = fn; }
 
 function firstVideo(dir: string, files: string[]): string | null {
-  for (const re of [/^final-\d{2}\.mp4$/, /^edit-\d{2}\.mp4$/, /^preview-\d{2}\.mp4$/, /^listen-\d{2}\.mp4$/]) {
+  for (const re of [/^final-\d{2}\.mp4$/, /^edit-\d{2}\.mp4$/, /^draft-\d{2}\.mp4$/, /^preview-\d{2}\.mp4$/, /^listen-\d{2}\.mp4$/]) {
     const f = files.filter((x) => re.test(x)).sort()[0];
     if (f) return `/api/aieditor/files/${dir}/${f}#t=2`;
   }
@@ -133,7 +133,7 @@ function firstVideo(dir: string, files: string[]): string | null {
 interface Group { id: string; jobs: JobInfo[] }
 
 /** a video /api/aieditor/files serves (index.ts) — a raw source.mp4 never is */
-const SERVED_RE = /^([a-z0-9][a-z0-9-]{2,63})\/((preview|listen|edit|final)-\d{2}\.mp4)$/;
+const SERVED_RE = /^([a-z0-9][a-z0-9-]{2,63})\/((preview|listen|edit|draft|final)-\d{2}\.mp4)$/;
 
 /**
  * Where job <id>'s narration came from, for a person — mirrors aieditor/sources.py origin_of():
