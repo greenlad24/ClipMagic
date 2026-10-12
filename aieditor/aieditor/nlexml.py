@@ -84,13 +84,27 @@ def placed(c, tl):
     return float(c["x"]), float(c["y"]), float(c.get("width") or tl["width"]), float(c.get("height") or tl["height"])
 
 
+# The marker every Premiere XML written with the CLIP-relative center carries (handoffcut reads older files with the
+# frame-relative one they were written with).
+CENTER_MARK = "aieditor center=clip"
+
+
 def xmeml_center(x, y, w, h, W, H):
     """Premiere XML (FCP7) Basic Motion center for a w×h clip whose top-left sits at (x, y) on a W×H sequence:
-    the clip's centre relative to the frame's centre, as a fraction of the frame's width / height (y down)."""
-    return (x + w / 2 - W / 2) / W, (y + h / 2 - H / 2) / H
+    the clip's centre's offset from the FRAME's centre, as a fraction of the CLIP's own width / height (y down).
+
+    ⚠️ CLIP-relative, not frame-relative (fixed 2026-10-12 after Jake's editor opened the first package in Premiere:
+    the 806 px facecam bubble of a 4K sequence sat over the presenter's face, 58 % / 40 %, instead of top-right
+    89 % / 23 % — exactly what Premiere's own reading gives: GUI centre = sequence centre + horiz × source width)."""
+    return (x + w / 2 - W / 2) / w, (y + h / 2 - H / 2) / h
 
 
 def from_xmeml_center(horiz, vert, w, h, W, H):
+    return horiz * w + W / 2 - w / 2, vert * h + H / 2 - h / 2
+
+
+def from_xmeml_center_legacy(horiz, vert, w, h, W, H):
+    """What packages built before 2026-10-12 meant (frame-relative) — to read them back, never to write."""
     return horiz * W + W / 2 - w / 2, vert * H + H / 2 - h / 2
 
 
@@ -190,7 +204,7 @@ def xmeml(tl):
         frames = int(c["frames"])
         cin = int(c.get("in", 0))
         mf = int(c.get("media_frames") or cin + frames)
-        ci = _sub(track, "clipitem", id=f"clipitem-{n}")
+        ci = _sub(track, "clipitem", id=f"clipitem-{n}", **({"premiereChannelType": "stereo"} if kind == "audio" and int(c.get("channels", 2)) == 2 else {}))
         _sub(ci, "masterclipid", f"masterclip-{n}")
         _sub(ci, "name", c["name"])
         _sub(ci, "enabled", "TRUE" if c.get("enabled", True) else "FALSE")
@@ -208,6 +222,37 @@ def xmeml(tl):
         _rate(f, tb, ntsc)
         _sub(f, "duration", mf)
         pl = placed(c, tl) if kind == "video" else None
+        kf = c.get("keyframes") if kind == "video" else None
+        if kf and not pl:            # a full-frame clip with camera moves (the A-roll's zooms, editable)
+            eff = _sub(_sub(ci, "filter"), "effect")
+            _sub(eff, "name", "Basic Motion")
+            _sub(eff, "effectid", "basic")
+            _sub(eff, "effectcategory", "motion")
+            _sub(eff, "effecttype", "motion")
+            _sub(eff, "mediatype", "video")
+            ps = _sub(eff, "parameter", authoringApp="PremierePro")
+            _sub(ps, "parameterid", "scale")
+            _sub(ps, "name", "Scale")
+            _sub(ps, "valuemin", 0)
+            _sub(ps, "valuemax", 1000)
+            _sub(ps, "value", _num(round(kf["scale"][0][1], 4)) if kf.get("scale") else 100)
+            for kfr, v in kf.get("scale") or []:        # when = the clip's MEDIA frame (keyframes ride the content)
+                k = _sub(ps, "keyframe")
+                _sub(k, "when", int(kfr))
+                _sub(k, "value", _num(round(v, 4)))
+            pc = _sub(eff, "parameter", authoringApp="PremierePro")
+            _sub(pc, "parameterid", "center")
+            _sub(pc, "name", "Center")
+            c0 = (kf.get("center") or [(0, 0.0, 0.0)])[0]
+            val = _sub(pc, "value")
+            _sub(val, "horiz", _num(round(c0[1], 6)))
+            _sub(val, "vert", _num(round(c0[2], 6)))
+            for kfr, hz, vt in kf.get("center") or []:
+                k = _sub(pc, "keyframe")
+                _sub(k, "when", int(kfr))
+                kv = _sub(k, "value")
+                _sub(kv, "horiz", _num(round(hz, 6)))
+                _sub(kv, "vert", _num(round(vt, 6)))
         if pl:                       # native size at its position (the facecam bubble, a cropped overlay)
             eff = _sub(_sub(ci, "filter"), "effect")
             _sub(eff, "name", "Basic Motion")
@@ -237,7 +282,7 @@ def xmeml(tl):
         else:
             a = _sub(fm, "audio")
             s = _sub(a, "samplecharacteristics")
-            _sub(s, "depth", AUDIO_DEPTH)
+            _sub(s, "depth", int(c.get("depth") or AUDIO_DEPTH))
             _sub(s, "samplerate", AUDIO_RATE)
             _sub(a, "channelcount", int(c.get("channels", 2)))
             st = _sub(ci, "sourcetrack")
@@ -256,6 +301,13 @@ def xmeml(tl):
     af = _sub(_sub(audio, "format"), "samplecharacteristics")
     _sub(af, "depth", AUDIO_DEPTH)
     _sub(af, "samplerate", AUDIO_RATE)
+    outs = _sub(audio, "outputs")                      # as Premiere writes it: stereo out, one group per channel
+    for ch in (1, 2):
+        g = _sub(outs, "group")
+        _sub(g, "index", ch)
+        _sub(g, "numchannels", 1)
+        _sub(g, "downmix", 0)
+        _sub(_sub(g, "channel"), "index", ch)
     for tr in tl.get("audio") or []:
         t = _sub(audio, "track", premiereTrackType="Stereo")
         for c in sorted(tr.get("clips") or [], key=lambda c: c["start"]):
@@ -274,7 +326,7 @@ def xmeml(tl):
         _sub(mk, "name", m["name"])
         _sub(mk, "in", int(m["frame"]))
         _sub(mk, "out", int(m["frame"]) + int(m["frames"]) if m.get("frames") else -1)
-    return _pretty(root, "<!DOCTYPE xmeml>\n")
+    return _pretty(root, f"<!DOCTYPE xmeml>\n<!-- {CENTER_MARK} -->\n")
 
 
 # ── FCPXML 1.10 ──
@@ -361,6 +413,18 @@ def fcpxml(tl):
             if not c.get("enabled", True):
                 attrs["enabled"] = "0"
             it["el"] = _sub(spine, "asset-clip", **attrs)
+            kf = c.get("keyframes")
+            if kf:                     # the A-roll's camera moves, editable (FCP space: % of frame height, y up)
+                W_, H_ = float(tl["width"]), float(tl["height"])
+                at = _sub(it["el"], "adjust-transform")
+                pos = _sub(_sub(at, "param", name="position"), "keyframeAnimation")
+                for f, hz, vt in kf.get("center") or []:
+                    _sub(pos, "keyframe", time=T(int(f)),
+                         value=f"{_num(round(hz * W_ / H_ * 100, 4))} {_num(round(-vt * 100, 4))}")
+                sc = _sub(_sub(at, "param", name="scale"), "keyframeAnimation")
+                for f, v in kf.get("scale") or []:
+                    z = _num(round(v / 100, 5))
+                    _sub(sc, "keyframe", time=T(int(f)), value=f"{z} {z}")
         it["anchors"], it["markers"] = [], []
 
     def host(frame):
@@ -416,6 +480,9 @@ FCPXML_CHILDREN = {
     "spine": ("asset-clip", "gap", "clip", "title", "video", "ref-clip", "sync-clip", "transition"),
     "gap": ("note", "asset-clip", "clip", "title", "video", "marker", "chapter-marker", "metadata"),
     "asset-clip": ("note", "adjust-conform", "adjust-transform", "asset-clip", "clip", "title", "video", "marker", "chapter-marker", "keyword", "metadata"),
+    "adjust-transform": ("param",),
+    "param": ("keyframeAnimation",),
+    "keyframeAnimation": ("keyframe",),
 }
 FCPXML_REQUIRED = {
     "format": ("id", "frameDuration", "width", "height"),

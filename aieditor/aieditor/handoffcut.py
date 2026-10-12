@@ -56,6 +56,7 @@ def read_xmeml(text):
     """nlexml.xmeml()'s output → the neutral timeline it was written from (what a cut needs: clips with start /
     frames / in / media_frames / file / alpha / enabled / placement, the tracks in order, the markers)."""
     root = ET.fromstring(text.encode())
+    clip_centre = nlexml.CENTER_MARK in text        # written with the clip-relative centre (2026-10-12 on)
     seq = root.find("sequence")
     rate = seq.find("rate")
     tb, ntsc = int(rate.findtext("timebase")), rate.findtext("ntsc") == "TRUE"
@@ -83,12 +84,22 @@ def read_xmeml(text):
                 c["alpha"] = True
             vs = f.find("media/video/samplecharacteristics") if f is not None else None
             w, h = (_i(vs, "width", W), _i(vs, "height", H)) if vs is not None else (W, H)
+            sk = ci.findall("filter/effect/parameter[parameterid='scale']/keyframe")
+            ck = ci.findall("filter/effect/parameter[parameterid='center']/keyframe")
             ctr = ci.find("filter/effect/parameter[parameterid='center']/value")
-            if ctr is not None:
-                x, y = nlexml.from_xmeml_center(float(ctr.findtext("horiz")), float(ctr.findtext("vert")), w, h, W, H)
+            if sk or ck:                                       # the A-roll's camera moves (media-frame keyframes)
+                c["keyframes"] = {"scale": [(int(k.findtext("when")), float(k.findtext("value"))) for k in sk],
+                                  "center": [(int(k.findtext("when")), float(k.findtext("value/horiz")),
+                                              float(k.findtext("value/vert"))) for k in ck]}
+            elif ctr is not None:
+                conv = nlexml.from_xmeml_center if clip_centre else nlexml.from_xmeml_center_legacy
+                x, y = conv(float(ctr.findtext("horiz")), float(ctr.findtext("vert")), w, h, W, H)
                 c.update(x=round(x), y=round(y), width=w, height=h)
         else:
             c["channels"] = _i(ci, "file/media/audio/channelcount", 2) or 2
+            dp = _i(ci, "file/media/audio/samplecharacteristics/depth", 0)
+            if dp and dp != nlexml.AUDIO_DEPTH:
+                c["depth"] = dp
         return c
 
     for n, tr in enumerate(seq.findall("media/video/track")):

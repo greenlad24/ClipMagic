@@ -661,7 +661,7 @@ ol li{{margin:4px 0}} h3{{font-size:15px;margin:10px 0 4px}} ol.steps{{padding-l
 </style></head><body>
 <h1>Screencast brief</h1>
 <p class=lead>{e(meta.get('title', ''))} · {len(rows)} screencast slot(s), {total:.0f} s in total · timeline {e(meta.get('fps_label', ''))}, {meta.get('width')}×{meta.get('height')}</p>
-<p>Everything else is already edited: the presenter with his camera moves (V1), the overlays, the facecam bubble, music and sound effects. Your job is the screen recordings only. Put each one on <b>V2</b> exactly over its slot — the markers named “Screencast N” show where. <b>preview.mp4</b> shows the finished edit with a card in every slot.</p>
+<p>Everything else is already edited: the presenter (V1, his camera moves as Scale / Position keyframes you can adjust), the overlays, the facecam bubble, music and sound effects. Your job is the screen recordings only. <b>V2</b> holds a labelled card in every slot (and a marker “Screencast N”) — put each recording over its card, or replace the card. <b>preview.mp4</b> shows the finished edit with a card in every slot.</p>
 <h2>Rules for every slot</h2><ol>{rules}</ol>
 {''.join(cards)}
 </body></html>
@@ -675,8 +675,10 @@ Open in DaVinci Resolve: File > Import > Timeline > timeline.fcpxml  (or timelin
 Keep this folder together: every file is referenced by a path relative to the timeline file. If your app asks
 where a file is, point it to this folder once and let it find the rest.
 
-  V1  a-roll.mov            the presenter, camera moves baked in ({w}x{h}, {fps})
-  V2  (empty)               YOUR SCREENCASTS — one marker "Screencast N" per slot
+  V1  a-roll.mov            the presenter ({w}x{h}, {fps}); his camera moves (opening zoom, slow push-ins,
+                            punch-ins) are Scale + Position KEYFRAMES on the clip — adjust or delete them freely
+  V2  screencast cards      YOUR SCREENCASTS — a labelled card + a marker "Screencast N" in every slot: lay your
+                            recording over its card (or replace it)
   V3  graphics/*screen-template*.mov  OPTIONAL motion templates of some screen steps (his prompt in the app's
                             real UI) — switched OFF; switch one on to use it instead of recording, or ignore it
   V3+ graphics/*.mov        overlays, text gradient, facecam bubble, end fade (ProRes 4444, straight alpha)
@@ -801,15 +803,84 @@ def _abut(clips):
     return cs
 
 
-def timeline_model(name, fps_num, fps_den, W, H, total, aroll_frames, graphics, slots_tl, placeholders, audio_frames):
+def stem_depths(adir):
+    """{"audio/<name>.wav": bits} from the WAV headers — the XML says what is really there (a "No music" stem is
+    written 24-bit by the music change, the others 16-bit)."""
+    import wave
+    out = {}
+    for f in sorted(Path(adir).glob("*.wav")) if Path(adir).is_dir() else []:
+        try:
+            with wave.open(str(f)) as wv:
+                out[f"audio/{f.name}"] = wv.getsampwidth() * 8
+        except (wave.Error, EOFError, OSError):
+            pass
+    return out
+
+
+def _dp_keep(z, a, b, tol, keep):
+    """Douglas–Peucker on z[a..b] (frames): the frames that keep the curve within tol of its straight lines."""
+    stack = [(a, b)]
+    while stack:
+        i, j = stack.pop()
+        if j - i < 2:
+            continue
+        zi, zj = z[i], z[j]
+        worst, at = 0.0, None
+        for k in range(i + 1, j):
+            d = abs(z[k] - (zi + (zj - zi) * (k - i) / (j - i)))
+            if d > worst:
+                worst, at = d, k
+        if at is not None and worst > tol:
+            keep.add(at)
+            stack += [(i, at), (at, j)]
+
+
+def camera_keyframes(plan, frames, fps, anchor, W, H, tol=0.0015):
+    """The A-roll motion plan (screencast/aroll_plan.py: TR07 opening, AR01 push-ins, CUT07 punches, AR02 beats) as
+    Scale + Center keyframes on the plain W×H A-roll — exactly the zoom aroll_camera.py renders: about the anchor
+    (the presenter), kept inside the frame. Keyframes only where the curve bends (Douglas–Peucker within tol) and on
+    both sides of every jump. → {"scale": [(frame, percent)], "center": [(frame, horiz, vert)]} (clip-relative)."""
+    import sys
+    sc = str(config.CODE / "screencast")
+    if sc not in sys.path:
+        sys.path.insert(0, sc)
+    import aroll_plan
+    if frames <= 0:
+        return None
+    z = [aroll_plan.zoom_at(f / fps, plan) for f in range(frames)]
+    keep = {0, frames - 1}
+    for f in range(1, frames):
+        if abs(z[f] - z[f - 1]) > 0.01:                 # a cut punch / a snap: hold, then jump
+            keep |= {f - 1, f}
+    ks = sorted(keep)
+    for i, j in zip(ks, ks[1:]):
+        _dp_keep(z, i, j, tol, keep)
+    ks = sorted(keep)
+    if all(abs(z[f] - 1.0) < 1e-4 for f in ks):
+        return None
+    ax, ay = anchor
+
+    def centre(zz):
+        tx = min(0.0, max(W - zz * W, ax - zz * ax))
+        ty = min(0.0, max(H - zz * H, ay - zz * ay))
+        return (zz * W / 2 + tx - W / 2) / W, (zz * H / 2 + ty - H / 2) / H
+    return {"scale": [(f, round(z[f] * 100, 4)) for f in ks],
+            "center": [(f, *[round(v, 6) for v in centre(z[f])]) for f in ks]}
+
+
+def timeline_model(name, fps_num, fps_den, W, H, total, aroll_frames, graphics, slots_tl, placeholders, audio_frames,
+                   aroll_keyframes=None, audio_depths=None):
     """The neutral timeline nlexml writes: V1 A-roll, V2 screencasts (empty; placeholders disabled for FCPXML),
     V3 text gradient, V4+ overlays, then the facecam bubble and the end fade; A1 voice, A2 music, A3 SFX."""
     by = {}
     for g in graphics:
         by.setdefault(g["group"], []).append(g)
     video = [{"name": "A-roll", "clips": [{"name": "a-roll", "file": "a-roll.mov", "start": 0, "frames": aroll_frames,
-                                            "media_frames": aroll_frames}]},
-             {"name": "Screencasts (editor)", "clips": []}]
+                                            "media_frames": aroll_frames,
+                                            **({"keyframes": aroll_keyframes} if aroll_keyframes else {})}]},
+             # the labelled card in every slot, ON (Jake's editor: "there is no screencast track") — he lays his
+             # recording over each one, or replaces it
+             {"name": "Screencasts (editor)", "clips": _abut([dict(p) for p in placeholders])}]
     for n, t in enumerate(_alloc_tracks(by.get("screen") or [])):
         video.append({"name": SCREEN_TRACK + (f" {n + 1}" if n else ""), "clips": t})
     for grp in ("gradient", "overlay", "bubble", "fade"):
@@ -831,8 +902,13 @@ def timeline_model(name, fps_num, fps_den, W, H, total, aroll_frames, graphics, 
                 "note": s.get("note", "")} for s in slots_tl]
     tl = {"name": name, "fps_num": fps_num, "fps_den": fps_den, "width": W, "height": H, "frames": total,
           "video": video, "audio": audio, "markers": markers}
+    for tr in audio:
+        for c in tr["clips"]:
+            dpt = (audio_depths or {}).get(c["file"])
+            if dpt:
+                c["depth"] = dpt
+    tl["audio"] = audio
     fcp = json.loads(json.dumps(tl))
-    fcp["video"][1]["clips"] = _abut([{**p, "enabled": False} for p in placeholders])
     return tl, fcp
 
 
@@ -978,22 +1054,35 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     jdump(w / "handoff-blocks.json", {"blocks": blocks, "fps": fps, "words": video["words"],
                                       "overlays": [{"template": o.get("template"), "t0": o["t0"], "t1": o["t1"]}
                                                    for o in plan_.get("overlays") or []]})
-    progress("A-roll camera (opening zoom, slow push-ins, end fade)…", 0.22)
-    anchor = f"{(face[0] + face[2] / 2) * W:.1f},{(face[1] + face[3] * 0.8) * H:.1f}"
-    cam = f"handoff-aroll-{W}.mp4"
-    longedit._docker(["python3", "/a/screencast/aroll_camera.py", f"/j/{cut}.mp4", f"/w/{cam}", "/w/handoff-blocks.json",
-                      "--anchor", anchor], [(config.CODE, "/a"), (d, "/j"), (w, "/w")], cancelled, "aieditor-aroll")
-    aroll_frames = int(round(media.probe(w / cam)["duration"] * fps))
-    # the camera pass writes its rate as a decimal (29.970030 → 979001/32666): the package says exactly
-    # fps_num/fps_den, so Premiere / Resolve conform nothing (H.264 re-muxed through Annex B, no re-encode)
+    # Jake's editor 2026-10-12: "there is no … zoom keyframes" — the camera moves are NOT baked into the package's
+    # A-roll any more: it is the plain cut, and the moves ride on it as Scale + Position keyframes he can edit. The
+    # camera pass runs at the PREVIEW size only (for the preview's look + the motion plan), 4× cheaper than at 4K.
+    progress("A-roll camera at preview size (its moves become editable keyframes)…", 0.22)
+    pw, ph = (int(x) for x in render.preview_size(W, H).split(":"))
+    plain = f"handoff-plain-{pw}.mp4"
+    (w / plain).unlink(missing_ok=True)
+    if (pw, ph) == (W, H):
+        os.link(d / f"{cut}.mp4", w / plain)
+    else:
+        _run(f"ffmpeg -v error -y -i /j/{cut}.mp4 -vf scale={pw}:{ph}:flags=lanczos -c:v libx264 -preset veryfast -crf 18 "
+             f"-c:a copy /w/{plain}", [(w, "/w"), (d, "/j")], cancelled)
+    ax, ay = (face[0] + face[2] / 2) * W, (face[1] + face[3] * 0.8) * H
+    cam = f"handoff-aroll-{pw}.mp4"
+    longedit._docker(["python3", "/a/screencast/aroll_camera.py", f"/w/{plain}", f"/w/{cam}", "/w/handoff-blocks.json",
+                      "--anchor", f"{ax * pw / W:.1f},{ay * pw / W:.1f}"], [(config.CODE, "/a"), (w, "/w")], cancelled,
+                     "aieditor-aroll")
+    aroll_frames = int(round(media.probe(d / f"{cut}.mp4")["duration"] * fps))
+    aroll_kf = camera_keyframes(jload(w / f"{cam}.plan.json") or {"shots": []}, aroll_frames, fps, (ax, ay), W, H)
+    # the package says exactly fps_num/fps_den, so Premiere / Resolve conform nothing (H.264 re-muxed through
+    # Annex B, no re-encode)
     rate = f"{fps_num}/{fps_den}"
     if aroll_codec == "prores":
-        _run(f"ffmpeg -v error -y -i /w/{cam} -map 0:v -r {rate} -c:v prores_ks -profile:v 3 -vendor apl0 -pix_fmt yuv422p10le "
-             f"-an /p/a-roll.mov", [(w, "/w"), (tmp_pkg, "/p")], cancelled)
+        _run(f"ffmpeg -v error -y -i /j/{cut}.mp4 -map 0:v -r {rate} -c:v prores_ks -profile:v 3 -vendor apl0 -pix_fmt yuv422p10le "
+             f"-an /p/a-roll.mov", [(d, "/j"), (tmp_pkg, "/p")], cancelled)
     else:
-        _run(f"ffmpeg -v error -y -i /w/{cam} -map 0:v -c:v copy -bsf:v h264_mp4toannexb -f h264 /w/handoff-work/aroll.h264 && "
+        _run(f"ffmpeg -v error -y -i /j/{cut}.mp4 -map 0:v -c:v copy -bsf:v h264_mp4toannexb -f h264 /w/handoff-work/aroll.h264 && "
              f"ffmpeg -v error -y -framerate {rate} -i /w/handoff-work/aroll.h264 -c:v copy -video_track_timescale {fps_num} "
-             f"-movflags +faststart /p/a-roll.mov && rm -f /w/handoff-work/aroll.h264", [(w, "/w"), (tmp_pkg, "/p")], cancelled)
+             f"-movflags +faststart /p/a-roll.mov && rm -f /w/handoff-work/aroll.h264", [(w, "/w"), (d, "/j"), (tmp_pkg, "/p")], cancelled)
 
     # 4 the graphics, ProRes 4444 with alpha, each at its own time. ONE facecam-bubble clip for the whole video
     # (cropped to the bubble, every slot's piece back to back) and every overlay cropped to its content box —
@@ -1157,7 +1246,7 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                  "note": "; ".join(f"{b['tc']} {b['cue']}: {b['what']}" for b in rows[s['n'] - 1]["beats"])[:900]} for s in slots]
     name = f"{meta['title']} — hand-off"
     tl, tl_fcp = timeline_model(name, fps_num, fps_den, W, H, total, min(aroll_frames, total), clips, slots_tl,
-                                placeholders, audio_frames)
+                                placeholders, audio_frames, aroll_keyframes=aroll_kf, audio_depths=stem_depths(tmp_pkg / "audio"))
     probs = nlexml.check(tl) + nlexml.check(tl_fcp)
     xm, fx_ = nlexml.xmeml(tl), nlexml.fcpxml(tl_fcp)
     probs += nlexml.validate_xmeml(xm) + nlexml.validate_fcpxml(fx_)
@@ -1171,16 +1260,7 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     # 8 the preview: the whole edit (compose_long, the production graph) with a labelled card in every slot
     if preview:
         progress("Preview with placeholder cards…", 0.75)
-        pw, ph = (int(x) for x in render.preview_size(W, H).split(":"))
-        base, bub = cam, f"handoff-plain-{pw}.mp4"
-        (w / bub).unlink(missing_ok=True)
-        if (pw, ph) == (W, H):
-            os.link(d / f"{cut}.mp4", w / bub)
-        else:
-            base = f"handoff-aroll-{pw}.mp4"
-            _run(f"ffmpeg -v error -y -i /w/{cam} -vf scale={pw}:{ph}:flags=lanczos -c:v libx264 -preset veryfast -crf 18 "
-                 f"-an /w/{base} && ffmpeg -v error -y -i /j/{cut}.mp4 -vf scale={pw}:{ph}:flags=lanczos -c:v libx264 "
-                 f"-preset veryfast -crf 18 -c:a copy /w/{bub}", [(w, "/w"), (d, "/j")], cancelled)
+        base, bub = cam, plain                        # made at step 3 (the camera pass ran at this size)
         segs = []
         for s in slots:
             seconds = s["t1"] - s["t0"] + float(s.get("tail") or 0) + 0.3

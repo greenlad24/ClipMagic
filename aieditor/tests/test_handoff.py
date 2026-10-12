@@ -72,13 +72,14 @@ def test_nlexml():
     tl, fcp = sample_timeline()
     check(nlexml.check(tl) == [] and nlexml.check(fcp) == [], f"timeline sane: {nlexml.check(tl)} {nlexml.check(fcp)}")
     names = [t["name"] for t in tl["video"]]
-    check(names[0] == "A-roll" and names[1].startswith("Screencasts") and tl["video"][1]["clips"] == [],
-          f"V1 A-roll, V2 the empty screencast track: {names}")
+    check(names[0] == "A-roll" and names[1].startswith("Screencasts") and len(tl["video"][1]["clips"]) == 2
+          and all(c.get("enabled", True) for c in tl["video"][1]["clips"]),
+          f"V1 A-roll, V2 a visible card per slot (Jake's editor: \"there is no screencast track\"): {names}")
     check(names[2] == "gradient" and names[3] == "overlay" and names[4] == "overlay 2", f"V3 gradient, V4+ overlays: {names}")
     check(len(tl["video"][3]["clips"]) == 1 and len(tl["video"][4]["clips"]) == 1, "overlapping overlays → two tracks")
     check([t["name"] for t in tl["audio"]] == ["Voice", "Music", "SFX"], "A1 voice, A2 music, A3 SFX")
-    check(all(not c.get("enabled", True) for c in fcp["video"][1]["clips"]) and len(fcp["video"][1]["clips"]) == 2,
-          "FCPXML: disabled placeholder per slot keeps V2")
+    check(all(c.get("enabled", True) for c in fcp["video"][1]["clips"]) and len(fcp["video"][1]["clips"]) == 2,
+          "FCPXML: the same visible cards on V2")
 
     xm = nlexml.xmeml(tl)
     root = ET.fromstring(xm)                                  # well-formed
@@ -89,7 +90,11 @@ def test_nlexml():
     check(seq.findtext("duration") == "1800" and seq.findtext("rate/timebase") == "30" and seq.findtext("rate/ntsc") == "TRUE",
           "sequence length + rate")
     vtracks = seq.findall("media/video/track")
-    check(len(vtracks) == len(tl["video"]) and vtracks[1].find("clipitem") is None, "V2 is an empty track in the Premiere XML")
+    check(len(vtracks) == len(tl["video"]) and len(vtracks[1].findall("clipitem")) == 2, "V2 carries the cards in the Premiere XML")
+    check(nlexml.CENTER_MARK in xm, "the file says which centre convention it uses")
+    au = seq.findall("media/audio/track/clipitem")
+    check(au and all(c.get("premiereChannelType") == "stereo" for c in au) and seq.find("media/audio/outputs") is not None,
+          "audio written the way Premiere writes it (stereo clips, output groups)")
     v1 = vtracks[0].find("clipitem")
     check(v1.findtext("file/pathurl") == "a-roll.mov" and v1.findtext("start") == "0" and v1.findtext("end") == "1775",
           "V1 = a-roll.mov from 0")
@@ -127,7 +132,7 @@ def test_nlexml():
     lanes = sorted({int(c.get("lane")) for c in ar.findall("asset-clip")})
     check(lanes == [-3, -2, -1, 1, 2, 3, 4, 5, 6], f"lanes: placeholders 1, graphics 2+, stems -1..-3: {lanes}")
     ph = [c for c in ar.findall("asset-clip") if c.get("lane") == "1"]
-    check(len(ph) == 2 and all(c.get("enabled") == "0" for c in ph), "placeholders disabled on lane 1")
+    check(len(ph) == 2 and all(c.get("enabled") != "0" for c in ph), "the cards are visible on lane 1")
     roles = {c.get("audioRole") for c in ar.findall("asset-clip") if int(c.get("lane")) < 0}
     check(roles == {"dialogue", "music", "effects"}, f"audio roles: {roles}")
     kids = [c.tag for c in ar]
@@ -378,6 +383,11 @@ def test_package_maths():
           "xmeml center round-trips to the bubble's top-left")
     check(hz > 0 and vt < 0, "the bubble is right of and above the centre (y down)")
     check(abs(nlexml.xmeml_center(0, 0, W, H, W, H)[0]) < 1e-9, "a full-frame clip sits at the centre")
+    # Premiere's own reading (GUI centre = sequence centre + horiz × the CLIP's width): the bubble lands top-right —
+    # the bug Jake's editor saw (frame-relative values put it over the presenter's face at 58 % / 40 %)
+    gx, gy = W / 2 + hz * side, H / 2 + vt * side
+    check(abs(gx - (bx + side / 2)) < 0.01 and abs(gy - (by + side / 2)) < 0.01 and gx / W > 0.8 and gy / H < 0.3,
+          f"Premiere puts the bubble's centre at {gx / W:.2f} / {gy / H:.2f} of the frame (top-right)")
     px, py = nlexml.fcpxml_position(bx, by, side, side, W, H)
     check(all(abs(a - b) < 1e-6 for a, b in zip(nlexml.from_fcpxml_position(px, py, side, side, W, H), (bx, by))),
           "fcpxml position round-trips")
@@ -672,6 +682,44 @@ def test_handoff_cut():
         hc.trim_preview = saved
 
 
+def test_camera_keyframes():
+    """Jake's editor 2026-10-12: "there is no … zoom keyframes" — the camera moves ride the plain A-roll as editable
+    Scale + Center keyframes, the same zoom aroll_camera.py renders."""
+    from aieditor import handoffcut as hc
+    fps, W, H = 30000 / 1001, 3840, 2160
+    plan = {"shots": [{"t0": 0.0, "t1": 4.0, "z0": 1.548, "rate": 0.0225, "cap": 1.13, "ease_frames": 31,
+                       "ease": [0.089, 0.443, 0.126, 0.834]},
+                      {"t0": 4.0, "t1": 8.0, "z0": 1.4, "rate": 0.0225, "cap": 1.13}], "beats": []}
+    kf = handoff.camera_keyframes(plan, 300, fps, (1920.0, 900.0), W, H)
+    sc = dict(kf["scale"])
+    check(abs(sc[0] - 154.8) < 0.1 and 5 < len(kf["scale"]) < 60, f"opens at ×1.548, a few dozen keyframes, not 300: {len(kf['scale'])}")
+    jump = [f for f in sc if 118 <= f <= 121]
+    check(len(jump) >= 2 and max(sc[f] for f in jump) > 130, f"both sides of the punch-in at 4 s are keyed: {jump}")
+    check(all(abs(h) < 0.5 and abs(v) < 0.5 for _, h, v in kf["center"]), "centre offsets stay inside the frame")
+    check(handoff.camera_keyframes({"shots": []}, 300, fps, (1920, 900), W, H) is None, "no moves → no keyframes")
+    tl = {"name": "T", "fps_num": 30000, "fps_den": 1001, "width": W, "height": H, "frames": 300,
+          "video": [{"name": "A-roll", "clips": [{"name": "a-roll", "file": "a-roll.mov", "start": 0, "frames": 300,
+                                                   "media_frames": 300, "keyframes": kf}]}],
+          "audio": [{"name": "Voice", "clips": [{"name": "voice", "file": "audio/voice.wav", "start": 0, "frames": 300,
+                                                 "media_frames": 300, "role": "dialogue", "depth": 24}]}], "markers": []}
+    xm = nlexml.xmeml(tl)
+    check(not nlexml.validate_xmeml(xm), f"xmeml with keyframes valid: {nlexml.validate_xmeml(xm)}")
+    ci = ET.fromstring(xm).find("sequence/media/video/track/clipitem")
+    ks = ci.findall("filter/effect/parameter[parameterid='scale']/keyframe")
+    check(len(ks) == len(kf["scale"]) and ks[0].findtext("value") == "154.8", "Premiere: Scale keyframes on the A-roll")
+    check(ET.fromstring(xm).findtext("sequence/media/audio/track/clipitem/file/media/audio/samplecharacteristics/depth") == "24",
+          "the stem's real bit depth")
+    back = hc.read_xmeml(xm)
+    check(back["video"][0]["clips"][0]["keyframes"]["scale"] == [(f, float(nlexml._num(round(v, 4)))) for f, v in kf["scale"]],
+          "the cut tool reads the keyframes back")
+    check(nlexml.xmeml(back) == xm, "and writes the same file again")
+    cut = hc.cut_timeline(back, [(0, 100), (200, 300)])
+    check(cut["video"][0]["clips"][1]["in"] == 200 and cut["video"][0]["clips"][1]["keyframes"] == back["video"][0]["clips"][0]["keyframes"],
+          "a cut keeps the keyframes on the media they belong to")
+    fx = nlexml.fcpxml(tl)
+    check(not nlexml.validate_fcpxml(fx) and fx.count("<keyframe ") == 2 * len(kf["scale"]), "FCPXML: position + scale keyframes")
+
+
 if __name__ == "__main__":
     test_nlexml()
     test_slots_and_brief()
@@ -681,4 +729,5 @@ if __name__ == "__main__":
     test_assets()
     test_creative_cut()
     test_handoff_cut()
+    test_camera_keyframes()
     print(f"test_handoff: {N} checks passed")

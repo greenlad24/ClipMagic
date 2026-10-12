@@ -337,12 +337,12 @@ def remix_output(d, k, name, voice, mus, fps, end_fade, cancelled):
 def music_stem_cmd(mus, vdur, out_dur, out):
     """The hand-off's audio/music.wav (exactly handoff.build's: the bed from 0, the sequence's length)."""
     if not mus:
-        return f"ffmpeg -v error -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {out_dur:.6f} -c:a pcm_s24le {out}"
+        return f"ffmpeg -v error -y -f lavfi -i anullsrc=r=48000:cl=stereo -t {out_dur:.6f} -c:a pcm_s16le {out}"
     fo = mus.get("fade_out", FADE_S)
     return (f"ffmpeg -v error -y -stream_loop -1 -i '/music/{Path(mus['path']).name}' -vn "
             f"-af \"aresample=48000,atrim=0:{vdur:.3f},asetpts=PTS-STARTPTS,volume={mus['gain_db']:.1f}dB,"
             f"afade=t=in:d={mus.get('fade_in', FADE_S)},afade=t=out:st={max(0, vdur - fo):.3f}:d={fo},apad\" "
-            f"-t {out_dur:.6f} -ac 2 -c:a pcm_s24le {out}")
+            f"-t {out_dur:.6f} -ac 2 -c:a pcm_s16le {out}")
 
 
 def _pack_zip(d, pkg, zp):
