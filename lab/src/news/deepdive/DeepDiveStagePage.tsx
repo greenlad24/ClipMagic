@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../auth';
 import VideoEmbed from '../components/VideoEmbed';
-import { getDeepDive, sectionMedia, type DeepDive, type Section } from './api';
+import { getDeepDive, heroMedia, sectionMedia, type DeepDive, type Section } from './api';
 import { Scene, StageFrame, useDeepDiveFont } from './Scene';
 import StageV2 from './v2/StageV2';
 import { useBeatStage } from './v2/useBeatStage';
@@ -72,7 +72,8 @@ function StageV1({ dive, sections }: { dive: DeepDive; sections: Section[] }) {
   const [bubble, setBubble] = useBubbleSettings();
   const bubbleRef = useRef(bubble);
   bubbleRef.current = bubble;
-  const { flat, beats, cursorHidden } = useBeatStage({
+  const hero = useMemo(() => heroMedia(dive.heroVideo), [dive.heroVideo]);
+  const { flat, beats, cursorHidden, videoOn } = useBeatStage({
     diveId: dive.id,
     units,
     onKey: (e) => bubbleKey(e, bubbleRef.current, setBubble),
@@ -141,6 +142,14 @@ function StageV1({ dive, sections }: { dive: DeepDive; sections: Section[] }) {
           );
         })}
       </StageFrame>
+      {/* Shift: the dive's most relevant video, full screen over any beat; only a slide change (or Shift / Esc) closes it */}
+      {hero && <VideoEmbed key={`hero:${hero.key}`} media={hero} active={videoOn} />}
+      {videoOn && !hero && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 32, transform: 'translateX(-50%)', zIndex: 60, padding: '10px 16px',
+          borderRadius: 10, background: 'rgba(0,0,0,.75)', color: '#fff', font: '600 15px/1.3 system-ui' }}>
+          No video for this deep dive — Shift or Esc to close
+        </div>
+      )}
     </div>
   );
 }

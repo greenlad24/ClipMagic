@@ -360,6 +360,30 @@ export function sectionOut(r: DeepDiveSectionRecord, v2 = false) {
   };
 }
 
+/**
+ * Jake 2026-10-12: "pressing shift should show the most relevant video related to the deep dive". The video the
+ * dive was BUILT around — the official video findSectionVideo picked for its payoff (demo-first: the one its clips are
+ * cut from, kept in media_json; classic: the first section that carries a video). No new search, no new cost.
+ */
+export interface HeroVideo { kind: "youtube" | "vimeo" | "file"; videoId: string | null; url: string | null; title: string; channel: string }
+export function heroVideoOf(d: DeepDiveRecord): HeroVideo | null {
+  const pick = (v: { videoId?: string | null; videoKind?: string | null; videoUrl?: string | null; videoTitle?: string | null; videoChannel?: string | null } | null | undefined): HeroVideo | null => {
+    if (!v || !(v.videoId || v.videoUrl)) return null;
+    const kind = (v.videoKind === "vimeo" || v.videoKind === "file") ? v.videoKind : v.videoId ? "youtube" : null;
+    if (!kind) return null;
+    return { kind, videoId: v.videoId ?? null, url: v.videoUrl ?? null, title: v.videoTitle ?? "", channel: v.videoChannel ?? "" };
+  };
+  try {
+    const m = JSON.parse(d.mediaJson || "{}");
+    const h = pick(m?.video);
+    if (h) return h;
+  } catch { /* the sections, then */ }
+  const row = db.prepare(`SELECT video_id, video_kind, video_url, video_title, video_channel FROM news_deep_dive_sections
+    WHERE deep_dive_id = ? AND (video_id IS NOT NULL AND video_id != '' OR video_url IS NOT NULL AND video_url != '')
+    ORDER BY CASE kind WHEN 'media' THEN 0 ELSE 1 END, position LIMIT 1`).get(d.id) as any;
+  return pick(row ? { videoId: row.video_id, videoKind: row.video_kind, videoUrl: row.video_url, videoTitle: row.video_title, videoChannel: row.video_channel } : null);
+}
+
 export function deepDiveOut(d: DeepDiveRecord) {
   let sources: unknown[] = [];
   try { sources = JSON.parse(d.sourcesJson || "[]"); } catch { /* keep [] */ }
@@ -382,6 +406,7 @@ export function deepDiveOut(d: DeepDiveRecord) {
     demoAgent: !!d.demoAgent,
     demoUrl: d.demoUrl ?? "",
     template: d.template ?? "",
+    heroVideo: heroVideoOf(d),
     generatedAt: d.generatedAt ?? null,
     updatedAt: d.updatedAt ?? null,
     createdAt: d.createdAt ?? 0,

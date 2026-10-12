@@ -99,6 +99,10 @@ export default function DeepDivePresenterPage() {
   // The ONE stable follower link follows whichever presenter acted last (chrome.tsx).
   useFollowActive(sessionId);
   const [connected, setConnected] = useState(false);
+  // Shift = the dive's most relevant video on the screens (Jake 2026-10-12); only a slide change closes it.
+  const [videoOn, setVideoOn] = useState(false);
+  const videoRef = useRef(false);
+  videoRef.current = videoOn;
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2.5);
@@ -220,6 +224,7 @@ export default function DeepDivePresenterPage() {
         }
       }
     });
+    sync.onMedia((m) => setVideoOn(m.media === 'video'));
     sync.onAppearance((a) => {
       if (typeof a.textSize === 'number') setFontSize(a.textSize);
       if (typeof a.lineHeight === 'number') setLineHeight(a.lineHeight);
@@ -360,13 +365,22 @@ export default function DeepDivePresenterPage() {
     sync.seek(Math.max(0, Math.min(1, sync.positionNow() + (dir * step) / max)));
   }, []);
 
+  const shiftAlone = useRef(false);
+  const toggleVideo = useCallback((on: boolean) => {
+    setVideoOn(on);
+    syncRef.current?.setMedia(ref.current.current, on ? 'video' : 'article');
+  }, []);
+
   // G + number = that section (as G + number = that story on /notes).
   const [gBuffer, setGBuffer] = useState<string | null>(null);
   const gRef = useRef<{ buf: string | null; timer?: ReturnType<typeof setTimeout> }>({ buf: null });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') { if (!e.repeat) shiftAlone.current = true; return; }
+      shiftAlone.current = false;                    // Shift+something is a shortcut, not the video
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if ((e.target as HTMLElement)?.closest('input, textarea')) return;
+      if (e.key === 'Escape' && videoRef.current) { e.preventDefault(); toggleVideo(false); return; }
       const tp = ref.current.viewMode === 'teleprompter';
       const g = gRef.current;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); step(1); }
@@ -385,9 +399,17 @@ export default function DeepDivePresenterPage() {
       }
       else if (/^[1-9]$/.test(e.key)) goSection(parseInt(e.key, 10) - 1);
     };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift' || !shiftAlone.current) return;
+      shiftAlone.current = false;
+      if ((e.target as HTMLElement)?.closest('input, textarea')) return;
+      if (!dive?.heroVideo) { toast.info('No video for this deep dive.', { duration: 2000 }); return; }
+      toggleVideo(!videoRef.current);
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [step, goSection, nudge, togglePlay]);
+    window.addEventListener('keyup', onUp);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUp); };
+  }, [step, goSection, nudge, togglePlay, toggleVideo, dive?.heroVideo]);
 
   // The latched source tab follows the show (navigated in place, never reopened).
   const sec = sections[Math.min(chapterIdx, Math.max(0, sections.length - 1))];
@@ -486,6 +508,12 @@ export default function DeepDivePresenterPage() {
 
           <Divider />
 
+          {videoOn && (
+            <span title="The dive's video is full screen — Shift or Esc closes it (so does changing the slide)"
+              style={{ padding: '2px 8px', borderRadius: 6, background: D.orange, color: '#000', fontSize: 11, fontWeight: 700 }}>
+              ▶ VIDEO
+            </span>
+          )}
           <span data-live={connected ? 'on' : 'off'} title={connected ? 'Live sync connected' : 'Connecting…'}
             style={{ width: 7, height: 7, borderRadius: 99, background: connected ? D.green : D.orange }} />
           <FollowerLinkButton getSessionId={() => sessionId} synced={remoteSynced} />

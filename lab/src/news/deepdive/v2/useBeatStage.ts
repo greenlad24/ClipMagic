@@ -35,6 +35,8 @@ export interface BeatStage {
   cursorHidden: boolean;
   /** Go to beat `n`; `broadcast` = this screen moved it, so tell the room. */
   show: (n: number, broadcast: boolean) => void;
+  /** Shift: the dive's most relevant video is up, full screen. */
+  videoOn: boolean;
 }
 
 export function useBeatStage({ diveId, units, onKey }: {
@@ -47,6 +49,12 @@ export function useBeatStage({ diveId, units, onKey }: {
   const [flat, setFlat] = useState(0);
   const [instant, setInstant] = useState(true);
   const [cursorHidden, setCursorHidden] = useState(false);
+  // Shift = the dive's most relevant video, full screen (Jake 2026-10-12). Only a SLIDE change closes it (the server
+  // resets it on a chapter move; beats inside a chapter keep it up) — or Shift / Esc again.
+  const [videoOn, setVideoOn] = useState(false);
+  const videoRef = useRef(false);
+  videoRef.current = videoOn;
+  const shiftAlone = useRef(false);
   const syncRef = useRef<LiveSync | null>(null);
   const st = useRef({ flat: 0, beats, units });
   st.current = { flat: st.current.flat, beats, units };
@@ -108,13 +116,21 @@ export function useBeatStage({ diveId, units, onKey }: {
       sync.onSync((snap) => {
         if (typeof snap.idx === 'number' && snap.idx !== st.current.flat) show(snap.idx, false);
       });
+      sync.onMedia((m) => setVideoOn(m.media === 'video'));
     })();
     return () => { cancelled = true; sync?.close(); syncRef.current = null; };
   }, [diveId, params, show]);
 
   useEffect(() => {
+    const toggleVideo = (on: boolean) => {
+      setVideoOn(on);
+      syncRef.current?.setMedia(st.current.flat, on ? 'video' : 'article');
+    };
     const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') { if (!e.repeat) shiftAlone.current = true; return; }
+      shiftAlone.current = false;                    // Shift+something is a shortcut, not the video
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'Escape' && videoRef.current) { e.preventDefault(); toggleVideo(false); return; }
       switch (e.key) {
         case 'ArrowRight': case 'PageDown': e.preventDefault(); beatStep(1); return;
         case 'ArrowLeft': case 'PageUp': e.preventDefault(); beatStep(-1); return;
@@ -130,8 +146,14 @@ export function useBeatStage({ diveId, units, onKey }: {
       }
       keyRef.current?.(e);
     };
+    const up = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift' || !shiftAlone.current) return;
+      shiftAlone.current = false;
+      toggleVideo(!videoRef.current);
+    };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', handler); window.removeEventListener('keyup', up); };
   }, [show, beatStep, nudgeScript]);
 
   // Wheel = one unit per gesture (a trackpad fires dozens of events).
@@ -179,5 +201,5 @@ export function useBeatStage({ diveId, units, onKey }: {
   // A unit removed mid-show.
   useEffect(() => { if (beats.length && flat > beats.length - 1) show(beats.length - 1, false); }, [beats.length, flat, show]);
 
-  return { flat, beats, instant, cursorHidden, show };
+  return { flat, beats, instant, cursorHidden, show, videoOn };
 }

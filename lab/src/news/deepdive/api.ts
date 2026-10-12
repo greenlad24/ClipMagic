@@ -102,6 +102,8 @@ export interface DeepDive {
   demoUrl?: string;
   /** The design (templates.ts TemplateId); empty = the format's default look. */
   template?: string;
+  /** Shift on the stage / presenter: the official video the dive was built around (server heroVideoOf). */
+  heroVideo?: { kind: 'youtube' | 'vimeo' | 'file'; videoId: string | null; url: string | null; title: string; channel: string } | null;
 }
 
 export const listDeepDives = () => call<{ deepDives: DeepDive[] }>('listDeepDives', {});
@@ -171,3 +173,13 @@ export const editorPath = (id: string) => `${DEEP_DIVE_PATH}/${id}`;
 export const stagePath = (id: string, sessionId?: string) =>
   `${DEEP_DIVE_PATH}/${id}/present${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''}`;
 export const presenterPath = (id: string) => `${DEEP_DIVE_PATH}/${id}/presenter`;
+
+
+/** The dive's hero video in the shape the AI News player (components/VideoEmbed) takes. */
+export function heroMedia(h: DeepDive['heroVideo']): import('../api').SlideMedia | null {
+  if (!h) return null;
+  if (h.kind === 'youtube' && h.videoId) return { kind: 'youtube', key: `yt:${h.videoId}`, src: '' };
+  if (h.kind === 'vimeo' && h.url) return { kind: 'vimeo', key: `vimeo:${h.url}`, src: h.url };
+  if (h.kind === 'file' && h.url) return { kind: 'file', key: `file:${h.url}`, src: h.url };
+  return null;
+}

@@ -9,7 +9,8 @@
  *   B / C / G                      camera bubble: corner / camera / guide (../bubble.tsx)
  */
 import { useMemo, useRef, useState } from 'react';
-import type { DeepDive, Section } from '../api';
+import { heroMedia, type DeepDive, type Section } from '../api';
+import VideoEmbed from '../../components/VideoEmbed';
 import { sectionsToChapters } from './adapt';
 import Show from './Show';
 import LiveDemo from './LiveDemo';
@@ -25,7 +26,8 @@ export default function StageV2({ dive, sections }: { dive: DeepDive; sections: 
   bubbleRef.current = bubble;
   // The stepping is shared with classic slides (useBeatStage.ts); only L / Esc
   // (the live demo) and the bubble keys B / C / G are this page's own.
-  const { flat, instant, cursorHidden, show } = useBeatStage({
+  const hero = useMemo(() => heroMedia(dive.heroVideo), [dive.heroVideo]);
+  const { flat, instant, cursorHidden, show, videoOn } = useBeatStage({
     diveId: dive.id,
     units: chapters,
     onKey: (e) => {
@@ -46,6 +48,14 @@ export default function StageV2({ dive, sections }: { dive: DeepDive; sections: 
         template={templateFor(dive.template, 'v2')} bubble={bubble}
         onRunLive={dive.demoAgent ? () => setLive(true) : undefined}
         overlay={live ? <LiveDemo diveId={dive.id} onClose={() => setLive(false)} /> : null} />
+      {/* Shift: the dive's most relevant video, full screen over any beat; only a slide change (or Shift / Esc) closes it */}
+      {hero && <VideoEmbed key={hero.key} media={hero} active={videoOn} />}
+      {videoOn && !hero && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 32, transform: 'translateX(-50%)', zIndex: 60, padding: '10px 16px',
+          borderRadius: 10, background: 'rgba(0,0,0,.75)', color: '#fff', font: '600 15px/1.3 system-ui' }}>
+          No video for this deep dive — Shift or Esc to close
+        </div>
+      )}
     </div>
   );
 }
