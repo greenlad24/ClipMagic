@@ -647,7 +647,10 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   <button
                     type="button"
                     onClick={() => toggleSentence(s, !kept)}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"
+                    className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] hover:bg-muted',
+                      // touch screens have no hover: always shown there (Jake 2026-10-12: "I can't remove it")
+                      handoffCut ? 'border border-border text-foreground' : 'text-muted-foreground',
+                      'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100')}
                   >
                     {kept ? 'Remove' : 'Restore'}
                   </button>
