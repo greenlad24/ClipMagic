@@ -58,7 +58,7 @@ put("handoff-01/README.txt", "read me");
 put("preview-01.mp4", Buffer.alloc(50_000, 3));
 put("source.mp4", "SECRET-SOURCE");
 put("edl.json", '{"secret": true}');
-put("request.json", JSON.stringify({ title: "Hot sauce toolbar" }));
+put("request.json", JSON.stringify({ title: "Hot sauce toolbar", handoff: true }));
 const files: Record<string, number> = {};
 for (const rel of ["README.txt", "graphics/01-facecam-bubble.mov", "screencasts/BRIEF.html", "timeline.xml"]) {
   files[rel] = fs.statSync(path.join(dir, "handoff-01", rel)).size;
@@ -321,6 +321,33 @@ await check("a result VIDEO shares too: page + seekable file, no session; packag
   assert.equal((await get(pk + "/video.mp4")).status, 404);
   await share.revokeShare(JOB, v.id);
   assert.equal((await get(v.path + "/video.mp4")).status, 404);
+});
+
+await check("a FINISHED job gets one auto link per result, once (a revoked one is not made again)", async () => {
+  const J2 = "test-auto-02";
+  const d2 = path.join(jobs, J2);
+  fs.mkdirSync(d2, { recursive: true });
+  fs.writeFileSync(path.join(d2, "request.json"), JSON.stringify({ title: "Auto" }));
+  fs.writeFileSync(path.join(d2, "status.json"), JSON.stringify({ state: "running" }));
+  fs.writeFileSync(path.join(d2, "edit-01.mp4"), Buffer.alloc(1000, 1));
+  fs.writeFileSync(path.join(d2, "listen-01.mp4"), Buffer.alloc(1000, 1));
+  fs.writeFileSync(path.join(d2, "source.mp4"), "SECRET");
+  assert.equal((await share.autoShareJob(J2)).length, 0, "running → no link yet");
+  fs.writeFileSync(path.join(d2, "status.json"), JSON.stringify({ state: "done" }));
+  fs.writeFileSync(path.join(d2, "queue.json"), "{}");
+  assert.equal((await share.autoShareJob(J2)).length, 0, "queued again → wait");
+  fs.unlinkSync(path.join(d2, "queue.json"));
+  const made = await share.autoShareJob(J2);
+  assert.deepEqual(made.map((m) => m.pkg), ["edit-01.mp4"], "the result video only — not the sound check, never the source");
+  assert.ok(made[0].auto && made[0].active);
+  assert.equal((await get(made[0].path + "/video.mp4")).status, 200);
+  assert.equal((await share.autoShareJob(J2)).length, 0, "made once");
+  await share.revokeShare(J2, made[0].id);
+  assert.equal((await share.autoShareJob(J2)).length, 0, "revoke sticks");
+  fs.writeFileSync(path.join(d2, "final-01.mp4"), Buffer.alloc(1000, 1));
+  assert.deepEqual((await share.autoShareJob(J2)).map((m) => m.pkg), ["final-01.mp4"], "a later final gets its own");
+  // a graphics-only job: the package, not its preview
+  assert.deepEqual(await share.autoTargets(JOB), ["handoff-01"]);
 });
 
 server.close();

@@ -17,6 +17,7 @@ import { claimUpload, getUpload, UPLOAD_ID_RE } from "./uploads.js";
 import { jobSourceOf } from "./library.js";
 import { assertJobDeletable, freedByJobs, readDeleted, walkAll } from "./storage.js";
 import { handoffPackages, parseHandoff, withHandoff } from "./handoff.js";
+import { listShares, VIDEO_RE } from "./share.js";
 import * as eta from "./eta.js";
 import { parseMusic } from "./music.js";
 
@@ -882,6 +883,8 @@ export async function getJob(id: string) {
     log,
     /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip), null for other jobs */
     handoff: req.handoff === true ? await handoffPackages(dir) : null,
+    /** the no-sign-in links of the job's result videos (./share.ts; packages carry theirs in handoff) */
+    shares: (await listShares(id)).filter((l) => VIDEO_RE.test(l.pkg)),
     /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */
     runner,
     /** the cut → creative chain (aieditor/chain.py): what comes next / where this job started from */

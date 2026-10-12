@@ -34,7 +34,7 @@ import { hyperframesApiRouter } from "./hyperframes/api.js";
 import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
 import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor/factory.js";
 import { aieditorUploadsRouter } from "./aieditor/uploads.js";
-import { sharePublicRouter, shareAdminRouter } from "./aieditor/share.js";
+import { sharePublicRouter, shareAdminRouter, startAutoShare } from "./aieditor/share.js";
 import { packageZip, sendZip } from "./aieditor/handoffZip.js";
 import { aieditorMusicRouter } from "./aieditor/music.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
@@ -147,6 +147,8 @@ app.get("/news-gatherer/present/teleprompter", (req, res, next) => {
 // to ONE job's hand-off package: its page, the streamed zip, the preview and the brief, GET/HEAD only.
 // Everything else under /share is a 404 from this router (never the SPA). See aieditor/share.ts.
 app.use("/share", sharePublicRouter());
+// every finished Auto Editor job gets its no-sign-in links (aieditor/share.ts autoShareJob)
+startAutoShare();
 
 app.use(requireSession);
 

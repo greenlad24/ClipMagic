@@ -3871,6 +3871,8 @@ export interface AutoJobDetail {
   chain?: AutoChain | null;
   /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip); null for other jobs */
   handoff?: AutoHandoffPackage[] | null;
+  /** no-sign-in links of the result videos (made automatically when the job finishes; share.ts) */
+  shares?: AutoHandoffShare[];
 }
 /** One estimate of the ETA model (seconds): a single value when `confident`, else lo–hi. */
 export interface AutoPred {
@@ -3934,7 +3936,7 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 /** An editor hand-off package (aieditor/handoff.ts) + its public share links (aieditor/share.ts). */
 export interface AutoHandoffShare {
-  id: string; pkg: string; path: string; createdAt: number; expiresAt: number; revoked: boolean; active: boolean;
+  id: string; pkg: string; path: string; createdAt: number; expiresAt: number; revoked: boolean; active: boolean; auto?: boolean;
 }
 export interface AutoHandoffPackage {
   pkg?: string; zip: string; bytes: number; modifiedAt: number;

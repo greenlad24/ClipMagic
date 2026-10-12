@@ -62,6 +62,8 @@ export interface ShareLink {
   createdAt: number;
   expiresAt: number;
   revokedAt?: number;
+  /** made by the end-of-job sweep (autoShareJob) — never made again for this file once it exists, even revoked */
+  auto?: boolean;
 }
 
 function secret(): string {
@@ -132,6 +134,7 @@ export interface ShareView {
   expiresAt: number;
   revoked: boolean;
   active: boolean;
+  auto: boolean;
 }
 
 function view(job: string, l: ShareLink, now = Date.now()): ShareView {
@@ -149,6 +152,7 @@ function view(job: string, l: ShareLink, now = Date.now()): ShareView {
     expiresAt: l.expiresAt,
     revoked: !!l.revokedAt,
     active: !l.revokedAt && l.expiresAt * 1000 > now && !!p,
+    auto: !!l.auto,
   };
 }
 
@@ -161,7 +165,7 @@ export async function listShares(job: string, pkg?: string): Promise<ShareView[]
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function createShare(job: unknown, pkg: unknown, days: unknown = DEFAULT_DAYS): Promise<ShareView> {
+export async function createShare(job: unknown, pkg: unknown, days: unknown = DEFAULT_DAYS, auto = false): Promise<ShareView> {
   if (typeof job !== "string" || !JOB_RE.test(job)) throw new Error("Unknown job.");
   if (!isTarget(pkg)) throw new Error("Unknown hand-off package or video.");
   if (!secret()) throw new Error("Share links need the Lab's session secret (SESSION_SECRET), which is not set.");
@@ -178,6 +182,7 @@ export async function createShare(job: unknown, pkg: unknown, days: unknown = DE
     pkg,
     createdAt: Math.floor(now / 1000),
     expiresAt: Math.floor(now / 1000 + d * 86400),
+    ...(auto ? { auto: true } : {}),
   };
   await writeLinks(job, [...(await readLinks(job)), link]);
   // warm the zip index (CRC-32 of every file) so the editor's first download starts at once
@@ -195,6 +200,90 @@ export async function revokeShare(job: unknown, id: unknown): Promise<ShareView>
     await writeLinks(job, links);
   }
   return view(job, l);
+}
+
+// ────────────────────────────── every finished job gets its links ──────────────────────────────
+// Jake 2026-10-12: "I also want every job to produce a no sign in link at the end of it". A sweep (startAutoShare,
+// every minute + at start) gives each FINISHED job (status done, nothing queued) one auto link per result: the
+// hand-off package for a graphics-only job (its page plays the preview), else every result video except the sound
+// check. Made once per file: a revoked or expired auto link is not made again (Revoke sticks).
+
+export const AUTO_DAYS = 30;
+
+export async function autoTargets(job: string): Promise<string[]> {
+  const dir = path.join(JOBS, job);
+  let files: string[] = [];
+  try {
+    files = (await fsp.readdir(dir)).sort();
+  } catch {
+    return [];
+  }
+  let req: any = null;
+  try {
+    req = JSON.parse(await fsp.readFile(path.join(dir, "request.json"), "utf8"));
+  } catch {
+    req = null;
+  }
+  if (req?.handoff === true) {
+    const pkgs = [...new Set(files.map((f) => /^(handoff-\d{2})\.(?:json|zip)$/.exec(f)?.[1]).filter((x): x is string => !!x))];
+    const ok: string[] = [];
+    for (const p of pkgs) if ((await packageEntries(dir, p)) || files.includes(`${p}.zip`)) ok.push(p);
+    return ok;
+  }
+  return files.filter((f) => VIDEO_RE.test(f) && !f.startsWith("listen-"));
+}
+
+/** The job's new auto links (none when it is not finished, or every result already has one). */
+export async function autoShareJob(job: string): Promise<ShareView[]> {
+  if (!JOB_RE.test(job) || !secret()) return [];
+  const dir = path.join(JOBS, job);
+  let st: any = null;
+  try {
+    st = JSON.parse(await fsp.readFile(path.join(dir, "status.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  if (st?.state !== "done" || fs.existsSync(path.join(dir, "queue.json"))) return [];
+  const have = new Set((await readLinks(job)).filter((l) => l.auto).map((l) => l.pkg));
+  const made: ShareView[] = [];
+  for (const t of await autoTargets(job)) {
+    if (have.has(t)) continue;
+    try {
+      made.push(await createShare(job, t, AUTO_DAYS, true));
+    } catch {
+      /* not ready (still copying back) — the next sweep */
+    }
+  }
+  return made;
+}
+
+export async function autoShareAll(log: (m: string) => void = () => undefined): Promise<number> {
+  let jobs: string[] = [];
+  try {
+    jobs = (await fsp.readdir(JOBS)).filter((j) => JOB_RE.test(j));
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const j of jobs) {
+    const made = await autoShareJob(j).catch(() => []);
+    for (const m of made) log(`[share] ${j}: auto link for ${m.pkg}`);
+    n += made.length;
+  }
+  return n;
+}
+
+let sweeping = false;
+export function startAutoShare(everyMs = 60_000): void {
+  const tick = () => {
+    if (sweeping) return;
+    sweeping = true;
+    autoShareAll((m) => console.log(m))
+      .catch((e) => console.warn("[share] auto sweep failed:", e))
+      .finally(() => (sweeping = false));
+  };
+  setTimeout(tick, 5_000).unref();
+  setInterval(tick, everyMs).unref();
 }
 
 // ────────────────────────────── the public routes ──────────────────────────────

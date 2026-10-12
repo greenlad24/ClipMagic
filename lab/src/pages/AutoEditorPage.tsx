@@ -48,7 +48,7 @@ import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
 import { HandoffShare } from '@/components/autoeditor/HandoffShare';
-import { VideoShare } from '@/components/autoeditor/VideoShare';
+import { JobShareLinks, VideoShare } from '@/components/autoeditor/VideoShare';
 import { JobMusic } from '@/components/autoeditor/MusicPicker';
 import { OverlayCatalog, overlayName, overlayTemplate } from '@/components/autoeditor/overlayTemplates';
 
@@ -443,6 +443,8 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               <VideoShare jobId={job.id} file={finalFile.name} />
             </div>
           )}
+          {/* the no-sign-in links made when the job finished (lab/server/src/aieditor/share.ts autoShareJob) */}
+          <JobShareLinks links={job.shares ?? []} />
           {/* "Graphics only — editor adds screencasts": the package for the editor (aieditor/handoff.py) */}
           {(job.handoff ?? []).map((p) => (
             <HandoffShare key={`${p.zip}-${p.modifiedAt}`} jobId={job.id} pkg={p} />
