@@ -8,6 +8,9 @@ import { slideMedia, slideHasVideo } from '../api';
 import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
 import { markCues, newsMarkStyle } from '../daily/stage/cues';
 import { cueMarks, scriptParts } from '../daily/stage/cueMarks';
+import { ScriptEditor, EditScriptButton } from '../components/ScriptEditor';
+import { beatParts, joinBeatParts } from '../daily/stage/beatEdit';
+import { updateSlide } from '../api';
 import SourceMap from '../daily/stage/SourceMap';
 import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -45,6 +48,8 @@ export default function NotesPage() {
 
   // Data
   const [slides, setSlides] = useState<SlideType[]>([]);
+  // ✎ Edit script (Jake 2026-10-13): the current story's script, corrected after it was made
+  const [editingScript, setEditingScript] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Presentation state
@@ -704,6 +709,8 @@ export default function NotesPage() {
   const keyPoints: string[] = (() => { try { return JSON.parse(slide?.keyPoints || '[]'); } catch { return []; } })();
   const sourceUrl = slide?.bestSourceUrl || '';
   const sourceName = slide?.bestSourceName || 'Unknown';
+  // ✎ Edit script: the story's script cut at its beats (beatEdit.ts) — one box per beat
+  const editParts = editingScript && slide ? beatParts(slide) : [];
   const sourceHost = sourceUrl ? (() => { try { return new URL(sourceUrl).hostname.replace('www.', ''); } catch { return ''; } })() : '';
   const upNext = slides.slice(currentIdx + 1, currentIdx + 3);
   const totalBeats = storyBeats(stage);
@@ -775,8 +782,9 @@ export default function NotesPage() {
             <div style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
 
               {/* Slide label */}
-              <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
-                {currentIdx + 1} / {slides.length} · {sourceName}{sourceHost ? ` · ${sourceHost}` : ''}
+              <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ flex: 1 }}>{currentIdx + 1} / {slides.length} · {sourceName}{sourceHost ? ` · ${sourceHost}` : ''}</span>
+                {slide && <EditScriptButton onClick={() => setEditingScript(true)} style={{ textTransform: 'none', letterSpacing: 0 }} />}
               </p>
 
               {slide?.teleprompterScript ? (
@@ -894,6 +902,7 @@ export default function NotesPage() {
 
           {/* Notes grid */}
           <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, alignContent: 'start' }}>
+            {slide && <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end' }}><EditScriptButton onClick={() => setEditingScript(true)} /></div>}
             <NoteCard title="🎯 Why It Matters" text={slide?.whyItMatters} />
             <NoteCard title="🔑 Key Points" keyPoints={keyPoints} />
             <NoteCard title="💡 Talking Angle" text={slide?.talkingAngle} />
@@ -939,6 +948,21 @@ export default function NotesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {editingScript && slide && (
+        <ScriptEditor
+          title={`Story ${currentIdx + 1} · ${sourceName}`}
+          parts={editParts}
+          hint="One box per beat — add or cut words inside any box; each slide still comes in on the first words of its box."
+          check={(texts) => { const r = joinBeatParts(slide, editParts, texts); return 'error' in r ? r.error : null; }}
+          onSave={async (texts) => {
+            const r = joinBeatParts(slide, editParts, texts);
+            if ('error' in r) throw new Error(r.error);
+            await updateSlide({ slideId: slide.id, teleprompterScript: r.script, beatCues: r.beatCues });
+            setSlides((list) => list.map((x) => (x.id === slide.id ? { ...x, teleprompterScript: r.script, beatCues: JSON.stringify(r.beatCues) } : x)));
+          }}
+          onClose={() => setEditingScript(false)}
+        />
+      )}
     </div>
   );
 }

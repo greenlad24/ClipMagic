@@ -52,7 +52,8 @@ import {
   FollowerLinkButton, useFollowActive, SourceButton, EndButton, ScreenButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
   WidthToggle, BeatDots,
 } from '../presenter/chrome';
-import { getDeepDive, editorPath, stagePath, KIND_LABEL, type DeepDive, type Section } from './api';
+import { getDeepDive, editorPath, stagePath, KIND_LABEL, updateSection, type DeepDive, type Section } from './api';
+import { ScriptEditor, EditScriptButton } from '../components/ScriptEditor';
 import { flatten, firstBeatOf, scriptParts, beatCount, type BeatUnit, type Chapter } from './v2/types';
 import { sectionsToUnits } from './beats';
 import { sectionsToChapters, CHAPTER_LABEL } from './v2/adapt';
@@ -94,6 +95,8 @@ export default function DeepDivePresenterPage() {
 
   const [dive, setDive] = useState<DeepDive | null>(null);
   const [sections, setSections] = useState<Section[]>([]);
+  // ✎ Edit script (Jake 2026-10-13): this section's script, corrected after the dive was made
+  const [editingScript, setEditingScript] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [sessionId, setSessionId] = useState('');
   // The ONE stable follower link follows whichever presenter acted last (chrome.tsx).
@@ -470,6 +473,12 @@ export default function DeepDivePresenterPage() {
   const nBeats = unit ? beatCount(unit) : 1;
   // "▶ BEAT n · TITLE[ · LAST]" — the same text the follower page gets from the server.
   const marks = ddBeatMarks(sec, isV2, nBeats);
+  // ✎ Edit script: the section's script cut at its [next] markers — exactly one box per beat
+  const editParts = (() => {
+    const raw = String(sec?.script ?? '').split(/\s*\[next\]\s*/i);
+    const boxes = Array.from({ length: Math.max(1, nBeats) }, (_, b) => (b < nBeats - 1 ? raw[b] ?? '' : raw.slice(b).join(' ')));
+    return boxes.map((text, b) => ({ mark: b === 0 ? '▶ START OF SECTION' : marks[b] || `▶ BEAT ${b}`, text }));
+  })();
   const kindLabel = (k: string) => (isV2 ? CHAPTER_LABEL[k as keyof typeof CHAPTER_LABEL] : KIND_LABEL[k as keyof typeof KIND_LABEL]) || k;
   const headingOf = (s: Section) => (s.heading || kindLabel(s.kind)).replace(/\*/g, '');
   const title = dive.title || dive.topic;
@@ -538,6 +547,8 @@ export default function DeepDivePresenterPage() {
             <ScrollPill paused={!playing} />
 
             <div style={{ maxWidth: WIDTH_PX[width], margin: '0 auto', padding: '44px 40px 0', position: 'relative' }}>
+              {/* floats at the corner: the label below must stay ONE line (the follower page matches it) */}
+              <EditScriptButton onClick={() => setEditingScript(true)} style={{ position: 'absolute', top: 12, right: 40 }} />
               {/* One line, always — a wrapped label would push this screen's
                   script below the follower's (followerPage.ts `#label`). */}
               <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -598,8 +609,9 @@ export default function DeepDivePresenterPage() {
         <>
           <div style={{ padding: '14px 18px 6px', flexShrink: 0 }}>
             <h1 style={{ fontSize: 20, fontWeight: 700, color: '#fff', margin: 0, lineHeight: 1.3 }}>{headingOf(sec)}</h1>
-            <p style={{ fontSize: 12, color: D.muted, margin: '4px 0 0' }}>
-              {kindLabel(sec.kind)} · section {chapterIdx + 1} of {sections.length}{nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}
+            <p style={{ fontSize: 12, color: D.muted, margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ flex: 1 }}>{kindLabel(sec.kind)} · section {chapterIdx + 1} of {sections.length}{nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}</span>
+              <EditScriptButton onClick={() => setEditingScript(true)} />
             </p>
           </div>
 
@@ -633,6 +645,21 @@ export default function DeepDivePresenterPage() {
         </>
       )}
 
+      {editingScript && sec && (
+        <ScriptEditor
+          title={`Section ${chapterIdx + 1} · ${(sec.heading || kindLabel(sec.kind)).replace(/\*/g, '')}`}
+          parts={editParts}
+          hint={nBeats > 1 ? `One box per beat (${nBeats}) — add or cut words inside any box; each beat still comes in where its box starts.` : 'This section is one beat.'}
+          check={(texts) => { const i = texts.findIndex((t) => !/[\p{L}\p{N}]/u.test(t)); return i >= 0 && texts.length > 1 ? `Beat ${i} is empty — every beat needs at least a few words.` : null; }}
+          onSave={async (texts) => {
+            // the same [next] markers between the same boxes — the beats can't move
+            const script = texts.map((t) => t.trim()).join(' [next] ');
+            const r = await updateSection({ sectionId: sec.id, script });
+            setSections((list) => list.map((x) => (x.id === sec.id ? { ...x, script: (r as any)?.section?.script ?? script } : x)));
+          }}
+          onClose={() => setEditingScript(false)}
+        />
+      )}
       <AlertDialog open={confirmEnd} onOpenChange={setConfirmEnd}>
         <AlertDialogContent>
           <AlertDialogHeader>

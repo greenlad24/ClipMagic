@@ -386,7 +386,7 @@ async function buildStages(deckId: string, force: boolean): Promise<{ built: num
         keyPoints: Array.isArray(keyPoints) ? keyPoints.map(String) : [],
         whyItMatters: sl.whyItMatters || '',
       });
-      if (stage) { slides.update(sl.id, { stageJson: JSON.stringify(stage) }); built++; } else failed++;
+      if (stage) { slides.update(sl.id, { stageJson: JSON.stringify(stage), beatCues: "" }); built++; } else failed++;
     }));
   }
   return { built, failed, skipped: list.length - todo.length };

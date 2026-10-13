@@ -89,6 +89,8 @@ export interface Slide {
   videoCheckedAt?: string;
   /** The story's on-screen stage as JSON (server stage.ts) — read it with `daily/stage/story.ts`. Unset on older decks. */
   stageJson?: string;
+  /** ✎ Edit script: the locked cue of each stage item (JSON string[]), story.ts `beatCues`. */
+  beatCues?: string;
   /** The captured source page (server sourceShot.ts) as JSON — read it with `daily/stage/story.ts` `sourceShotOf`. */
   sourceShot?: string;
 }
@@ -248,6 +250,9 @@ export const updateSlide = (input: {
   talkingAngle?: string;
   suggestedTimeSeconds?: number;
   position?: number;
+  /** the presenter's ✎ Edit script */
+  teleprompterScript?: string;
+  beatCues?: string[];
 }) => call<{ success: boolean }>('updateSlide', input);
 export const reorderSlides = (input: { slideIds: string[] }) => call<{ success: boolean }>('reorderSlides', input);
 /**

@@ -12,6 +12,8 @@
  * Each handler mirrors one of the app's original functions, with the same
  * inputs, outputs and rules (controller enforcement, server-stamped revisions).
  */
+import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
+import { beatCountOf } from "./deepDiveV2.js";
 import express, { type Request, type Response } from "express";
 import {
   stories,
@@ -178,6 +180,10 @@ const updateSlide: Handler = (input) => {
   if (input.talkingAngle !== undefined) record.talkingAngle = String(input.talkingAngle);
   if (num(input.suggestedTimeSeconds) !== undefined) record.suggestedTimeSeconds = input.suggestedTimeSeconds;
   if (num(input.position) !== undefined) record.position = input.position;
+  // the presenter's ✎ Edit script (Jake 2026-10-13: "add/omit something to the script after it's been created")
+  if (input.teleprompterScript !== undefined) record.teleprompterScript = String(input.teleprompterScript).slice(0, 20000);
+  // …edited beat by beat, so each beat keeps its place: the cue each beat now starts at (story.ts `beatCues`)
+  if (input.beatCues !== undefined) record.beatCues = Array.isArray(input.beatCues) ? JSON.stringify(input.beatCues.map((c: unknown) => String(c ?? "").slice(0, 300))) : "";
   const notesChanged = input.whyItMatters !== undefined || input.keyPoints !== undefined || input.talkingAngle !== undefined;
   if (notesChanged) record.notesEditedAt = new Date().toISOString();
   if (Object.keys(record).length > 0) slides.update(slideId, record);
@@ -507,7 +513,15 @@ const updateDeepDiveSection: Handler = (input) => {
   const patch: Record<string, unknown> = {};
   if (str(input?.heading) !== undefined) patch.heading = input.heading.slice(0, 120);
   if (str(input?.eyebrow) !== undefined) patch.eyebrow = input.eyebrow.slice(0, 40);
-  if (str(input?.script) !== undefined) patch.script = input.script.slice(0, 20000);
+  if (str(input?.script) !== undefined) {
+    // a script edited after the dive was made (the presenter's ✎ Edit script, the editor): exactly beats − 1 [next]
+    // markers, whatever the edit did, so every beat still lines up with the screen
+    const v2 = deepDives.get(sec.deepDive ?? "")?.format === "v2";
+    let data: any = {};
+    try { data = JSON.parse(sec.dataJson || "{}"); } catch { /* none */ }
+    const beats = v2 ? beatCountOf(sec.kind ?? "", data) : sectionBeatCountOf(sec.kind ?? "", data);
+    patch.script = fitMarkers(input.script.slice(0, 20000), Math.max(1, beats));
+  }
   if (input?.data !== undefined && deepDives.get(sec.deepDive ?? "")?.format !== "v2") {
     const kind = (SECTION_KINDS as readonly string[]).includes(sec.kind ?? "") ? (sec.kind as SectionKind) : "statement";
     patch.dataJson = JSON.stringify(normalizeData(kind, input.data));

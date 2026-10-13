@@ -32,6 +32,13 @@
  *     whole slide has no place, DROPPED.
  * So `beats.length - 1 === cues.length`, every cue is found, in order.
  *
+ * LOCKED CUES (✎ Edit script, Jake 2026-10-13: "Edits should not affect the
+ * script's beats"): the presenter edits a story's script beat by beat
+ * (beatEdit.ts), and the cue each beat then starts at is saved on the slide
+ * (`beatCues`, one per stage item, '' = none). A lock that is found in order
+ * is used as it is — nothing re-made, merged or dropped — so the beats stay
+ * exactly where the edit left them. Rebuilding the visuals clears it.
+ *
  * The live sync is unchanged: slide index = story, beat = index into `beats`.
  */
 import type { Slide } from '../../api';
@@ -92,6 +99,8 @@ export interface StoryBeat {
   label: string;
   /** The teleprompter marker's title — ≤ 4 words (beatTitle.ts), from the stage's `title` or derived from `label`. */
   short: string;
+  /** Which stage item (index into the per-item cue list, `beatCues`) this beat is; -1 for beat 0. */
+  item: number;
 }
 
 export interface StoryStage {
@@ -104,6 +113,8 @@ export interface StoryStage {
   cues: string[];
   /** True when drawn from the notes because the slide has no built stage. */
   fallback: boolean;
+  /** How many stage items (cue slots, merged ones included) — the length a `beatCues` lock must have. */
+  items: number;
   /** What reconcile() had to repair (diagnostics / tests). */
   repaired: { kept: number; remade: number; merged: number; dropped: number };
 }
@@ -207,9 +218,9 @@ function startsOf(script: string): { sentences: number[]; clauses: number[] } {
 }
 
 /** A cue made from the script at `p`: the fewest words (≥ 3) that the forward search finds exactly there. */
-function cueAt(script: string, p: number, from: number, hi: number): { cue: string; end: number } | null {
+export function cueAt(script: string, p: number, from: number, hi: number, sizes = [4, 5, 6, 8, 3]): { cue: string; end: number } | null {
   const words = script.slice(p).match(/\S+/g) ?? [];
-  for (const n of [4, 5, 6, 8, 3]) {
+  for (const n of sizes) {
     if (words.length < Math.min(n, 3)) break;
     const cue = words.slice(0, n).join(' ');
     const m = placeCue(script, cue, from);
@@ -258,6 +269,28 @@ export function reconcile(script: string, want: Want[]): { cues: (string | null)
     i = j;
   }
   return { cues: span.map((s) => s?.cue ?? null), kept, remade };
+}
+
+/** The slide's locked cues, when they fit this stage (one per item). */
+function lockOf(raw: string | undefined, n: number): string[] | null {
+  if (!raw) return null;
+  try {
+    const a = JSON.parse(raw);
+    return Array.isArray(a) && a.length === n && a.some((c) => String(c ?? '').trim()) ? a.map((c) => String(c ?? '').trim()) : null;
+  } catch { return null; }
+}
+
+/** The lock placed with reconcile's own search — null if any locked cue is not found in order. */
+function placeLock(script: string, lock: string[]): { cues: (string | null)[]; kept: number; remade: number } | null {
+  const first = cueSearchStart(script);
+  let from = 0, kept = 0;
+  for (let i = 0; i < lock.length; i++) {
+    if (!lock[i]) continue;
+    const m = placeCue(script, lock[i], i === 0 ? first : from);
+    if (!m) return null;
+    from = m.end; kept++;
+  }
+  return { cues: lock.map((c) => c || null), kept, remade: 0 };
 }
 
 /* ── the stage ────────────────────────────────────────────────────────────── */
@@ -334,7 +367,10 @@ export function storyStage(slide: Slide | null | undefined): StoryStage {
   scenes.forEach((sc, i) => {
     for (let b = 0; b < sceneItems(sc); b++) want.push({ cue: sceneCues[i]?.[b] ?? '', role: b === 0 ? 'entry' : 'item', scene: i, item: b });
   });
-  const r = reconcile(script, want);
+  // A lock from ✎ Edit script: used as it is when every locked cue is found, in order.
+  const lock = lockOf(s.beatCues, want.length);
+  const locked = lock ? placeLock(script, lock) : null;
+  const r = locked ?? reconcile(script, lock ? want.map((w, i) => ({ ...w, cue: lock[i] || w.cue })) : want);
   const got = want.map((w, i) => ({ ...w, cue: r.cues[i] }));
 
   // Merge / drop what has no place (see the header).
@@ -353,18 +389,19 @@ export function storyStage(slide: Slide | null | undefined): StoryStage {
   });
 
   const shot = sourceShotOf(s);
-  const beats: StoryBeat[] = [{ screen: 0, upTo: 0, cue: '', label: shot ? `Source · ${shot.name || shot.host}` : 'Title', short: 'Source' }];
+  const beats: StoryBeat[] = [{ screen: 0, upTo: 0, cue: '', label: shot ? `Source · ${shot.name || shot.host}` : 'Title', short: 'Source', item: -1 }];
   for (const [i, sc] of scenes.entries()) {
     if (!keepScene[i]) continue;
     const mine = got.filter((g) => g.scene === i);
     const screen = sceneScreen.get(i)!;
     let open = false;
     for (const g of mine) {
+      const item = got.indexOf(g);
       if (g.cue) {
         // An entry without a place waits for the first item that has one; that beat shows all before it.
         const label = itemLabel(sc, g.item);
         // A slide's generated title (v3) names its one beat; otherwise the label, shortened.
-        beats.push({ screen, upTo: g.item + 1, cue: g.cue, label, short: shortTitle((sc.v3 && sc.title) || label) || shortTitle(sc.eyebrow) || 'Slide' });
+        beats.push({ screen, upTo: g.item + 1, cue: g.cue, label, short: shortTitle((sc.v3 && sc.title) || label) || shortTitle(sc.eyebrow) || 'Slide', item });
         open = true;
       } else if (open) {
         // No place of its own: it appears with the item before it.
@@ -382,6 +419,7 @@ export function storyStage(slide: Slide | null | undefined): StoryStage {
     beats,
     cues: beats.slice(1).map((b) => b.cue),
     fallback,
+    items: want.length,
     repaired: { kept: r.kept, remade: r.remade, merged, dropped },
   };
 }
