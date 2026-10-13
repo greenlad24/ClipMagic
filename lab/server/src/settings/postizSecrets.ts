@@ -140,6 +140,7 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
 
   { key: "DATAFORSEO_LOGIN", label: "DataForSEO login (optional)", group: "Keyword Research", connects: "OPTIONAL. The Keyword Research tool works out of the box on free signals (YouTube autocomplete + Data API + Google Trends). Add your DataForSEO API login (the email you sign in with at dataforseo.com) here — together with the password — for exact monthly Google search volume, CPC and extra keyword ideas. Server-only; never sent to the browser." },
   { key: "DATAFORSEO_PASSWORD", label: "DataForSEO password (optional)", group: "Keyword Research", connects: "OPTIONAL. The API password from your DataForSEO dashboard (API Access), paired with the login above. Used server-side for HTTP Basic auth to DataForSEO; never sent to the browser." },
+  { key: "VIDIQ_API_KEY", label: "vidIQ API key", group: "Keyword Research", connects: "Real monthly YouTube search volume (vidIQ's estimate, rolling 30 days) for the Script Generator's sponsored-angle picker — every angle is built on a measured high-volume YouTube search. Create the key in your vidIQ account settings (API keys, used by vidIQ's MCP server at mcp.vidiq.com), then paste it here. Each lookup spends vidIQ credits (about 5). Server-only; never sent to the browser." },
 
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -302,6 +303,8 @@ const LAB_ONLY_KEYS = new Set([
   // AI News Stream — read by the lab server only, never Postiz config.
   "BRAVE_SEARCH_API_KEY",
   "NEWSAPI_ORG_KEY",
+  // Script Generator — sponsored-angle demand (YouTube search volume), lab server only.
+  "VIDIQ_API_KEY",
   "GNEWS_API_KEY",
   // Channel Audit — YouTube Analytics OAuth (lab server only).
   "YT_ANALYTICS_CLIENT_ID",
@@ -639,6 +642,10 @@ export function getKieApiKey(): string | null {
 export function getSegmindApiKey(): string | null {
   return (process.env.SEGMIND_API_KEY || "").trim() || readStore().SEGMIND_API_KEY || null;
 }
+export function getVidIqApiKey(): string | null {
+  return (process.env.VIDIQ_API_KEY || "").trim() || readStore().VIDIQ_API_KEY || null;
+}
+
 export function getBraveSearchApiKey(): string | null {
   return (process.env.BRAVE_SEARCH_API_KEY || "").trim() || readStore().BRAVE_SEARCH_API_KEY || null;
 }

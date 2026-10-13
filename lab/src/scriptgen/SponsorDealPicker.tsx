@@ -19,6 +19,51 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+const fmtN = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 10_000 ? `${Math.round(n / 1000)}K` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+
+/** The angle's measured YouTube demand + titles modelled on what ranks (briefs from 2026-10-13). */
+function DemandLine({ a }: { a: DealAngle }) {
+  const [open, setOpen] = useState(false);
+  if (!a.targetSearch) return null;
+  const others = (a.coveredSearches ?? []).filter((c) => c.keyword !== a.targetSearch);
+  return (
+    <div className="mt-1 space-y-1 rounded border border-primary/20 bg-primary/5 p-1.5 text-[11px]">
+      <p className="text-foreground">
+        🔎 <b>"{a.targetSearch}"</b>
+        {a.monthlySearches ? <> · <b>{fmtN(a.monthlySearches)}</b> YouTube searches/mo</> : a.monthlySearches === 0 ? ' · under 750/mo' : ' · not measured'}
+        {a.usMonthlySearches ? <span className="text-muted-foreground"> (US {fmtN(a.usMonthlySearches)})</span> : null}
+        {a.growthPct != null && <span className={a.growthPct >= 0 ? 'text-emerald-400' : 'text-red-400'}> · {a.growthPct >= 0 ? '↑' : '↓'}{Math.abs(a.growthPct)}% this month</span>}
+        {a.competition != null && <span className="text-muted-foreground"> · competition {a.competition}/100</span>}
+      </p>
+      {!!a.tam && others.length > 0 && (
+        <p className="text-muted-foreground">Addressable: <b className="text-foreground">{fmtN(a.tam)}</b>/mo across {others.length + 1} searches — also {others.slice(0, 5).map((c) => `"${c.keyword}"`).join(', ')}{others.length > 5 ? '…' : ''}</p>
+      )}
+      {a.timely && <p className="text-muted-foreground">📰 {a.timely}</p>}
+      {a.titleOptions && a.titleOptions.length > 0 && (
+        <div className="text-foreground">
+          <b>Titles:</b> {a.titleOptions.map((t, i) => <span key={i} className="mr-1.5 inline-block rounded bg-background px-1 py-0.5">{t}</span>)}
+        </div>
+      )}
+      {(a.titlePattern || (a.rankingTitles?.length ?? 0) > 0) && (
+        <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setOpen((v) => !v); } }} className="inline-flex cursor-pointer items-center gap-0.5 text-primary hover:underline">
+          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />} How the top videos title it
+        </span>
+      )}
+      {open && (
+        <div className="space-y-0.5 pl-3 text-muted-foreground">
+          {a.titlePattern && <p className="text-foreground">{a.titlePattern}</p>}
+          {(a.rankingTitles ?? []).map((v) => (
+            <p key={v.videoId}>
+              <a href={`https://www.youtube.com/watch?v=${v.videoId}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-foreground hover:underline">{v.title}</a>
+              {' '}— {fmtN(v.views)} views · {v.channel}{v.subscribers != null ? ` (${fmtN(v.subscribers)} subs)` : ''}{v.publishedAt ? ` · ${v.publishedAt.slice(0, 7)}` : ''}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface SponsorDealSelection { dealId: string; briefId: string; angle: number; brand: string; dealName: string; angleInfo: DealAngle; videoBrief: string }
 
 interface Props {
@@ -163,6 +208,14 @@ export default function SponsorDealPicker({ idea, value, onChange, disabled }: P
           )}
 
           <p className="pt-1 text-xs font-semibold text-foreground">Pick an angle ({b.angles.length}) — it fills the Brief box with the video brief for that angle</p>
+          {b.demand && (
+            <p className={cn('rounded border px-2 py-1.5 text-[11px]', b.demand.note ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-border bg-muted/40 text-muted-foreground')}>
+              {b.demand.source === 'vidiq'
+                ? <>Ranked by YouTube demand: {b.demand.measured} searches measured with vidIQ (monthly YouTube searches) from {b.demand.seeds.length} seeds{b.demand.fromCache ? ` (${b.demand.fromCache} from the 7-day cache)` : ''}{b.demand.titles === 'youtube' ? ' · titles modelled on the videos ranking now' : ''}.</>
+                : <>Not ranked by demand.</>}
+              {b.demand.note && <> {b.demand.note}</>}
+            </p>
+          )}
           <div className="space-y-1.5">
             {b.angles.map((a, i) => {
               const on = value?.briefId === job.id && value.angle === i;
@@ -177,6 +230,7 @@ export default function SponsorDealPicker({ idea, value, onChange, disabled }: P
                       <p className="text-[11px] text-muted-foreground"><b>Hook:</b> {a.hook}</p>
                       <p className="text-[11px] text-muted-foreground"><b>Product moment:</b> {a.productMoment}</p>
                       <p className="text-[11px] text-muted-foreground"><b>Why:</b> {a.why} · <b>Risk:</b> {a.risk}</p>
+                      <DemandLine a={a} />
                     </div>
                   </div>
                 </button>

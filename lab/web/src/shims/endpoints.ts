@@ -783,14 +783,22 @@ export const attachScriptShots =
 
 /* Sponsored scripts from a Deal Organizer deal */
 export interface SponsorDealOption { id: string; name: string; client: string; brand: string | null; stage: string; updatedAt: string | null }
-export interface DealAngle { title: string; premise: string; hook: string; productMoment: string; why: string; risk: string; bestFor: string }
+export interface DealAngle {
+  title: string; premise: string; hook: string; productMoment: string; why: string; risk: string; bestFor: string;
+  /** Demand (briefs from 2026-10-13): the YouTube search it targets, vidIQ monthly searches, and every search it covers. */
+  targetSearch?: string; monthlySearches?: number | null; usMonthlySearches?: number | null; growthPct?: number | null; competition?: number | null;
+  coveredSearches?: Array<{ keyword: string; monthly: number; growthPct: number | null }>; tam?: number; timely?: string | null;
+  titlePattern?: string; titleOptions?: string[];
+  rankingTitles?: Array<{ title: string; views: number; channel: string; subscribers: number | null; publishedAt: string | null; videoId: string }>;
+}
+export interface DealDemand { source: 'vidiq' | 'none'; measured: number; seeds: string[]; fetched: number; fromCache: number; note: string | null; titles: 'youtube' | 'none' }
 /** The read as the UI sees it: only what is about the video (no fee, dates, people or negotiation). */
 export interface DealBrief {
   /** The brand's own brief as they sent it (null when they never sent one). */
   brandBrief: string | null;
   sponsor: { brand: string; product: string; website: string | null; whatItDoes: string; offer: string | null; links: string[]; codes: string[] };
   brief: { keyMessages: string[]; mustSay: string[]; mustShow: string[]; mustNotSay: string[]; cta: string | null; disclosure: string | null; targetAudience: string | null; tone: string | null };
-  contentRules: string[]; gaps: string[]; summary: string; angles: DealAngle[];
+  contentRules: string[]; gaps: string[]; summary: string; angles: DealAngle[]; demand?: DealDemand; searchSeeds?: string[];
   /** Per angle: the ready-to-edit video brief for the form's Brief field. */
   videoBriefs: string[];
 }
