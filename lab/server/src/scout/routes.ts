@@ -3,6 +3,7 @@
  *
  *   POST /api/scout/<fn>                 JSON in, JSON out
  *   GET  /api/scout/jobs/:id/files/:f    a screenshot of a job (live view, report)
+ *   GET  /api/scout/jobs/:id/download    the whole test as a zip (PDF + screenshots — download.ts)
  *
  * Two callers:
  *   - the Lab UI (Script Generator → "UX Scout"): tools + live login console,
@@ -27,6 +28,7 @@ import { runAction, saveJobShot, importSession, type ScoutAction } from "./brows
 import { saveShot } from "../scriptgen/shots.js";
 import { attachUxScout } from "../scriptgen/run.js";
 import { onScoutFinished, DEMO_CONTEXT_PREFIX } from "../news/deepDiveDemo.js";
+import { downloadScoutJob } from "./download.js";
 
 type Handler = (input: any) => Promise<unknown> | unknown;
 const bad = (message: string, status = 400) => Object.assign(new Error(message), { status });
@@ -188,6 +190,14 @@ scoutRouter.get("/jobs/:id/files/:file", (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "private, max-age=86400");
     res.type("image/jpeg").sendFile(p);
   } catch { res.status(404).end(); }
+});
+
+scoutRouter.get("/jobs/:id/download", (req: Request, res: Response) => {
+  downloadScoutJob(req, res).catch((e) => {
+    console.error("[scout] download failed:", e);
+    if (!res.headersSent) res.status(500).json({ error: { message: (e as Error).message } });
+    else res.destroy(e as Error);
+  });
 });
 
 scoutRouter.post("/:fn", express.json({ limit: "120mb" }), async (req: Request, res: Response) => {

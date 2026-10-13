@@ -10,7 +10,7 @@
  * report cites (K1, K2…).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, ClipboardList, ExternalLink, Image as ImageIcon, Loader2, MessageSquareText, MousePointerClick, PanelRightClose, PanelRightOpen, Star } from 'lucide-react';
+import { ChevronRight, ClipboardList, Download, ExternalLink, Image as ImageIcon, Loader2, MessageSquareText, MousePointerClick, PanelRightClose, PanelRightOpen, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Markdown } from '@/deals/ui/markdown';
 import { getJob, listJobs, type ScoutEvent, type ScoutJobView } from './api';
@@ -188,6 +188,38 @@ export default function UxFindingsDrawer({
   const [data, setData] = useState<{ view: ScoutJobView; events: ScoutEvent[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  // ⬇ the whole test as a zip: the formatted PDF (findings + every step) and every screenshot (server scout/download.ts)
+  const download = async () => {
+    if (!resolvedJob || downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const r = await fetch(`/api/scout/jobs/${encodeURIComponent(resolvedJob)}/download`, { credentials: 'same-origin' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error(j?.error?.message || `Download failed (${r.status})`);
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get('Content-Disposition') || '';
+      const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+      const name = star ? decodeURIComponent(star[1]) : /filename="([^"]+)"/i.exec(cd)?.[1] || 'UX test.zip';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   // Which test belongs to this script: the one attached to the run, else the
   // newest finished one started from it.
@@ -266,11 +298,23 @@ export default function UxFindingsDrawer({
               {data ? `${data.view.tool?.name ?? job?.toolSlug} · ${steps.length} screenshots · ${job?.finishedAt ? new Date(job.finishedAt).toLocaleString() : job?.status}` : 'For this script only'}
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void download()}
+            disabled={downloading || (!!job && job.status !== 'done')}
+            title="Download this test as a zip: a formatted PDF report (findings + every step) and all the screenshots"
+          >
+            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            <span className="ml-1.5">{downloading ? 'Preparing…' : 'Download'}</span>
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="Minimize" title="Minimize (Esc)">
             <PanelRightClose className="h-4 w-4" />
           </Button>
         </div>
 
+        {downloadError && <p className="border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">{downloadError}</p>}
+        {downloading && <p className="border-b border-border bg-muted/50 px-4 py-2 text-xs text-muted-foreground">Making the PDF and packing every screenshot — this takes about a minute for a long test.</p>}
         <div className="flex items-center gap-1 border-b border-border px-4 py-2">
           {(['steps', 'findings'] as const).map((t) => (
             <button

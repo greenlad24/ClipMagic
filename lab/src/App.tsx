@@ -42,6 +42,7 @@ import DeepDiveListPage from './news/deepdive/DeepDiveListPage';
 import DeepDiveEditorPage from './news/deepdive/DeepDiveEditorPage';
 import DeepDiveStagePage from './news/deepdive/DeepDiveStagePage';
 import DeepDivePresenterPage from './news/deepdive/DeepDivePresenterPage';
+import UxReportPrint from './scout/UxReportPrint';
 
 // The Lab's floating Jobs panel, except on the AI News Stream pages — those
 // are full-screen presenter/teleprompter views with their own bottom bars.
@@ -50,6 +51,8 @@ import DeepDivePresenterPage from './news/deepdive/DeepDivePresenterPage';
 // on-air presenter views entirely.
 function LabJobs() {
   const { pathname } = useLocation();
+  // the UX test print page (→ PDF) has no Lab chrome at all
+  if (pathname.startsWith('/ux-report/')) return null;
   if (pathname.startsWith('/news-gatherer') || pathname.startsWith('/deal-organizer')) {
     const onAir = pathname.startsWith('/news-gatherer/present') || /\/deep-dive\/[^/]+\/present/.test(pathname);
     return onAir ? null : <ClaudeChatButton aboveJobs={false} />;
@@ -96,6 +99,7 @@ export default function App() {
         <Route path="/tutorial-studio" element={<TutorialStudioPage />} />
         <Route path="/keyword-research" element={<KeywordResearchPage />} />
         <Route path="/script-generator" element={<ScriptGeneratorPage />} />
+        <Route path="/ux-report/:jobId" element={<UxReportPrint />} />
         <Route path="/video-planner" element={<VideoPlannerPage />} />
         <Route path="/channel-audit" element={<ChannelAuditPage />} />
         <Route path="/skool" element={<SkoolManagerPage />} />
