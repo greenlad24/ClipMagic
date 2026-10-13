@@ -82,6 +82,8 @@ for (const [c, t] of [["format", "TEXT"], ["demo_agent", "INTEGER"], ["demo_url"
 // Templates (2026-10-06): the design the dive is presented in (web: src/news/deepdive/templates.ts).
 if (!hasCol("news_deep_dives", "template")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN template TEXT`);
 // the storyline the sections were BUILT with (deepDiveTemplates.ts) — a template whose storyline differs offers a rebuild
+// Tool Reaction (2026-10-13): a third show mode stored as a v2 dive — "" = a Deep Dive, "reaction" = a Tool Reaction (toolReaction.ts).
+if (!hasCol("news_deep_dives", "show_kind")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN show_kind TEXT`);
 if (!hasCol("news_deep_dives", "storyline")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN storyline TEXT`);
 
 /**
@@ -129,6 +131,8 @@ export interface DeepDiveRecord {
   /** The design template id (DEEP_DIVE_TEMPLATES); empty = the format's default. */
   template?: string;
   storyline?: string | null;
+  /** "" = a Deep Dive; "reaction" = a Tool Reaction (same v2 chapters, built from a UX Scout run). */
+  showKind?: string;
   generatedAt?: string;
   updatedAt?: string;
   createdAt?: number;
@@ -177,6 +181,7 @@ export const deepDives = makeTable<DeepDiveRecord>(
     mediaJson: ["media_json", "text"],
     template: ["template", "text"],
     storyline: ["storyline", "text"],
+    showKind: ["show_kind", "text"],
     generatedAt: ["generated_at", "text"],
     updatedAt: ["updated_at", "text"],
     createdAt: ["created_at", "num"],
@@ -332,7 +337,7 @@ export const NO_VISUAL = new Set<SectionKind>(["title", "takeaways", "media", "c
 const isKind = (k: unknown): k is SectionKind => typeof k === "string" && (SECTION_KINDS as readonly string[]).includes(k);
 
 /** A section row as the pages see it — data parsed. */
-export const V2_KINDS = ["title", "demo", "clip", "article", "reveal", "stats", "versus", "flow", "timeline", "list", "quote", "takeaways"] as const;
+export const V2_KINDS = ["rx_hook", "rx_coming", "title", "demo", "clip", "article", "reveal", "stats", "versus", "flow", "timeline", "list", "quote", "takeaways"] as const;
 
 export function sectionOut(r: DeepDiveSectionRecord, v2 = false) {
   let data: unknown = {};
@@ -413,6 +418,7 @@ export function deepDiveOut(d: DeepDiveRecord) {
     template: d.template ?? "",
     /** the storyline the sections were built with ("" = before storylines existed, i.e. the original "jake") */
     storyline: d.storyline ?? "",
+    showKind: d.showKind === "reaction" ? "reaction" : "",
     heroVideo: heroVideoOf(d),
     generatedAt: d.generatedAt ?? null,
     updatedAt: d.updatedAt ?? null,

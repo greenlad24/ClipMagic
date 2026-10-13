@@ -156,7 +156,8 @@ const HANDLERS: Record<string, Handler> = {
       } catch { return k; }
     });
     const done = finishJob(job.id, { report, summary: i?.summary ? String(i.summary).slice(0, 1000) : undefined, keyShots });
-    if (done.runId && !onScoutFinished(done)) { try { attachUxScout(done.runId, done.id); } catch (e) { addEvent(done.id, "note", `Not attached to the script run: ${(e as Error).message}`); } }
+    // rx:<diveId> = a Tool Reaction's test — its run is waiting for it (news/toolReaction.ts) and picks it up itself
+    if (done.runId && !/^rx:/.test(done.runId) && !onScoutFinished(done)) { try { attachUxScout(done.runId, done.id); } catch (e) { addEvent(done.id, "note", `Not attached to the script run: ${(e as Error).message}`); } }
     return { ok: true };
   },
   fail: (i) => { failJob(String(i?.jobId ?? ""), String(i?.error ?? "The Scout failed.")); return { ok: true }; },

@@ -100,6 +100,8 @@ export interface DeepDive {
   demoAgent?: boolean;
   /** v2: the product URL the demo agent opens (optional). */
   demoUrl?: string;
+  /** '' = a Deep Dive; 'reaction' = a Tool Reaction (same chapters, built from a UX Scout run). */
+  showKind?: '' | 'reaction';
   /** The design (templates.ts TemplateId); empty = the format's default look. */
   template?: string;
   /** the storyline the sections were built with ('' = before storylines: the original payoff-first one) */
@@ -108,7 +110,7 @@ export interface DeepDive {
   heroVideo?: { kind: 'youtube' | 'vimeo' | 'file'; videoId: string | null; url: string | null; title: string; channel: string } | null;
 }
 
-export const listDeepDives = () => call<{ deepDives: DeepDive[] }>('listDeepDives', {});
+export const listDeepDives = (showKind: '' | 'reaction' = '') => call<{ deepDives: DeepDive[] }>('listDeepDives', { showKind });
 export interface DemoJobInfo { id: string; status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'; error: string | null; finishedAt: string | null }
 export const getDeepDive = (id: string) =>
   call<{ deepDive: DeepDive; sections: Section[]; running: boolean; demoJob?: DemoJobInfo | null }>('getDeepDive', { id });
@@ -130,7 +132,7 @@ export const attachDeepDiveDemo = (id: string) => call<{ attached: boolean; reas
 export const startLiveDeepDiveDemo = (id: string) => call<{ jobId: string }>('startLiveDeepDiveDemo', { id });
 export interface LiveDemoState { status: DemoJobInfo['status']; error: string | null; shot: string | null; click: [number, number] | null; caption: string; w: number; h: number; steps: number }
 export const getLiveDeepDiveDemo = (jobId: string) => call<LiveDemoState>('getLiveDeepDiveDemo', { jobId });
-export const createDeepDive = (input: { topic?: string; angle?: string; storyId?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string; template?: string }) =>
+export const createDeepDive = (input: { topic?: string; angle?: string; storyId?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string; template?: string; showKind?: '' | 'reaction' }) =>
   call<{ deepDive: DeepDive }>('createDeepDive', input);
 export const updateDeepDive = (input: { id: string; title?: string; subtitle?: string; topic?: string; angle?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string; template?: string }) =>
   call<{ success: boolean }>('updateDeepDive', input);

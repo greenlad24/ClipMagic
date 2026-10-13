@@ -12,7 +12,7 @@
  * tab in the top bar.
  */
 import type { LucideIcon } from 'lucide-react';
-import { Radio, Telescope } from 'lucide-react';
+import { Clapperboard, Radio, Telescope } from 'lucide-react';
 
 export interface NewsMode {
   id: string;
@@ -37,6 +37,13 @@ export const NEWS_MODES: NewsMode[] = [
     path: '/news-gatherer/deep-dive',
     icon: Telescope,
     description: 'One topic, researched and turned into an animated ~10-minute segment you present live.',
+  },
+  {
+    id: 'tool-reaction',
+    label: 'Tool Reaction',
+    path: '/news-gatherer/tool-reaction',
+    icon: Clapperboard,
+    description: 'A short hook, then you go live into a tool — script and step notes from a UX Scout test.',
   },
 ];
 

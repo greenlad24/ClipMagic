@@ -22,6 +22,7 @@ export function beatItems(sec: Section, v2: boolean): string[] {
       case 'flow': return (d.steps ?? []).map((s) => clean(s.label));
       case 'timeline': return (d.events ?? []).map((e) => clean(e.label) || clean(e.date));
       case 'list': return (d.items ?? []).map(clean);
+      case 'rx_coming': return (d.items ?? []).map((t) => clean(t.replace(/\*/g, '')));
       case 'takeaways': return (d.points ?? []).map(clean);
       case 'quote': return [d.who ? `Quote · ${clean(d.who)}` : 'Quote'];
       default: return [];

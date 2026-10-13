@@ -25,13 +25,14 @@ import { deepDives, deepDiveSections, sectionsOf } from "./deepDive.js";
 import { assetDir } from "./deepDiveVisuals.js";
 import { listTools, addTool, createJob, getJob, listJobs, listEvents, jobDir, type ScoutJob } from "../scout/store.js";
 
+export const SHOT_SIZE = { w: 1280, h: 900 };
 export const DEMO_CONTEXT_PREFIX = "DEMO MODE —";
 const SHOT_W = 1280, SHOT_H = 900; // the Scout browser's viewport
 
 const hostOf = (u: string) => { try { return new URL(u).host.replace(/^www\./, ""); } catch { return ""; } };
 
 /** The Scout tool for this product: matched by host, created if new. */
-function toolFor(url: string, name: string): string {
+export function toolFor(url: string, name: string): string {
   const host = hostOf(url);
   if (!host) throw new Error("Give the demo agent the product's URL (e.g. https://chatgpt.com).");
   const hit = listTools().find((t) => hostOf(t.homeUrl) === host);
@@ -63,11 +64,11 @@ export function latestDemoJob(diveId: string): ScoutJob | null {
 
 /* ── recording → steps ────────────────────────────────────────────────────── */
 
-const CLICK_RE = /\bat (\d{1,4}),\s?(\d{1,4})\b/;
+export const CLICK_RE = /\bat (\d{1,4}),\s?(\d{1,4})\b/;
 
 interface Step { image: string; w: number; h: number; box: [number, number, number, number] | null; click: [number, number] | null; caption: string; label: string }
 
-function copyShot(diveId: string, jobId: string, file: string): string | null {
+export function copyShot(diveId: string, jobId: string, file: string): string | null {
   const src = path.join(jobDir(jobId), file);
   if (!fs.existsSync(src)) return null;
   const name = `${crypto.createHash("sha1").update(`${jobId}/${file}`).digest("hex").slice(0, 16)}.jpg`;
@@ -79,7 +80,7 @@ function copyShot(diveId: string, jobId: string, file: string): string | null {
 }
 
 /** A spotlight box around a click: about a third of the screen, kept inside it. */
-function boxAround(x: number, y: number): [number, number, number, number] {
+export function boxAround(x: number, y: number): [number, number, number, number] {
   const w = SHOT_W * 0.36, h = SHOT_H * 0.34;
   const bx = Math.max(0, Math.min(SHOT_W - w, x - w / 2));
   const by = Math.max(0, Math.min(SHOT_H - h, y - h / 2));

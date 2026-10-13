@@ -56,11 +56,16 @@ import { deepDiveFollowerSlides } from "./deepDiveFollow.js";
 import { liveScreens, resetLiveShow } from "./liveSync.js";
 import { activeForToken, followSessionEnded, followToken, liveKey, rotateFollowToken, setFollowActive as markFollowActive } from "./followChannel.js";
 import { generateDeepDiveV2, mediaChoices, editChapter } from "./deepDiveV2.js";
+import { generateToolReaction, latestReactionJob } from "./toolReaction.js";
 import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./deepDiveDemo.js";
 
 /** v2 dives (format "v2") build the demo-first chapter show; v1 dives keep the slide deck. */
-const generateDeepDive = (write: (chunk: string) => void | Promise<void>, input: { id?: string; fresh?: boolean }) =>
-  (deepDives.get(String(input?.id ?? ""))?.format === "v2" ? generateDeepDiveV2(write, input) : generateDeepDiveV1(write, input));
+const generateDeepDive = (write: (chunk: string) => void | Promise<void>, input: { id?: string; fresh?: boolean }) => {
+  const d = deepDives.get(String(input?.id ?? ""));
+  // Tool Reaction (2026-10-13) is a v2 dive built from a UX Scout run — its own pipeline.
+  if (d?.showKind === "reaction") return generateToolReaction(write, input);
+  return d?.format === "v2" ? generateDeepDiveV2(write, input) : generateDeepDiveV1(write, input);
+};
 import path from "node:path";
 import { newsTemplateInput } from "./newsTemplates.js";
 import { SHOT_FILE_RE, shotDir } from "./sourceShot.js";
@@ -441,8 +446,10 @@ const getConnections: Handler = () => ({
 
 /* ── deep dive (deepDive.ts) ───────────────────────────────────────────────── */
 
-const listDeepDives: Handler = () => {
-  const rows = deepDives.where("1 = 1 ORDER BY created_at DESC LIMIT 200").map((d) => reconcile(d)!);
+const listDeepDives: Handler = (input) => {
+  // the Deep Dive tab lists dives; the Tool Reaction tab lists reactions (same table, show_kind)
+  const reaction = input?.showKind === "reaction";
+  const rows = deepDives.where(`${reaction ? "show_kind = 'reaction'" : "(show_kind IS NULL OR show_kind = '')"} ORDER BY created_at DESC LIMIT 200`).map((d) => reconcile(d)!);
   const counts = new Map(
     (db.prepare(`SELECT deep_dive_id AS id, COUNT(*) AS n FROM news_deep_dive_sections GROUP BY deep_dive_id`).all() as { id: string; n: number }[])
       .map((r) => [r.id, r.n]),
@@ -454,7 +461,7 @@ const getDeepDive: Handler = (input) => {
   const id = need(str(input?.id), "id");
   const d = reconcile(deepDives.get(id));
   if (!d) throw Object.assign(new Error("Deep dive not found."), { status: 404 });
-  const dj = d.format === "v2" && d.demoAgent ? latestDemoJob(id) : null;
+  const dj = d.showKind === "reaction" ? latestReactionJob(id) : d.format === "v2" && d.demoAgent ? latestDemoJob(id) : null;
   return {
     deepDive: deepDiveOut(d), sections: sectionsOf(id).map((r) => sectionOut(r, d.format === "v2")), running: isGenerating(id),
     demoJob: dj ? { id: dj.id, status: dj.status, error: dj.error, finishedAt: dj.finishedAt } : null,
@@ -466,6 +473,7 @@ const createDeepDive: Handler = (input) => {
   const story = storyId ? stories.get(storyId) : undefined;
   const topic = (str(input?.topic)?.trim() || story?.headline || "").slice(0, 300);
   if (!topic) throw Object.assign(new Error("Type a topic first."), { status: 400 });
+  if (input?.showKind === "reaction" && !/^https?:\/\/\S+\.\S+/.test(String(input?.demoUrl ?? "").trim())) throw Object.assign(new Error("Give the tool's web address (e.g. https://grok.com) — the UX Scout tests it there."), { status: 400 });
   const d = deepDives.insert({
     topic,
     angle: (str(input?.angle) ?? "").trim().slice(0, 2000),
@@ -477,6 +485,7 @@ const createDeepDive: Handler = (input) => {
     demoAgent: input?.demoAgent === true ? 1 : 0,
     demoUrl: (str(input?.demoUrl) ?? "").trim().slice(0, 500),
     template: templateInput(input?.template) ?? "",
+    showKind: input?.showKind === "reaction" ? "reaction" : "",
     updatedAt: new Date().toISOString(),
   });
   return { deepDive: deepDiveOut(d) };

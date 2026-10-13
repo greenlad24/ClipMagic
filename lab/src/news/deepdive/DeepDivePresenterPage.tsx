@@ -57,6 +57,7 @@ import { ScriptEditor, EditScriptButton } from '../components/ScriptEditor';
 import { flatten, firstBeatOf, scriptParts, beatCount, type BeatUnit, type Chapter } from './v2/types';
 import { sectionsToUnits } from './beats';
 import { sectionsToChapters, CHAPTER_LABEL } from './v2/adapt';
+import { assetUrl } from './v2/types';
 import { sendBeat } from './v2/beatSync';
 import { beatItems, sectionSourceUrl } from './presenterNotes';
 import { useScrollGuard, SETTLE_MS } from '../presenter/scrollGuard';
@@ -483,6 +484,26 @@ export default function DeepDivePresenterPage() {
   const headingOf = (s: Section) => (s.heading || kindLabel(s.kind)).replace(/\*/g, '');
   const title = dive.title || dive.topic;
   const items = beatItems(sec, isV2);
+  // Tool Reaction (2026-10-13): a live feature chapter carries what Jake DOES at each step (from the UX Scout's path)
+  const rxTodo = isV2 && (sec.kind as string) === 'demo' && Array.isArray((sec.data as any)?.todo) ? ((sec.data as any).todo as string[]) : null;
+  const rxMeaning = rxTodo ? String((sec.data as any)?.meaning ?? '') : '';
+  const rxStep = rxTodo ? ((sec.data as any)?.tabs ?? []).flatMap((t: any) => t.steps ?? [])[beatNow] ?? null : null;
+  const rxDoNow = rxTodo ? (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', padding: '10px 16px', background: '#0f1a33', borderBottom: '1px solid #24407a', flexShrink: 0 }}>
+      {rxStep?.image && (
+        <a href={assetUrl(id, rxStep.image)} target="_blank" rel="noreferrer" title="The UX Scout's screenshot of this step — also on the stage as the backup view"
+          style={{ position: 'relative', flex: 'none', width: 168, aspectRatio: `${rxStep.w || 1280} / ${rxStep.h || 900}`, borderRadius: 6, overflow: 'hidden', border: '1px solid #24407a' }}>
+          <img src={assetUrl(id, rxStep.image)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          {rxStep.click && <span style={{ position: 'absolute', left: `${(rxStep.click[0] / (rxStep.w || 1280)) * 100}%`, top: `${(rxStep.click[1] / (rxStep.h || 900)) * 100}%`, width: 14, height: 14, transform: 'translate(-50%,-50%)', borderRadius: '50%', border: '2px solid #ff4d4d', background: 'rgba(255,77,77,.3)' }} />}
+        </a>
+      )}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <p style={{ margin: 0, fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', color: '#7fa6ff', textTransform: 'uppercase' }}>▶ Do this now · step {beatNow + 1} of {nBeats}</p>
+        <p style={{ margin: '3px 0 0', fontSize: 15, lineHeight: 1.4, color: '#fff', fontWeight: 600 }}>{rxTodo[beatNow] || rxStep?.caption || '—'}</p>
+        {rxMeaning && <p style={{ margin: '4px 0 0', fontSize: 12, color: '#a9b8d8' }}>💡 What it means for them: {rxMeaning}</p>}
+      </div>
+    </div>
+  ) : null;
   const nextLabel = beatNow < nBeats - 1
     ? (items[beatNow + 1] || `beat ${beatNow + 2}`)
     : next ? `section ${chapterIdx + 2} · ${headingOf(next)}` : null;
@@ -539,6 +560,8 @@ export default function DeepDivePresenterPage() {
       {isTeleprompter ? (
         // ── TELEPROMPTER VIEW (as /notes) ────────────────────────────────
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Tool Reaction: what to do live at this step — above the script, outside its layout (the follower's lines stay matched) */}
+          {rxDoNow}
           <div
             ref={tpRef}
             onScroll={onTpScroll}
@@ -616,8 +639,10 @@ export default function DeepDivePresenterPage() {
           </div>
 
           <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, alignContent: 'start' }}>
-            <NoteCard title="🎯 The point" text={angle.replace(/\*/g, '')} />
-            <NoteCard title="🔑 On screen, beat by beat" keyPoints={items} current={beatNow} />
+            <NoteCard title="🎯 The point" text={(rxMeaning ? `What it means for them: ${rxMeaning}` : angle).replace(/\*/g, '')} />
+            {rxTodo
+              ? <NoteCard title="▶ Do this live, step by step" keyPoints={rxTodo.map((t, k) => t || items[k] || '')} current={beatNow} />
+              : <NoteCard title="🔑 On screen, beat by beat" keyPoints={items} current={beatNow} />}
             <NoteCard title="📚 Sources" keyPoints={sources.slice(0, 6).map((s) => `${s.outlet || 'Source'}${s.official && !/official/i.test(s.outlet || '') ? ' (official)' : ''} — ${s.title}`)} />
           </div>
 

@@ -23,6 +23,7 @@ export function sectionsToChapters(sections: Section[]): Chapter[] {
 }
 
 export const CHAPTER_LABEL: Record<ChapterKind, string> = {
+  rx_hook: 'Hook · the tool', rx_coming: 'Hook · coming up',
   title: 'Title', demo: 'Live demo', clip: 'Official video', article: 'Official post', reveal: 'Reveal cards',
   stats: 'Numbers', versus: 'Versus', flow: 'Story steps', timeline: 'Timeline', list: 'List', quote: 'Quote', takeaways: 'Takeaways',
 };

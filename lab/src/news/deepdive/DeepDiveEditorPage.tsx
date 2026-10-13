@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import NewsShell from '../shell/NewsShell';
+import NewsShell, { useShellMode } from '../shell/NewsShell';
 import { useAuth } from '../auth';
 import RunLog, { type LogEntry } from '../daily/RunLog';
 import {
@@ -54,6 +54,10 @@ function Editor() {
   const { user } = useAuth();
 
   const [dive, setDive] = useState<DeepDive | null>(null);
+  // a Tool Reaction (show_kind "reaction") is the Tool Reaction tab's, and goes back to its list
+  const isReaction = dive?.showKind === 'reaction';
+  useShellMode(isReaction ? 'tool-reaction' : null);
+  const listPath = isReaction ? '/news-gatherer/tool-reaction' : DEEP_DIVE_PATH;
   const [sections, setSections] = useState<Section[]>([]);
   const [demoJob, setDemoJob] = useState<DemoJobInfo | null>(null);
   const [choices, setChoices] = useState<MediaChoices | null>(null);
@@ -211,10 +215,10 @@ function Editor() {
     <div className="mx-auto max-w-6xl px-3 pb-16 pt-4 sm:px-5">
       {/* Big and obvious (Jake, 2026-10-06: the old text link was too small to find). */}
       <Button asChild variant="outline" className="mb-4 h-11 gap-2 rounded-lg border-primary/40 bg-primary/5 px-4 text-sm font-semibold hover:bg-primary/15">
-        <Link to={DEEP_DIVE_PATH}>
+        <Link to={listPath}>
           <ArrowLeft className="h-4 w-4" />
           <LayoutGrid className="h-4 w-4 text-primary" />
-          All deep dives
+          {isReaction ? 'All tool reactions' : 'All deep dives'}
         </Link>
       </Button>
 
@@ -250,7 +254,18 @@ function Editor() {
             </Button>
             <BubbleControl value={bubble} onChange={setBubble} />
           </div>
-          {isV2 && <DemoAgentSwitch dive={dive} job={demoJob} onRecord={async () => { try { await recordDeepDiveDemo(id); toast.success('The demo agent is recording — it shows up as a chapter when it finishes.'); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onAttach={async () => { try { const r = await attachDeepDiveDemo(id); if (r.attached) toast.success('The agent recording is in the show (chapter 2).'); else toast.error(`Not added: ${r.reason}`); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onChange={(patch) => { setDive({ ...dive, ...patch }); void updateDeepDive({ id, ...patch }).catch((e) => toast.error(String(e?.message ?? e))); }} />}
+          {isReaction && (
+            // Tool Reaction: the UX Scout test it is built on, and where OBS puts the camera on the hook slides
+            <div className="mt-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <p>
+                <b className="text-foreground">UX Scout test:</b>{' '}
+                {demoJob ? `${demoJob.status}${demoJob.status === 'done' && demoJob.finishedAt ? ` · ${new Date(demoJob.finishedAt).toLocaleString()}` : ''}${demoJob.error ? ` — ${demoJob.error}` : ''}` : 'not started — Prepare starts it'}
+                {' · '}tests <span className="text-foreground">{dive.demoUrl}</span> (sign in once under the Script Generator's UX Scout → Tool logins)
+              </p>
+              <p className="mt-1"><b className="text-foreground">OBS camera on the hook slides (1920×1080):</b> x 113, y 82, size 816 × 918, corner radius ≈ 40 px — the dark frame on the first two slides.</p>
+            </div>
+          )}
+          {isV2 && !isReaction && <DemoAgentSwitch dive={dive} job={demoJob} onRecord={async () => { try { await recordDeepDiveDemo(id); toast.success('The demo agent is recording — it shows up as a chapter when it finishes.'); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onAttach={async () => { try { const r = await attachDeepDiveDemo(id); if (r.attached) toast.success('The agent recording is in the show (chapter 2).'); else toast.error(`Not added: ${r.reason}`); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onChange={(patch) => { setDive({ ...dive, ...patch }); void updateDeepDive({ id, ...patch }).catch((e) => toast.error(String(e?.message ?? e))); }} />}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {sections.length > 0 && !busy && (

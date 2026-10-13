@@ -15,6 +15,7 @@ import { assetUrl, type ArticleData, type Chapter, type ClipItem, type DemoTab, 
 import { paperFor, type DeckTemplate } from '../templates';
 import { useFitText, sizedStyle, ghostStyle, liveStyle, type FitTarget } from '../fitText';
 import './show.css';
+import './reaction.css';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -149,6 +150,53 @@ function TitleChapter({ c, diveId, still, active, presenter }: { c: Chapter; div
           <ol className="dd2-agenda">
             {d.agenda.map((a, i) => <li key={i}><b>{String(i + 1).padStart(2, '0')}</b>{a}</li>)}
           </ol>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ── Tool Reaction hook slides ────────────────────────────────────────────── */
+
+const HAND = 'M3 9 C 60 3, 140 12, 220 6 S 300 9, 317 5';
+/** `*words*` → those words with the hand-drawn blue underline. */
+function RxUnderline({ text }: { text: string }) {
+  const parts = text.split(/\*([^*]+)\*/);
+  return <>{parts.map((p, i) => (i % 2 === 1
+    ? <span key={i} className="rx-u">{p}<svg viewBox="0 0 320 12" preserveAspectRatio="none" aria-hidden><path d={HAND} /></svg></span>
+    : <span key={i}>{p}</span>))}</>;
+}
+const RX_DOTS: Array<[number, number]> = [[53, 12], [71, 26], [91, 9], [96, 48], [58, 88], [79, 71], [88, 93], [51, 52]];
+
+/**
+ * The Tool Reaction's hook (Jake's reference image): the camera frame on the
+ * left is where OBS puts his camera; the words sit on the right. rx_hook = the
+ * tool; rx_coming = "coming up:" with one bullet per beat.
+ */
+function ReactionHook({ c, beat, still, onBeat }: { c: Chapter; beat: number; still: boolean; onBeat?: (b: number) => void }) {
+  const d = c.data || {};
+  const items = d.items ?? [];
+  const plain = c.heading.replace(/\*/g, '');
+  return (
+    <>
+      <div className="rx-paper">{RX_DOTS.map(([x, y], i) => <i key={i} style={{ left: `${x}%`, top: `${y}%` }} />)}</div>
+      <div className="rx-cam">{still && <span>Camera<br />(OBS)</span>}</div>
+      <div className="rx-side">
+        {c.kind === 'rx_hook' ? (
+          <>
+            <span className="rx-kicker"><b />Tool reaction{d.host ? ` · ${d.host}` : ''}</span>
+            <h1 className={`rx-h1 ${plain.length > 22 ? 'long' : ''}`}><RxUnderline text={c.heading} /></h1>
+            {d.lede && <p className="rx-lede">{d.lede}</p>}
+          </>
+        ) : (
+          <>
+            <h2 className="rx-coming">{plain || 'coming up:'}</h2>
+            <ul className="rx-items">
+              {items.map((t, k) => (
+                <li key={k} className={still || k <= beat ? 'on' : ''} onClick={() => onBeat?.(k)}><span><RxUnderline text={t} /></span></li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </>
@@ -429,6 +477,9 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
 
   if (c.kind === 'title') {
     return <section ref={ref} className={cls} data-rel={relAttr}><TitleChapter c={c} diveId={diveId} still={still} active={active} presenter={presenter} /></section>;
+  }
+  if (c.kind === 'rx_hook' || c.kind === 'rx_coming') {
+    return <section ref={ref} className={cls} data-rel={relAttr}><ReactionHook c={c} beat={beat} still={still} onBeat={onBeat} /></section>;
   }
 
   const head = (

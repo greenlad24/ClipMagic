@@ -43,6 +43,7 @@ import DeepDiveEditorPage from './news/deepdive/DeepDiveEditorPage';
 import DeepDiveStagePage from './news/deepdive/DeepDiveStagePage';
 import DeepDivePresenterPage from './news/deepdive/DeepDivePresenterPage';
 import UxReportPrint from './scout/UxReportPrint';
+import ToolReactionListPage from './news/reaction/ToolReactionListPage';
 
 // The Lab's floating Jobs panel, except on the AI News Stream pages — those
 // are full-screen presenter/teleprompter views with their own bottom bars.
@@ -118,6 +119,7 @@ export default function App() {
         <Route path="/news-gatherer/present/teleprompter" element={<NewsTeleprompterPage />} />
         <Route path="/news-gatherer/settings" element={<NewsSettingsPage />} />
         <Route path="/news-gatherer/deep-dive" element={<DeepDiveListPage />} />
+        <Route path="/news-gatherer/tool-reaction" element={<ToolReactionListPage />} />
         <Route path="/news-gatherer/deep-dive/:id" element={<DeepDiveEditorPage />} />
         <Route path="/news-gatherer/deep-dive/:id/present" element={<DeepDiveStagePage />} />
         <Route path="/news-gatherer/deep-dive/:id/presenter" element={<DeepDivePresenterPage />} />

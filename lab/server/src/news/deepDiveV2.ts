@@ -85,6 +85,7 @@ export function beatCountOf(kind: string, data: any): number {
       case "flow": return arr(data?.steps).length;
       case "timeline": return arr(data?.events).length;
       case "list": return arr(data?.items).length;
+      case "rx_coming": return arr(data?.items).length; // Tool Reaction's "coming up:" — one bullet per beat
       case "takeaways": return arr(data?.points).length;
       default: return 1;
     }

@@ -6,7 +6,7 @@
  * presentation pages (present/notes, display, audience, teleprompter) do NOT
  * use this shell and keep their own light palette via useNewsTheme.
  */
-import { useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { FlaskConical, LogOut, Settings } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,8 +19,20 @@ interface Props {
   title?: string;
 }
 
+/**
+ * A page inside the shell can claim a mode tab when its route belongs to another
+ * mode's prefix — a Tool Reaction opens in the Deep Dive editor
+ * (/news-gatherer/deep-dive/:id) but is the Tool Reaction tab's.
+ */
+const ShellModeContext = createContext<(id: string | null) => void>(() => undefined);
+export function useShellMode(id: string | null) {
+  const set = useContext(ShellModeContext);
+  useEffect(() => { set(id); return () => set(null); }, [id, set]);
+}
+
 export default function NewsShell({ children, title }: Props) {
   const { pathname } = useLocation();
+  const [claimed, setClaimed] = useState<string | null>(null);
   const { user, isLoading, loginWithRedirect, logout } = useAuth();
 
   useEffect(() => {
@@ -48,7 +60,7 @@ export default function NewsShell({ children, title }: Props) {
 
           <nav className="ml-3 flex items-center gap-1" aria-label="Modes">
             {NEWS_MODES.map((m) => {
-              const active = pathname.startsWith(m.path);
+              const active = claimed ? m.id === claimed : pathname.startsWith(m.path);
               const Icon = m.icon;
               return (
                 <Link
@@ -102,7 +114,7 @@ export default function NewsShell({ children, title }: Props) {
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full rounded-lg" />)}
         </div>
       ) : (
-        children
+        <ShellModeContext.Provider value={setClaimed}>{children}</ShellModeContext.Provider>
       )}
     </div>
   );

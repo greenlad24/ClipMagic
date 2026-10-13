@@ -12,6 +12,8 @@
  */
 
 export type ChapterKind =
+  /** Tool Reaction's hook slides (camera frame left, words right) — news/toolReaction.ts */
+  | 'rx_hook' | 'rx_coming'
   | 'title' | 'demo' | 'clip' | 'article' | 'reveal' | 'stats'
   | 'versus' | 'flow' | 'timeline' | 'list' | 'quote' | 'takeaways';
 
@@ -119,6 +121,14 @@ export interface ChapterData {
   role?: string;
   // takeaways
   points?: string[];
+  // Tool Reaction: rx_hook (the tool) / demo chapters built from the UX Scout
+  tool?: string;
+  host?: string;
+  /** demo chapter of a Tool Reaction: what Jake DOES live at each step (his notes, not on screen). */
+  todo?: string[];
+  /** …and what the feature means for the viewer. */
+  meaning?: string;
+  reaction?: boolean;
   /** Source credit line under the stage. */
   credit?: string;
 }
@@ -161,6 +171,7 @@ export function beatCount(c: Chapter | BeatUnit): number {
       case 'flow': return d.steps?.length ?? 0;
       case 'timeline': return d.events?.length ?? 0;
       case 'list': return d.items?.length ?? 0;
+      case 'rx_coming': return d.items?.length ?? 0;
       case 'takeaways': return d.points?.length ?? 0;
       default: return 1;
     }
