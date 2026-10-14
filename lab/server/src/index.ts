@@ -35,6 +35,7 @@ import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
 import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor/factory.js";
 import { aieditorUploadsRouter } from "./aieditor/uploads.js";
 import { sharePublicRouter, shareAdminRouter, startAutoShare } from "./aieditor/share.js";
+import { youtubeMcpRouter, mcpYoutubeToken } from "./mcp/youtube.js";
 import { packageZip, sendZip } from "./aieditor/handoffZip.js";
 import { aieditorMusicRouter } from "./aieditor/music.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
@@ -149,6 +150,11 @@ app.get("/news-gatherer/present/teleprompter", (req, res, next) => {
 app.use("/share", sharePublicRouter());
 // every finished Auto Editor job gets its no-sign-in links (aieditor/share.ts autoShareJob)
 startAutoShare();
+
+// ── The public YouTube MCP connector (for Jake's ChatGPT) — outside the gate ──
+// The secret path token is the key (mcp/youtube.ts); anything else under /mcp is a 404. Read-only YouTube tools.
+mcpYoutubeToken();
+app.use("/mcp/youtube", youtubeMcpRouter());
 
 app.use(requireSession);
 
