@@ -345,7 +345,10 @@ function dirSize(p: string): number {
 interface Tool { name: string; title: string; description: string; inputSchema: any; run: (a: any, token: string) => Promise<unknown> }
 const clamp = (v: unknown, lo: number, hi: number, d: number) => { const x = Number(v); return Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.round(x))) : d; };
 
-const TOOLS: Tool[] = [
+// Jake 2026-10-14: "all it needs to do is to take a series of youtube urls — get the thumbnails as files and serve them
+// back to ChatGPT". media_info / media_transcript are kept below, unlisted (OFFERED filters them out).
+const OFFERED = new Set(["media_thumbnails"]);
+const TOOLS_ALL: Tool[] = [
   {
     name: "media_info",
     title: "Video info",
@@ -405,6 +408,8 @@ const TOOLS: Tool[] = [
   },
 ];
 
+const TOOLS = TOOLS_ALL.filter((t) => OFFERED.has(t.name));
+
 /* ── JSON-RPC + routes ────────────────────────────────────────────────────── */
 
 async function handle(msg: any, token: string): Promise<any | null> {
@@ -418,8 +423,8 @@ async function handle(msg: any, token: string): Promise<any | null> {
       return reply({
         protocolVersion: typeof msg.params?.protocolVersion === "string" ? msg.params.protocolVersion : PROTOCOL,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "video-tools", title: "Video thumbnails & transcripts (yt-dlp)", version: "1.1.0" },
-        instructions: "Video tools for YouTube, TikTok, Instagram, Facebook, X, Vimeo and many more: media_thumbnails takes a JSON list of video links and returns every thumbnail as an image file (highest quality), media_transcript a clean plain-text transcript or SRT subtitles, media_info the details. Nothing is downloaded but the thumbnail.",
+        serverInfo: { name: "video-thumbnails", title: "Video thumbnails", version: "1.2.0" },
+        instructions: "Give media_thumbnails a JSON list of video links (YouTube, also TikTok, Instagram, Facebook, X, Vimeo…); it returns every video's thumbnail as an image file in the highest quality available.",
       });
     case "ping": return reply({});
     case "tools/list":

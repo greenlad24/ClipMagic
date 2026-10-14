@@ -10,6 +10,8 @@
  * clear, structured responses so the UI works and shows where Stage 2 wiring
  * (OpenAI + Kinovi + capture service) will plug in.
  */
+import { mcpYoutubeToken } from "../mcp/youtube.js";
+import { mcpMediaToken } from "../mcp/media.js";
 import { searchSponsorDeals as dealBriefSearch, startDealBrief as dealBriefStart, getDealBriefForUi as dealBriefGet, latestDealBrief } from "../scriptgen/dealBrief.js";
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -2175,6 +2177,20 @@ const testKinoviApi: Handler = async () => {
 // ── Postiz settings (write-only secrets for the social-poster container) ─────
 // The suite manages the Postiz container's config + per-platform OAuth keys.
 // WRITE-ONLY: no handler here ever returns a secret value — only configured-state.
+/**
+ * The Lab's public ChatGPT connectors and their full addresses (secret included) — shown ONLY to the
+ * signed-in operator on the Settings page (Jake 2026-10-14: "do it", after the token couldn't be read out in chat).
+ */
+const getMcpConnectors: Handler = async () => {
+  const base = (process.env.PUBLIC_BASE_URL || "https://lab.jakedaw.com").replace(/\/$/, "");
+  return {
+    connectors: [
+      { id: "youtube", name: "YouTube Data", url: `${base}/mcp/youtube/${mcpYoutubeToken()}`, tools: "Search YouTube, video details & stats, channel details, a channel's latest videos, comments" },
+      { id: "media", name: "Video thumbnails", url: `${base}/mcp/media/${mcpMediaToken()}`, tools: "Give it a JSON list of YouTube (or TikTok, Instagram…) links — it returns every thumbnail as an image file, highest quality" },
+    ],
+  };
+};
+
 const getPostizSettings: Handler = async () => {
   const { keys, envFileWritable } = getPostizSettingsStore();
   return { keys, envFileWritable, dockerSocketAvailable: dockerSocketAvailable() };
@@ -7582,6 +7598,7 @@ export const HANDLERS: Record<string, Handler> = {
   deleteMusicTrack,
   getServiceStatus,
   getPostizSettings,
+  getMcpConnectors,
   updatePostizSettings,
   restartPostiz,
   // Bulk Scheduler

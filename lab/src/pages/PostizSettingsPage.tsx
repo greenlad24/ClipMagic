@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
 import ScreencastLogins from '@/scout/ScreencastLogins';
+import McpConnectors from '@/components/McpConnectors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -207,6 +208,11 @@ export default function PostizSettingsPage() {
             ))}
           </div>
         )}
+
+        {/* The public ChatGPT connectors' addresses (Jake 2026-10-14) */}
+        <div className="mt-10">
+          <McpConnectors />
+        </div>
 
         {/* Kept at the bottom and collapsed on purpose (Jake 2026-10-08). */}
         <div className="mt-10">

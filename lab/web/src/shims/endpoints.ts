@@ -87,6 +87,8 @@ export const getProjects = endpoint("getProjects");
 export const getPromoVideos = endpoint("getPromoVideos");
 export const getServiceStatus = endpoint("getServiceStatus");
 export const getPostizSettings = endpoint("getPostizSettings");
+/** The public ChatGPT connectors' full addresses (signed-in operator only). */
+export const getMcpConnectors = endpoint<{}, { connectors: Array<{ id: string; name: string; url: string; tools: string }> }>("getMcpConnectors");
 export const updatePostizSettings = endpoint("updatePostizSettings");
 export const restartPostiz = endpoint("restartPostiz");
 // Bulk Scheduler (Postiz public API)
