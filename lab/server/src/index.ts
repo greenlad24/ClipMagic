@@ -36,6 +36,7 @@ import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor
 import { aieditorUploadsRouter } from "./aieditor/uploads.js";
 import { sharePublicRouter, shareAdminRouter, startAutoShare } from "./aieditor/share.js";
 import { youtubeMcpRouter, mcpYoutubeToken } from "./mcp/youtube.js";
+import { mediaMcpRouter, mcpMediaToken } from "./mcp/media.js";
 import { packageZip, sendZip } from "./aieditor/handoffZip.js";
 import { aieditorMusicRouter } from "./aieditor/music.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
@@ -155,6 +156,9 @@ startAutoShare();
 // The secret path token is the key (mcp/youtube.ts); anything else under /mcp is a 404. Read-only YouTube tools.
 mcpYoutubeToken();
 app.use("/mcp/youtube", youtubeMcpRouter());
+// …and the yt-dlp one (mcp/media.ts): info, transcripts, video/audio downloads as 24-hour links. Same secret-path rule.
+mcpMediaToken();
+app.use("/mcp/media", mediaMcpRouter());
 
 app.use(requireSession);
 
