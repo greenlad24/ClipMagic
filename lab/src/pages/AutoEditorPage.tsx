@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Trash2,
   Ban,
+  Sparkles,
   RotateCcw,
   Undo2,
   Save,
@@ -337,7 +338,10 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const renderVideo = async () => {
     try {
       await autoEditorRenderVideo({ id: job.id });
-      toast.success('Rendering the video preview of the current cut (~35 min for a long-form).');
+      // Jake 2026-10-14: "if I render it in 1080p I want to render it in 4k also" — the worker goes on to the 4K final
+      toast.success(job.request.handoff
+        ? 'Rendering the video preview of the current cut (~35 min for a long-form).'
+        : 'Rendering the 1080p video, then the 4K final of the same cut — a long video takes a few hours; you can leave this page.');
       onSaved();
     } catch (err) {
       toast.error(errText(err));
@@ -354,7 +358,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   const buildEdit = async () => {
     try {
       await autoEditorBuildEdit({ id: job.id, sites: sitesText });
-      toast.success('Building the full edit: screencasts, graphics, music. Recording runs frame by frame — allow a while.');
+      toast.success('Generating the graphics: screencasts, graphics, facecam. Recording runs frame by frame — allow a while.');
       onSaved();
     } catch (err) {
       toast.error(errText(err));
@@ -417,7 +421,14 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   </Button>
                 ) : (
                   <Button size="sm" variant="ghost" className="gap-1.5" disabled={running} onClick={() => void renderVideo()}>
-                    <Film className="h-3.5 w-3.5" /> Render video
+                    <Film className="h-3.5 w-3.5" /> {job.request.handoff ? 'Render video' : 'Render video (1080p + 4K)'}
+                  </Button>
+                )}
+                {/* Jake 2026-10-14: graphics are their own step — Render video never makes them */}
+                {job.request.format === 'long' && !job.request.handoff && !!job.edlAt && (
+                  <Button size="sm" variant="ghost" className="gap-1.5" disabled={running} onClick={() => void buildEdit()}
+                    title="Claude places screencasts + graphics, timed to your words (uses the job's API budget). Render video then renders them too.">
+                    <Sparkles className="h-3.5 w-3.5" /> {edit ? 'Regenerate graphics' : 'Generate graphics'}
                   </Button>
                 )}
                 {canFinal && (
@@ -523,10 +534,10 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   placeholder={'Websites to show, one per line — e.g. linearity.io — the tool this video is about'} />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button size="sm" variant="secondary" className="gap-1.5" disabled={running} onClick={() => void buildEdit()}>
-                    <Film className="h-3.5 w-3.5" /> {edit ? 'Rebuild the edit' : 'Build the edit'}
+                    <Film className="h-3.5 w-3.5" /> {edit ? 'Regenerate graphics' : 'Generate graphics'}
                   </Button>
                   <p className="text-[10.5px] leading-snug text-muted-foreground">
-                    Claude places screencasts + graphics and records the sites timed to your words. Render final (4K) then renders this edit.
+                    Claude places screencasts + graphics and records the sites timed to your words — only when you press this. Render video then renders this edit in 1080p and 4K.
                   </p>
                 </div>
               </div>

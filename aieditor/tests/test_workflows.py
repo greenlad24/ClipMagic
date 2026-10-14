@@ -364,8 +364,12 @@ def main():
         finally:
             events.set_sink(None)
         st = job.st["stages"]
-        for s in ("takes", "cut", "listen", "preview", "graphics", "compose"):
+        for s in ("takes", "cut", "listen", "preview"):
             check(st[s]["state"] == "done", f"cut path: {s} {st[s]}")
+        # Jake 2026-10-14: on the cut workflow the graphics only come from "Generate graphics" (action "edit")
+        for s in ("graphics", "compose"):
+            check(st[s]["state"] == "skipped" and "Generate graphics" in (st[s].get("note") or ""),
+                  f"cut path: Run never starts the {s} ({st[s]})")
         check(st["takes"]["cost_usd"] == 0.5, f"takes cost {st['takes']}")
         check("listen-01" in rendered, "sound check rendered")
         e = json.loads((d / "edl.json").read_text())

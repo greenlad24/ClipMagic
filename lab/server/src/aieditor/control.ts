@@ -640,7 +640,9 @@ export async function createJob(input: CreateInput) {
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
   const runOn = parseRunOn(input.runOn);
   const handoff = parseHandoff(input);
-  const music = input.format === "long" ? parseMusic(input.music) : null;
+  // Jake 2026-10-14: "by default there shouldn't be any background music attached" — a new long-form job with no
+  // choice gets "none" (Auto / a track only when picked). Existing jobs keep what they were made with.
+  const music = input.format === "long" ? (parseMusic(input.music) ?? { track: "none", gain_lu: 0 }) : null;
   const script = String(input.script ?? "");
   if (script.length > MAX_SCRIPT) throw new Error("The script is too long.");
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "");

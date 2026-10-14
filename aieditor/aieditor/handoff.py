@@ -54,6 +54,52 @@ PRORES_4444 = "-c:v prores_ks -profile:v 4 -alpha_bits 8 -vendor apl0 -pix_fmt y
 # the facecam bubble is camera footage: a fixed quantiser instead of the profile's bit budget — measured on Jake's
 # 4K job: 233 MB → 57 MB per 10 s at 53 dB PSNR against the default (visually lossless), the biggest single saving
 BUBBLE_PRORES = "-c:v prores_ks -profile:v 4 -qscale:v 11 -alpha_bits 8 -vendor apl0 -pix_fmt yuva444p10le"
+
+# ⚠️ ProRes 4444 TRANSPARENCY NEEDS ffmpeg ≥ 7 (Jake 2026-10-14, the editor's Premiere timeline: black bars beside
+# "Link in the description", behind SUBSCRIBE, around the bubble). The images' ffmpeg is 5.1.9; prores_ks before
+# 7.0 writes an alpha plane Apple's and Adobe's decoders misread (FCPCafe #359: decode errors, opaque/blocky alpha)
+# while ffmpeg reads it back fine — so it never showed here. Every encode that carries alpha runs a static ffmpeg
+# 8.1 (BtbN build), fetched once per machine into WORK/bin and mounted at /xff.
+ALPHA_FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz"
+AFF = "/xff/ffmpeg-alpha"
+
+
+def alpha_ffmpeg():
+    """Host path of the ffmpeg ≥ 7 used for ProRes 4444 with alpha (downloaded on first use; version checked)."""
+    import fcntl
+    import lzma
+    import subprocess
+    import tarfile
+    import urllib.request
+    p = Path(os.environ.get("AIEDITOR_FFMPEG_ALPHA") or (config.WORK / "bin" / "ffmpeg-alpha"))
+
+    def ok(x):
+        try:
+            v = subprocess.run([str(x), "-version"], capture_output=True, text=True, timeout=30).stdout
+            m = re.search(r"ffmpeg version n?(\d+)\.", v)
+            return bool(m) and int(m.group(1)) >= 7
+        except (OSError, subprocess.SubprocessError):
+            return False
+    if p.exists() and ok(p):
+        return p
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p.parent / ".ffmpeg-alpha.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        if p.exists() and ok(p):
+            return p
+        tmp = p.parent / "ffmpeg-alpha.download"
+        with urllib.request.urlopen(ALPHA_FFMPEG_URL, timeout=300) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f)
+        with lzma.open(tmp) as xz, tarfile.open(fileobj=xz) as tf:
+            m = next(m for m in tf.getmembers() if m.name.endswith("/bin/ffmpeg") and m.isfile())
+            with tf.extractfile(m) as src, open(f"{p}.part", "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        os.chmod(f"{p}.part", 0o755)
+        os.replace(f"{p}.part", p)
+        tmp.unlink(missing_ok=True)
+        if not ok(p):
+            raise RuntimeError("the downloaded ffmpeg for ProRes transparency is not ≥ 7")
+    return p
 CROP_MAX_AREA = 0.6         # an overlay whose content box covers more than this of the frame stays full frame
 FONT = ("F=$(ls /usr/share/fonts/opentype/inter/Inter-SemiBold.otf /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf "
         "2>/dev/null | head -1)")
@@ -1133,6 +1179,7 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
     sx = int(min(max(0, fx + fw / 2 - sq / 2), W - sq)) // 2 * 2
     sy = int(min(max(0, fy + fh * 0.62 - sq / 2), H - sq)) // 2 * 2
     f4 = compose_long._f(compose_long.AROLL_BUBBLE_F)
+    xff = (str(alpha_ffmpeg().parent), "/xff")         # the ffmpeg ≥ 7 every alpha encode below runs (see AFF)
     for i, g in enumerate(gfx, 1):
         if cancelled():
             raise InterruptedError()
@@ -1149,8 +1196,8 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                 x0, y0, cw, ch = g["box"]
                 crop = f",crop={cw}:{ch}:{x0}:{y0}"
                 g["clips"][0].update(x=x0, y=y0, width=cw, height=ch)
-            _run(f"ffmpeg -v error -y -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
-                 f"-frames:v {g['frames']} -vf format=rgba{crop} {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p")], cancelled)
+            _run(f"{AFF} -v error -y -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
+                 f"-frames:v {g['frames']} -vf format=rgba{crop} {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p"), xff], cancelled)
             if g["group"] == "screen":
                 g["clips"][0]["enabled"] = False             # OPTIONAL: the editor switches it on, or records the slot
         elif g["kind"] == "gradient":
@@ -1158,9 +1205,9 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
             a, b = g["span"]
             dd = b - a
             fo = min(compose_long._f(G["out_f"]), dd / 3)
-            _run(f"ffmpeg -v error -y -loop 1 -framerate {fps:.8f} -i /w/{gname} -frames:v {g['frames']} "
+            _run(f"{AFF} -v error -y -loop 1 -framerate {fps:.8f} -i /w/{gname} -frames:v {g['frames']} "
                  f"-vf \"format=rgba,fade=t=in:st=0:d={min(compose_long._f(G['in_f']), dd / 2):.4f}:alpha=1,"
-                 f"fade=t=out:st={dd - fo:.4f}:d={fo:.4f}:alpha=1\" {PRORES_4444} {out}", [(w, "/w"), (tmp_pkg, "/p")], cancelled)
+                 f"fade=t=out:st={dd - fo:.4f}:d={fo:.4f}:alpha=1\" {PRORES_4444} {out}", [(w, "/w"), (tmp_pkg, "/p"), xff], cancelled)
         elif g["kind"] == "bubble":
             # each slot's piece (its own fades, exactly as compose shows it) cropped to the bubble's box, then the
             # pieces joined into ONE file (stream copy); the timeline places every piece at its slot with its in-point
@@ -1180,9 +1227,9 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                       f"[2:v]format=rgba[ring];[fd][ring]overlay=shortest=1:format=auto,format=rgba{fz}[v]")
                 (work / f"bubble-{s['n']:02d}.txt").write_text(fc)
                 part = f"bubble-{s['n']:02d}.mov"
-                _run(f"ffmpeg -v error -y -ss {s['a']:.6f} -t {Ls + 0.5:.6f} -i /j/{cut}.mp4 -loop 1 -i /fc/mask.png -loop 1 -i /fc/ring.png "
+                _run(f"{AFF} -v error -y -ss {s['a']:.6f} -t {Ls + 0.5:.6f} -i /j/{cut}.mp4 -loop 1 -i /fc/mask.png -loop 1 -i /fc/ring.png "
                      f"-filter_complex_script /w/handoff-work/bubble-{s['n']:02d}.txt -map [v] -frames:v {pc['frames']} "
-                     f"{BUBBLE_PRORES} /w/handoff-work/{part}", [(d, "/j"), (w, "/w"), (fdir, "/fc")], cancelled)
+                     f"{BUBBLE_PRORES} /w/handoff-work/{part}", [(d, "/j"), (w, "/w"), (fdir, "/fc"), xff], cancelled)
                 listing.append(f"file '{part}'")
             (work / "bubble.txt").write_text("\n".join(listing) + "\n")
             _run(f"cd /w/handoff-work && ffmpeg -v error -y -f concat -safe 0 -i bubble.txt -c copy {out} && rm -f bubble-*.mov",
@@ -1190,8 +1237,8 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
             g["clips"] = [{"start": pc["start"], "frames": pc["frames"], "in": pc["in"], "x": bx, "y": by, "width": side,
                            "height": side, "slot": pc["slot"]["n"]} for pc in g["pieces"]]
         else:
-            _run(f"ffmpeg -v error -y -f lavfi -i color=c=black:s={W}x{H}:r={fps:.8f}:d={L + 0.5:.4f} -frames:v {g['frames']} "
-                 f"-vf \"format=rgba,fade=t=in:st=0:d={fd:.4f}:alpha=1\" {PRORES_4444} {out}", [(tmp_pkg, "/p")], cancelled)
+            _run(f"{AFF} -v error -y -f lavfi -i color=c=black:s={W}x{H}:r={fps:.8f}:d={L + 0.5:.4f} -frames:v {g['frames']} "
+                 f"-vf \"format=rgba,fade=t=in:st=0:d={fd:.4f}:alpha=1\" {PRORES_4444} {out}", [(tmp_pkg, "/p"), xff], cancelled)
     bubble_box = {"x": bx, "y": by, "w": side, "h": side}
 
     # 5 the sound, as stems from 0 (voice / music bed / SFX), the sequence's length each

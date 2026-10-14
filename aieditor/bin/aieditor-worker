@@ -754,7 +754,11 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
 
     # 8c long-form: the FULL EDIT — screencasts (planned, recorded, camera-zoomed), facecam
     # bubble, overlays, A-roll camera, music bed (reference 2, kwysV2smgfY) → edit-NN.mp4
-    if fmt == "long" and action in ("run", "render", "edit") and not req.get("no_edit"):
+    # Jake 2026-10-14 ("I didn't ask it to do the graphics … I want a separate button for generating the graphics"):
+    # on his cut workflow the graphics + full-edit compose run ONLY from "Generate graphics" (action "edit") — "Run"
+    # and "Render video" never start them. The creative workflow (one submission = a finished edit) keeps them.
+    edit_actions = ("run", "render", "edit") if workflow_of(req) == "creative" else ("edit",)
+    if fmt == "long" and action in edit_actions and not req.get("no_edit"):
         e = jload(d / "edl.json")
         sites = req.get("sites") or []
         gate = jload(d / "preprod" / "gate.json")
@@ -826,8 +830,8 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
             return f"{len(e['videos'])} edited video(s)"
         step("compose", do_compose_factory if factory else do_compose_long, rerun=True)
     elif fmt == "long":
-        job.stage("graphics", "skipped", "press Build the edit (screencasts + graphics)")
-        job.stage("compose", "skipped", "press Build the edit (screencasts + graphics)")
+        job.stage("graphics", "skipped", "press Generate graphics (screencasts + graphics)")
+        job.stage("compose", "skipped", "press Generate graphics (screencasts + graphics)")
 
     # 8b shorts: the preview + graphics + captions + SFX → edit-NN.mp4
     if fmt == "short":
@@ -1163,8 +1167,23 @@ def execute(job, action):
         if held:
             finish_held(job, held)
             return
+        done_msg = "Ready to review"
+        # Jake 2026-10-14: "if I render it in 1080p I want to render it in 4k also" — "Render video" (the 1080p
+        # render) goes straight on to the 4K final of the same cut, on the same machine. A hand-off job's package is
+        # its deliverable (no final); factory mode already ends in its own 4K final. A 4K failure keeps the 1080p.
+        if action == "render" and not handoff.wanted(job.req) and not longedit.factory_mode(job.req):
+            job.log("the 1080p render is done — rendering the 4K final as well")
+            try:
+                run_final(job, job.req.get("format"))
+                done_msg = "Ready to review — 1080p and 4K"
+            except Cancelled:
+                raise
+            except Exception as exc:                    # noqa: BLE001 — the 1080p render stands either way
+                job.log(f"warning: the 4K final failed: {exc}")
+                job.stage("final", "failed", str(exc)[:300])
+                done_msg = f"Ready to review (1080p) — the 4K final failed: {str(exc)[:160]}"
         gates.write_held(job.d, [])                    # a run that ships clears an earlier hold's list
-        job.save(state="done", held=False, held_failures=None, message="Ready to review", progress=1,
+        job.save(state="done", held=False, held_failures=None, message=done_msg, progress=1,
                  finished_at=now())
         events.emit("stage", "job finished — ready to review", stage="job")
     except liveupdate.Restart:

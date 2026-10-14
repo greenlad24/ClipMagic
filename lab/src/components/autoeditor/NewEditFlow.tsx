@@ -299,10 +299,11 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     return v === 'factory' || v === 'box' ? v : 'auto';
   });
   const [more, setMore] = useState(false);
-  // long-form background music (MusicPicker): Auto at the default level unless changed here
-  const [music, setMusic] = useState<MusicChoice>({ track: null, gain_lu: 0 });
+  // long-form background music (MusicPicker): NO music unless picked here (Jake 2026-10-14: "by default there
+  // shouldn't be any background music attached")
+  const [music, setMusic] = useState<MusicChoice>({ track: 'none', gain_lu: 0 });
   const musicLib = useMusicLibrary();
-  const musicSet = music.track !== null || music.gain_lu !== 0;
+  const musicSet = music.track !== 'none' || music.gain_lu !== 0;
   const [busy, setBusy] = useState(false);
   const [hintOpen, setHintOpen] = useState(false);
   const [factory, setFactory] = useState<FactoryState | null>(null);
@@ -451,7 +452,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
         sites: format === 'long' ? sites : undefined,
         runOn,
         handoff: handoff && creative ? true : undefined,
-        music: format === 'long' && musicSet ? music : undefined,
+        music: format === 'long' ? music : undefined,
       });
       lsSet(LS.format, format);
       lsSet(LS.runOn, runOn);

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Re-encode an existing hand-off package's transparent graphics with ffmpeg ≥ 7 (Jake 2026-10-14: black bars on
+the graphics in the editor's Premiere timeline — see aieditor/handoff.py AFF). The old files decode fine in ffmpeg,
+so this is a straight transcode: same codec settings, same frames, same timing; nothing is re-rendered.
+
+    aieditor-handoff-fixalpha <job-id> [--dry-run]
+
+Every handoff-NN/graphics/*.mov is rewritten in place (via a .part file); the Lab's zip index re-reads a file whose
+size or mtime changed, so the next download carries the fixed files. Originals are kept in handoff-NN.alpha-orig/.
+"""
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from aieditor import config, handoff  # noqa: E402
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    dry = "--dry-run" in sys.argv
+    if not args:
+        print(__doc__)
+        return 2
+    job = config.JOBS / args[0]
+    pkgs = sorted(p for p in job.glob("handoff-[0-9][0-9]") if p.is_dir())
+    if not pkgs:
+        print(f"no hand-off package in {job}")
+        return 1
+    ff = handoff.alpha_ffmpeg()
+    print(f"ffmpeg for alpha: {subprocess.run([str(ff), '-version'], capture_output=True, text=True).stdout.splitlines()[0]}")
+    for pkg in pkgs:
+        files = sorted((pkg / "graphics").glob("*.mov"))
+        keep = job / f"{pkg.name}.alpha-orig"
+        print(f"{pkg.name}: {len(files)} graphic(s)")
+        for f in files:
+            settings = handoff.BUBBLE_PRORES if "facecam-bubble" in f.name else handoff.PRORES_4444
+            t0 = time.time()
+            if dry:
+                print(f"  would re-encode {f.name}")
+                continue
+            keep.mkdir(exist_ok=True)
+            if not (keep / f.name).exists():
+                shutil.copy2(f, keep / f.name)
+            cmd = ["docker", "run", "--rm", "--cpuset-cpus", config.CPUSET, "-v", f"{keep}:/in", "-v", f"{f.parent}:/out",
+                   "-v", f"{ff.parent}:/xff", handoff.compose_long.SC_IMAGE, "sh", "-c",
+                   f"{handoff.AFF} -v error -y -i '/in/{f.name}' -map 0 {settings} -c:a copy -f mov '/out/{f.name}.part' "
+                   f"&& mv '/out/{f.name}.part' '/out/{f.name}'"]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"  FAILED {f.name}: {r.stderr[-400:]}")
+                return 1
+            print(f"  {f.name}: {f.stat().st_size / 1e6:.1f} MB, {time.time() - t0:.0f}s")
+    print("done — download the package again; the zip picks up the new files")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
