@@ -909,7 +909,7 @@ def run_remote(job_dir, action, log, cancelled):
                                                                   or part == "onboard" for part in f.relative_to(job_dir).parts))
             except OSError:
                 up_total = 0
-            up_where = s.get("region", "the factory server")
+            up_where = {"lon1": "London", "sgp1": "Singapore", "blr1": "Bangalore", "fra1": "Frankfurt", "ams3": "Amsterdam", "nyc3": "New York", "sfo3": "San Francisco", "tor1": "Toronto", "syd1": "Sydney"}.get(region, region or "the factory server")
 
             def show_up(pct, done_b):
                 try:
@@ -1009,7 +1009,7 @@ def run_remote(job_dir, action, log, cancelled):
                                 timeout=120, check=False).strip() or 0)
             except (ValueError, subprocess.TimeoutExpired):
                 total = 0
-            where = s.get("region", "the factory server")
+            where = {"lon1": "London", "sgp1": "Singapore", "blr1": "Bangalore", "fra1": "Frankfurt", "ams3": "Amsterdam", "nyc3": "New York", "sfo3": "San Francisco", "tor1": "Toronto", "syd1": "Sydney"}.get(region, region or "the factory server")   # the server's REAL region (a lon1 run said "sgp1")
 
             def show(pct, done_b):
                 st = dict(final) if final else {}
