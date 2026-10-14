@@ -696,6 +696,9 @@ export interface HeldFailure {
   dim: string; beat: string | null; t: number | null; why: string; remedies_tried: string[]; edit?: number;
 }
 export function isHeld(st: any): boolean {
+  // a RUNNING job is never "held" — an earlier run's flag must not hide its live progress (Jake 2026-10-14: "I can't
+  // see the progress in the UI" while Generate graphics was rendering)
+  if (st?.state === "running") return false;
   return st?.state === "held" || st?.held === true;
 }
 /** Pure: held.json + status.json + the edits' verdicts -> the failure list the Lab shows. */

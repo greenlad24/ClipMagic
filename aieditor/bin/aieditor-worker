@@ -1081,7 +1081,12 @@ def start(job, action):
     if action in ("rebuild", "recut"):
         for f in ("edl.json",):
             (job.d / f).unlink(missing_ok=True)
-    job.save(state="running", message="Starting…", progress=0, error=None, action=action,
+    if action == "edit" and workflow_of(job.req) != "creative" and not handoff.wanted(job.req):
+        # "Generate graphics" on a cut job (run_edit_part → run_handoff) clears an earlier screencast plan's list —
+        # HERE too, on the box: a factory run clears only its own copy, and the Lab reads this one (2026-10-14)
+        longedit.clear_held(job.d)
+    # a new run is not held: an earlier run's flag hid this one's progress in the Lab (Jake 2026-10-14)
+    job.save(state="running", message="Starting…", progress=0, error=None, action=action, held=False,
              started_at=now())
 
 
