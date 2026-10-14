@@ -1358,6 +1358,11 @@ def overlays_fit(overlays, video, segments=()):
     if dur < LONG_STRUCTURE_S:
         return {"overlays": evs, "dropped": [], "budget": {}, "ok": True}
     o0 = _outro_t0(video)
+    # motion templates placed anywhere (Jake 2026-10-14) keep their OWN budget (motiontemplates.check: max_per_video):
+    # out of the overlay zones/totals here, back in the list at the end
+    from . import motiontemplates as _MT
+    motion = [e for e in evs if _MT.anywhere() and _MT.is_motion(e.get("template"))]
+    evs = [e for e in evs if e not in motion]
     _outro_set(evs, video, segments, dropped)
     zone = lambda e: "first" if e["t0"] < OV_FIRST_S else "outro" if e["t0"] >= o0 else "mid"
     prio = lambda e: (OV_PRIORITY.get(overlay_kind(e), 0), -e["t0"])
@@ -1379,11 +1384,12 @@ def overlays_fit(overlays, video, segments=()):
             drop(min([e for e in evs if zone(e) == z], key=prio), f"over the {z} budget ({hi})")
     while len(evs) > OV_TOTAL[1]:
         drop(min(evs, key=lambda e: (zone(e) != "mid", ) + prio(e)), f"over the total budget ({OV_TOTAL[1]})")
-    evs.sort(key=lambda e: e["t0"])
     n = {z: sum(zone(e) == z for e in evs) for z in ("first", "mid", "outro")}
-    budget = {"total": len(evs), **n, "mid_per_min": round(n["mid"] / mid_min, 3) if mid_min else 0.0,
+    total_overlays = len(evs)
+    evs = sorted(evs + motion, key=lambda e: e["t0"])
+    budget = {"total": total_overlays, "motion": len(motion), **n, "mid_per_min": round(n["mid"] / mid_min, 3) if mid_min else 0.0,
               "bands": {"total": OV_TOTAL, "first_80s": OV_FIRST, "mid_max_per_min": OV_MID_PER_MIN, "outro": OV_OUTRO},
               "src": "REFERENCE-BASELINE §5 + rubric D10"}
-    ok = (OV_TOTAL[0] <= len(evs) <= OV_TOTAL[1] and OV_FIRST[0] <= n["first"] <= OV_FIRST[1]
+    ok = (OV_TOTAL[0] <= total_overlays <= OV_TOTAL[1] and OV_FIRST[0] <= n["first"] <= OV_FIRST[1]
           and budget["mid_per_min"] <= OV_MID_PER_MIN + 1e-9 and OV_OUTRO[0] <= n["outro"] <= OV_OUTRO[1])
     return {"overlays": evs, "dropped": dropped, "budget": budget, "ok": ok}

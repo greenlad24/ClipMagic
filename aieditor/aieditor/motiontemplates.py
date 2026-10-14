@@ -89,6 +89,13 @@ def hook_s():
     return float(rules().get("hook_s", 40.0))
 
 
+def anywhere():
+    """Jake 2026-10-14: "add them if they are relevant in a video" (+ "I'm ok with 2 per video") — the overlay
+    templates may sit anywhere a line fits, not only in the hook; max_per_video still holds. prompt_result (MO05)
+    stays the hook construct (hook_s)."""
+    return bool(rules().get("anywhere", False))
+
+
 # ─────────────────────────────── parameters (limits from rules.json) ───────────────────────────────
 
 def _words(s):
@@ -367,7 +374,7 @@ def check(evs, video, segments=(), plates=(), kits=None, facts=None, log=None):
         d = (ev.get("t1") or 0) - (ev.get("t0") or 0)
         if perrs:
             why = "; ".join(perrs)
-        elif ev["t0"] >= hook or ev["t1"] > hook + 0.5:
+        elif not anywhere() and (ev["t0"] >= hook or ev["t1"] > hook + 0.5):
             why = (f"{tid} at {ev['t0']:.1f}-{ev['t1']:.1f} s is outside the hook (first {hook:.0f} s): in the body a prompt "
                    "moment stays a screencast (Jake 2026-10-09: 'in the hook part')")
         elif d < lo - 1e-6 or d > hi + 1e-6:
@@ -378,7 +385,7 @@ def check(evs, video, segments=(), plates=(), kits=None, facts=None, log=None):
             why = f"over the motion-template budget ({R.get('max_per_video', 2)} per video)"
         elif kept and ev["t0"] < kept[-1]["t1"] + float(R.get("min_apart_s", 4.0)):
             why = f"within {R.get('min_apart_s', 4.0)} s of the previous motion template"
-        elif cap and used + d > cap + 0.25:
+        elif cap and not anywhere() and used + d > cap + 0.25:      # anywhere: their own budget (max_per_video)
             why = (f"plates + motion templates would be {used + d:.1f} s > {cap:.1f} s (structure.plates_max_frac of the "
                    "runtime; REFERENCE-BASELINE §1a)")
         if why is None and tid in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "long_prompt_scroll", "prompt_result"):

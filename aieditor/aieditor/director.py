@@ -44,8 +44,8 @@ OVERLAYS = """OVERLAY TEMPLATES (on the A-roll only — never while a screencast
 - number: a figure the speaker SAYS. fields: label, value, prefix, suffix.
 - question: (a lower_title line, TX03) the viewer question of the outro ("What are you editing first?"), the
   whole question. fields: line1."""
-OVERLAYS_MOTION = """MOTION TEMPLATES (Jake 2026-10-09; full-frame hook graphics — HOOK ONLY, the whole clip inside the first 40 s, at most 2
-per video, >= 4 s apart; each counts as a 'first'-zone overlay AND as a plate; their usage instructions follow):
+OVERLAYS_MOTION = """MOTION TEMPLATES (Jake 2026-10-09; full-frame graphics — {where}, at most {maxn} per video, >= 4 s apart; their usage
+instructions follow):
 - verb_swap (MO01): "<prefix> <verb> <suffix>" with the verb rolling through 2-4 verbs he SAYS ("it can search, read
   and analyze X"). fields: prefix, verbs, suffix; beats verb_0.. on each spoken verb.
 - tagline_build (MO02): a 2-8 word tagline he SAYS ("Every agent. One inbox."), words building on his words.
@@ -1591,7 +1591,7 @@ def overlay_prompt(video, segments, sponsored=False, apps=()):
     words = " ".join(f'{w["i"]}:{w["word"]}@{w["start"]:.1f}' for w in video["words"])
     screens = "; ".join(f"{s['t0']:.1f}-{s['t1']:.1f}" for s in segments) or "(none)"
     return f"""{OVERLAYS}
-{OVERLAYS_MOTION if on else ""}
+{OVERLAYS_MOTION.format(where=_motion_where(mt), maxn=mt.get("max_per_video", 2)) if on else ""}
 BUDGET (Jake's references, BASELINE §5): {ov.get('total')} overlays in the whole video; {ov.get('first_80s')} in the first
 80 s; mid-video ONLY link / like / question lines at <= {ov.get('mid_max_per_min')} per minute (no keyword / list cards
 mid-video); the outro (last 60 s) gets {ov.get('outro')}: the viewer question as a "question" line (TX03), the
@@ -1606,13 +1606,22 @@ TRANSCRIPT (id:word@seconds) — "{video.get('title', '')}", {video['duration']:
 {words}"""
 
 
-MOTION_RULES = """Motion templates: only inside the first {hook} s, at most {maxn}, >= {apart} s
+MOTION_RULES = """Motion templates: {where}, at most {maxn}, >= {apart} s
 apart, never over a screencast; durations {durs};
 beats = [{{"name", "word"}}] (word ids) for the beats the instructions name. The job's apps: {apps}."""
 
 
+def _motion_where(mt):
+    if mt.get("anywhere"):
+        return ("ANYWHERE in the video where a line truly fits (hook or body — Jake 2026-10-14: 'add them if they are "
+                "relevant'); use them when relevant, never as filler; they have their own budget (not the overlay "
+                "budget below)")
+    return f"HOOK ONLY — the whole clip inside the first {mt.get('hook_s', 40):.0f} s; each counts as a 'first'-zone overlay AND as a plate"
+
+
 def _motion_fmt(mt, apps):
     return {"hook": mt.get("hook_s", 40), "maxn": mt.get("max_per_video", 2), "apart": mt.get("min_apart_s", 4),
+            "where": _motion_where(mt),
             "durs": ", ".join(f"{k} {v['duration_s'][0]}-{v['duration_s'][1]} s" for k, v in (mt.get("ids") or {}).items()
                               if k != "prompt_result" and motiontemplates.is_on(k)),
             "apps": ", ".join(apps) or "(none)"}

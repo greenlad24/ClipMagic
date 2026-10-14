@@ -55,8 +55,19 @@ check(planfit.hook_prompt_result(_U, _off_v, planfit.Facts({}, {"assets": [{"id"
 _val = director.validate({"segments": [], "aroll_why": [], "plates": [], "overlays": [
     {"template": "verb_swap", "start": 0, "end": 8, "fields": {"prefix": "Grok Bot can now", "verbs": ["a", "b"]}}]},
     _off_v, [{"url": "https://example.com"}])
+if MT.anywhere():
+    # Jake 2026-10-14 ("add them if they are relevant" + "ok with 2 per video"): their own budget — the plate cap
+    # (1.5 % of this ~20 s test = 0.3 s) no longer drops a relevant one
+    check(any(e.get("template") == "verb_swap" for e in _val["overlays"]),
+          "anywhere: a relevant verb_swap is kept (own budget, not the plate cap)")
+    _anywhere_was = MT.rules
+    MT.rules = lambda: {**_anywhere_was(), "anywhere": False}
+    _val = director.validate({"segments": [], "aroll_why": [], "plates": [], "overlays": [
+        {"template": "verb_swap", "start": 0, "end": 8, "fields": {"prefix": "Grok Bot can now", "verbs": ["a", "b"]}}]},
+        _off_v, [{"url": "https://example.com"}])
+    MT.rules = _anywhere_was
 check(not any(e.get("template") == "verb_swap" for e in _val["overlays"]) and "motion_s" not in _val["structure"],
-      "off: validate() keeps no motion overlay and the structure gate is unchanged")
+      "hook-only mode: validate() keeps no motion overlay past the plate cap and the structure gate is unchanged")
 
 # everything below tests the templates as they will behave once switched ON
 MT.approved = lambda: set(MT.IDS)              # the rest of this file tests every template as if all were approved
@@ -242,7 +253,14 @@ ok_v = ov("verb_swap", 2.0, 5.0, prefix="Grok Bot can now", verbs=["search", "re
 kept, dropped = MT.check([ok_v], mv)
 check(len(kept) == 1 and kept[0]["technique"] == "MO01" and kept[0]["params"]["verbs"] == ["search", "read"], f"kept {dropped}")
 kept, dropped = MT.check([ov("verb_swap", 120.0, 123.0, prefix="a b", verbs=["x", "y"])], mv)
-check(not kept and "outside the hook" in dropped[0]["dropped"], "body → refused (screencast stays the default)")
+if MT.anywhere():
+    # Jake 2026-10-14: relevant templates may sit in the body too (still max_per_video, never over a screencast)
+    check(len(kept) == 1, f"anywhere: a body verb_swap is kept {dropped}")
+    _rw = MT.rules
+    MT.rules = lambda: {**_rw(), "anywhere": False}
+    kept, dropped = MT.check([ov("verb_swap", 120.0, 123.0, prefix="a b", verbs=["x", "y"])], mv)
+    MT.rules = _rw
+check(not kept and "outside the hook" in dropped[0]["dropped"], "hook-only mode: body → refused (screencast stays the default)")
 kept, dropped = MT.check([ov("tagline_build", 1.0, 3.0, words="Every agent. One inbox."),
                           ov("verb_swap", 8.0, 11.0, prefix="a b", verbs=["x", "y"]),
                           ov("tagline_build", 20.0, 22.0, words="One more line")], mv)
@@ -254,7 +272,13 @@ kept, dropped = MT.check([ov("verb_swap", 2.0, 5.0, prefix="a b", verbs=["x", "y
 check(not kept and "screencast" in dropped[0]["dropped"], "never over a screencast")
 kept, dropped = MT.check([ov("verb_swap", 2.0, 5.0, prefix="a b", verbs=["x", "y"])], mv,
                          plates=[{"t0": 0.0, "t1": 10.5}])
-check(not kept and "plates" in dropped[0]["dropped"], "plates + motion over 1.5 % of the runtime → refused")
+if MT.anywhere():
+    check(len(kept) == 1, "anywhere: the motion templates have their own budget (max_per_video), not the plate cap")
+    _rw = MT.rules
+    MT.rules = lambda: {**_rw(), "anywhere": False}
+    kept, dropped = MT.check([ov("verb_swap", 2.0, 5.0, prefix="a b", verbs=["x", "y"])], mv, plates=[{"t0": 0.0, "t1": 10.5}])
+    MT.rules = _rw
+check(not kept and "plates" in dropped[0]["dropped"], "hook-only mode: plates + motion over 1.5 % of the runtime → refused")
 kept, dropped = MT.check([ov("verb_swap", 2.0, 2.5, prefix="a b", verbs=["x", "y"])], mv)
 check(not kept and "lasts" in dropped[0]["dropped"], "too short → refused")
 kept, dropped = MT.check([ov("prompt_result", 2.0, 9.0, prompt="Build me a landing page", app="nokit")], mv,
