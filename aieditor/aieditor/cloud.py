@@ -900,9 +900,37 @@ def run_remote(job_dir, action, log, cancelled):
             # the job folder, source video included (VPC: free + fast)
             # browser scratch never travels: the onboarding proof workdirs and the per-run profile copies are remade on
             # the server (run 21: 4.1 GB at ~2 MB/s to blr1, ~790 MB of it old onboarding browser copies)
-            rsync(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
-                  "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl", "--exclude", "preprod/onboard/",
-                  "--exclude", "profile/", "--exclude", "outside-profile-*/")
+            # with progress on the job's status line (Jake 2026-10-14: "I don't see that the render continues in the lab"
+            # — a 4K job to lon1 sat on "Starting…" for ~15 min while this copy ran)
+            try:
+                skip_top = re.compile(r"^(final-\d+\.mp4|handoff-\d+\.part|handoff-cut-\d+\.mp4|.*\.alpha-orig)$")
+                up_total = sum(f.stat().st_size for f in job_dir.rglob("*") if f.is_file() and not skip_top.match(
+                    f.relative_to(job_dir).parts[0]) and not any(part.startswith(("tmp-", "profile", "outside-profile-"))
+                                                                  or part == "onboard" for part in f.relative_to(job_dir).parts))
+            except OSError:
+                up_total = 0
+            up_where = s.get("region", "the factory server")
+
+            def show_up(pct, done_b):
+                try:
+                    st = json.loads((job_dir / "status.json").read_text())
+                except (OSError, ValueError):
+                    st = {}
+                gb = f"{done_b / 1e9:.1f} of {up_total / 1e9:.1f} GB" if up_total else f"{done_b / 1e9:.1f} GB"
+                st.update(message=f"Copying the job to the factory server ({up_where})… {gb} ({pct}%)", updated_at=time.time())
+                tmp = job_dir / "status.json.tmp"
+                tmp.write_text(json.dumps(st))
+                tmp.replace(job_dir / "status.json")
+                runner(job_dir, state="sending", push_pct=pct, push_bytes=done_b, push_total=up_total)
+            show_up(0, 0)
+            rsync_progress(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
+                           "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl", "--exclude", "preprod/onboard/",
+                           "--exclude", "profile/", "--exclude", "outside-profile-*/",
+                           # rebuilt on the server anyway — 9 of 21.6 GB of Jake's 4K graphics re-run (2026-10-14): the
+                           # finished 4K finals, a failed run's half-built package, the hand-off's own 4K cut
+                           "--exclude", "/" + jid + "/final-*.mp4", "--exclude", "/" + jid + "/handoff-*.part/",
+                           "--exclude", "/" + jid + "/handoff-cut-*.mp4", "--exclude", "*.alpha-orig/",
+                           on_progress=show_up)
             if screencasts:
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
                     slugs = _scout_bundle(req, Path(td), job_dir, slugs=lock.slugs)
