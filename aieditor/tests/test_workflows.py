@@ -377,6 +377,23 @@ def main():
         evs = read_events(d)
         check(any(x["kind"] == "api" and x["stage"] == "takes" for x in evs), "takes API call logged")
 
+        # "Generate graphics" on a cut job = the hand-off machinery (overlays + screencast cards), never the recorder
+        # (Jake 2026-10-14) — and an earlier screencast plan's held list is cleared first
+        seen = {}
+        real_rh = W.run_handoff
+        W.run_handoff = lambda job_, action_, req_, info_, fps_, step_: seen.update(action=action_, req=req_)
+        W.longedit.add_held(d, "needs_primitive", "an old screencast gap")
+        try:
+            events.set_sink(job.event)
+            W.run_job(job, "edit")
+        finally:
+            events.set_sink(None)
+            W.run_handoff = real_rh
+        check(seen.get("action") == "edit" and seen["req"].get("handoff_assets") is False,
+              f"cut job + edit → run_handoff without app pictures: {seen}")
+        check(not (d / "held.json").exists() or not (json.loads((d / "held.json").read_text()).get("reasons") or []),
+              "the old held list is cleared")
+
         preprod_factory(root)
 
     print(f"test_workflows: {N} checks passed")

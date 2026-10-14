@@ -829,6 +829,12 @@ export async function getJob(id: string) {
   }
   const workflow = workflowOf(req);
   const stageList = withHandoff(stagesFor(workflow, req.format, sourceKindOf(req)), req.handoff === true);
+  // a cut job's "Generate graphics" runs the hand-off stages (aieditor-worker run_edit_part → run_handoff)
+  if (req.handoff !== true) {
+    for (const [id, title] of [["preprod", "Plan the graphics + screencast slots"], ["handoff", "Graphics package (overlays + screencast cards)"]] as const) {
+      if (status.stages?.[id] && !stageList.some((x) => x.id === id)) stageList.push({ id, title });
+    }
+  }
   // "Change music" (./music.ts, worker action "remusic"): its own stage once it has run or is asked for
   if (status.stages?.music || (queued && (await readJson<any>(path.join(dir, "queue.json")))?.action === "remusic")) {
     stageList.push({ id: "music", title: "Change the music (sound only)" });
@@ -888,7 +894,8 @@ export async function getJob(id: string) {
     edlAt: (await fsp.stat(path.join(dir, "edl.json")).catch(() => null))?.mtimeMs ?? null,
     log,
     /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip), null for other jobs */
-    handoff: req.handoff === true ? await handoffPackages(dir) : null,
+    // …and a cut job's "Generate graphics" (Jake 2026-10-14: overlays + screencast cards = the same package)
+    handoff: req.handoff === true || (await exists(path.join(dir, "handoff-01"))) ? await handoffPackages(dir) : null,
     /** the no-sign-in links of the job's result videos (./share.ts; packages carry theirs in handoff) */
     shares: (await listShares(id)).filter((l) => VIDEO_RE.test(l.pkg)),
     /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */

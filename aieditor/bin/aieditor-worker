@@ -757,6 +757,13 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
     # Jake 2026-10-14 ("I didn't ask it to do the graphics … I want a separate button for generating the graphics"):
     # on his cut workflow the graphics + full-edit compose run ONLY from "Generate graphics" (action "edit") — "Run"
     # and "Render video" never start them. The creative workflow (one submission = a finished edit) keeps them.
+    # …and what that button makes (Jake 2026-10-14, after the first press stopped on ~80 screencast "needs_primitive"
+    # gaps): "Overlays + screencast cards" — the graphics-only hand-off machinery run on HIS cut: the plan (never held
+    # for a screencast the recorder can't do), the overlays, and the package with a labelled card in every screencast
+    # slot + its preview. No screencast is recorded and no app picture is made (handoff_assets off).
+    if fmt == "long" and action == "edit" and workflow_of(req) != "creative" and not handoff.wanted(req):
+        longedit.clear_held(d)          # an earlier screencast plan's list must not hold this run (or a later 4K)
+        return run_handoff(job, action, {**req, "handoff_assets": False}, info, fps, step)
     edit_actions = ("run", "render", "edit") if workflow_of(req) == "creative" else ("edit",)
     if fmt == "long" and action in edit_actions and not req.get("no_edit"):
         e = jload(d / "edl.json")
@@ -918,6 +925,10 @@ def run_final_long(job):
         raise RuntimeError(f"not enough disk for the {secs / 60:.0f}-minute final: {free / 1e9:.1f} GB free, "
                            f"needs about {need / 1e9:.0f} GB")
     edited = all((d / f"edit-{k:02d}" / "direct.json").exists() for k in range(1, len(e["videos"]) + 1))
+    if edited and (jload(d / "preprod" / "plan.json") or {}).get("handoff"):
+        # graphics made as a hand-off ("Generate graphics" on a cut job): the screencasts are the editor's, so there is
+        # no finished edit to render — the 4K is the plain cut (the overlays ship in the package)
+        edited = False
     job.stage("final", "running")
     if edited and longedit.factory_mode(job.req):
         # factory mode: the 4K final of each draft that shipped, in chunks (unchanged chunks reused);
