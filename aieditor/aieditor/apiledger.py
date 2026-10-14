@@ -6,9 +6,9 @@ record() after. One JSON line per call in config.API_LEDGER:
     {"id", "ts", "job", "stage", "model", "in", "out", "cache_read", "cache_write", "usd", "ok", "purpose"}
 
 Caps (WORK/factory.json, next to the $20/24 h server cap — cloud.DEFAULTS):
-  api_job_cap_usd    {"creative": 17.5, "cut": 10}   all calls of one job, every run of it (creative includes
+  api_job_cap_usd    {"creative": 40, "cut": 40}     all calls of one job, every run of it (creative includes
                                                  the per-video onboarding <= $9.50, Jake R14 P2)
-  api_daily_cap_usd  30                          rolling 24 h, every job (Jake decision 1: PENDING —
+  api_daily_cap_usd  40                          rolling 24 h, every job (Jake decision 1: PENDING —
                                                  api_daily_cap_pending_jake stays true until he sets it)
 
 A call that WOULD pass a cap is refused before it is sent: BudgetExceeded. Inside a job that ends the
@@ -29,9 +29,9 @@ from pathlib import Path
 from . import config
 
 DAY = 86400
-DEFAULT_JOB_CAPS = {"creative": 17.5, "cut": 10.0}   # cut: $1 → $10 (Jake 2026-10-14: "at least $10 cap")
+DEFAULT_JOB_CAPS = {"creative": 40.0, "cut": 40.0}   # Jake 2026-10-14: "the cap should be much higher $40" — both
 # creative: $8 + the per-video onboarding <= $9.50 (Jake R14 P2)
-DEFAULT_DAILY_CAP = 30.0
+DEFAULT_DAILY_CAP = 40.0   # Jake 2026-10-14: $40 per rolling 24 h (was $30)
 # env a factory server gets from cloud.run_remote (the main box reads its settings instead)
 ENV_JOB_CAP = "AIEDITOR_API_JOB_CAP_USD"
 ENV_DAILY_CAP = "AIEDITOR_API_DAILY_CAP_USD"

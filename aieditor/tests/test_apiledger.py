@@ -45,11 +45,11 @@ lines = lambda: apiledger.rows()   # noqa: E731
 
 # settings: the daily API cap is $30 (Jake decision 1, 2026-10-09)
 s = cloud.settings()
-check(s["api_daily_cap_usd"] == 30 and s["api_daily_cap_pending_jake"] is False, f"daily cap 30, decided: {s}")
-check(s["api_job_cap_usd"] == {"creative": 17.5, "cut": 10}, "per-job caps creative 17.5 (incl. per-video onboarding, R14) / cut 10 (Jake 2026-10-14)")
+check(s["api_daily_cap_usd"] == 40 and s["api_daily_cap_pending_jake"] is False, f"daily cap 40, decided: {s}")
+check(s["api_job_cap_usd"] == {"creative": 40, "cut": 40}, "per-job caps $40 each (Jake 2026-10-14)")
 check(s["require_droplet_key"] is False and s["us_route"]["enabled"] is False, "droplet key + US route defaults")
-check(json.loads(cloud.CFG.read_text())["api_daily_cap_usd"] == 30, "written to the settings file")
-check(apiledger.caps("creative") == (17.5, 30.0) and apiledger.caps("cut") == (10.0, 30.0), "caps by workflow")
+check(json.loads(cloud.CFG.read_text())["api_daily_cap_usd"] == 40, "written to the settings file")
+check(apiledger.caps("creative") == (40.0, 40.0) and apiledger.caps("cut") == (40.0, 40.0), "caps by workflow")
 
 # one ledger line per call, priced from the table
 llm.set_context(job="job-a", workflow="creative", stage="graphics")
@@ -92,7 +92,9 @@ check(lines()[-1]["ok"] is False and lines()[-1]["usd"] == 0, "the failed call h
 llm.TRANSPORT = fake
 
 # the per-job cap: a call that would pass it is refused BEFORE it is sent
-apiledger.record({"ts": time.time(), "job": "job-cut", "stage": "takes", "model": "claude-opus-5-5", "usd": 9.97})   # just under the $10 cut cap
+# the job cap on its own: a $10 cap for this check (the real cut cap, $40, sits above the $30 daily cap)
+os.environ[apiledger.ENV_JOB_CAP] = "10"
+apiledger.record({"ts": time.time(), "job": "job-cut", "stage": "takes", "model": "claude-opus-5-5", "usd": 9.97})
 llm.set_context(job="job-cut", workflow="cut", stage="takes")
 sent.clear()
 before = len(lines())
@@ -103,6 +105,7 @@ except apiledger.BudgetExceeded as e:
     check(e.which == "job" and e.reason == "API cap", f"job cap: {e}")
 check(not sent and len(lines()) == before, "nothing sent, nothing billed")
 check(llm.refusals() and "API cap" in llm.refusals()[0], "the refusal is sticky for the worker")
+os.environ.pop(apiledger.ENV_JOB_CAP, None)
 llm.clear_context()
 check(not llm.refusals(), "a new job starts clean")
 llm.messages("claude-opus-5-5", "s", "x", 100, job="job-cut-2", workflow="cut", purpose="small")
@@ -115,9 +118,9 @@ for ts, usd in ((now - 100, 5.0), (now - 3600, 7.0), (now - 86400 + 60, 1.5), (n
     apiledger.record({"ts": ts, "job": "x", "usd": usd}, fx)
 check(abs(apiledger.daily_total(now, fx) - 13.5) < 1e-9, f"rolling 24 h = 13.5: {apiledger.daily_total(now, fx)}")
 os.environ["AIEDITOR_API_LEDGER"] = str(fx)
-check(not apiledger.over_daily_cap(now), "13.5 < 30")
-apiledger.record({"ts": now - 50, "job": "y", "usd": 16.6}, fx)
-check(apiledger.over_daily_cap(now), "30.1 ≥ 30: the worker queues new jobs")
+check(not apiledger.over_daily_cap(now), "13.5 < 40")
+apiledger.record({"ts": now - 50, "job": "y", "usd": 26.6}, fx)
+check(apiledger.over_daily_cap(now), "40.1 ≥ 40: the worker queues new jobs")
 try:
     llm.messages("claude-haiku-4-5", "s", "x", 100, job="z", workflow="creative", purpose="daily")
     check(False, "daily cap refuses")
@@ -189,7 +192,7 @@ check("ANTHROPIC_API_KEY=sk-ant-DROPLET-secret-0003" in env and "ORG" not in env
 check("GROQ_API_KEY=gsk-groq-secret-0002" in env and "AIEDITOR_DROPLET" not in env, "groq still ships; the key name does not")
 check(logs and not any(re.search(r"sk-ant|gsk-|secret", m) for m in logs), f"no key material in the log: {logs}")
 check("AIEDITOR_API_LEDGER" in cloud.api_env("job-x", "creative") and
-      cloud.api_env("job-x", "creative")["AIEDITOR_API_JOB_CAP_USD"] == "17.5000", "the droplet gets its caps")
+      cloud.api_env("job-x", "creative")["AIEDITOR_API_JOB_CAP_USD"] == "40.0000", "the droplet gets its caps")
 src = (ROOT / "aieditor" / "cloud.py").read_text()
 check("env = droplet_env(log, s)" in src and "SHIP_KEYS if config.env_key(k))" not in src, "run_remote ships via droplet_env")
 check('"--exclude", "api-ledger.jsonl"' in src and "merge_ledger(job_dir, log)" in src, "ledger pushed out clean, merged back")

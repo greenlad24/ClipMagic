@@ -273,7 +273,7 @@ def test_budget():
         check(abs(sum(r["usd"] for r in rows) - ctx.budget.spent) < 1e-6, "the budget = the ledger")
     finally:
         llm.clear_context()
-    check(apiledger.caps("creative")[0] == 17.5 and onboard.app_cap() == 9.5, "creative job cap $17.50, onboarding $9.50 per app")
+    check(apiledger.caps("creative")[0] == 40.0 and onboard.app_cap() == 9.5, "creative job cap $40 (Jake 2026-10-14), onboarding $9.50 per app")
 
 
 # ─────────────────────────── (5) P3 assets ───────────────────────────
