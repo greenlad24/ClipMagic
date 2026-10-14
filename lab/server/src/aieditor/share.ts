@@ -224,13 +224,12 @@ export async function autoTargets(job: string): Promise<string[]> {
   } catch {
     req = null;
   }
-  if (req?.handoff === true) {
-    const pkgs = [...new Set(files.map((f) => /^(handoff-\d{2})\.(?:json|zip)$/.exec(f)?.[1]).filter((x): x is string => !!x))];
-    const ok: string[] = [];
-    for (const p of pkgs) if ((await packageEntries(dir, p)) || files.includes(`${p}.zip`)) ok.push(p);
-    return ok;
-  }
-  return files.filter((f) => VIDEO_RE.test(f) && !f.startsWith("listen-"));
+  const pkgs = [...new Set(files.map((f) => /^(handoff-\d{2})\.(?:json|zip)$/.exec(f)?.[1]).filter((x): x is string => !!x))];
+  const ok: string[] = [];
+  for (const p of pkgs) if ((await packageEntries(dir, p)) || files.includes(`${p}.zip`)) ok.push(p);
+  if (req?.handoff === true) return ok;
+  // a cut job's "Generate graphics" makes a hand-off package too (Jake 2026-10-14): its link next to the videos'
+  return [...files.filter((f) => VIDEO_RE.test(f) && !f.startsWith("listen-")), ...ok];
 }
 
 /** The job's new auto links (none when it is not finished, or every result already has one). */
