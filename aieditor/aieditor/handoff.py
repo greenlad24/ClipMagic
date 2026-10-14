@@ -1224,7 +1224,9 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                 fz = ("," + ",".join(fades)) if fades else ""
                 fc = (f"[0:v]setpts=PTS-STARTPTS,crop={sq}:{sq}:{sx}:{sy},scale={dv}:{dv}:flags=lanczos,format=rgba,"
                       f"pad={side}:{side}:{off_px}:{off_px}:color=black@0[fv];[1:v]format=gray[fm];[fv][fm]alphamerge[fd];"
-                      f"[2:v]format=rgba[ring];[fd][ring]overlay=shortest=1:format=auto,format=rgba{fz}[v]")
+                      f"[2:v]format=rgba[ring];[fd][ring]overlay=shortest=1:format=gbrp,format=rgba{fz}[v]")
+                # ⚠️ format=gbrp, not auto: ffmpeg 8.1 (AFF) fails rgba-over-rgba with format=auto ("Error while filtering:
+                # Invalid argument", Jake's graphics run 2026-10-14); gbrp keeps the alpha identical to ffmpeg 5's output
                 (work / f"bubble-{s['n']:02d}.txt").write_text(fc)
                 part = f"bubble-{s['n']:02d}.mov"
                 _run(f"{AFF} -v error -y -ss {s['a']:.6f} -t {Ls + 0.5:.6f} -i /j/{cut}.mp4 -loop 1 -i /fc/mask.png -loop 1 -i /fc/ring.png "
