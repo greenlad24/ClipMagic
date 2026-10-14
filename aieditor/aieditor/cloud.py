@@ -116,7 +116,8 @@ DEFAULTS = {
     "fallback_local": False,        # Jake 2026-10-09: always the factory server — no main-box fallback
     "daily_cap_usd": 20,            # rolling 24 h server spend; over it, jobs wait in the queue
     # Claude API caps (apiledger.py). The daily figure is Jake's decision 1 — suggested $30, PENDING.
-    "api_job_cap_usd": {"creative": 17.5, "cut": 1},   # Jake R14 P2: $8 + per-video onboarding <= $9.50
+    "api_job_cap_usd": {"creative": 17.5, "cut": 10},  # cut $10 (Jake 2026-10-14)
+      # Jake R14 P2: $8 + per-video onboarding <= $9.50
     "api_daily_cap_usd": 30,
     "api_daily_cap_pending_jake": False,   # Jake 2026-10-09 decision 1: $30 per rolling 24 h
     # the droplet's own revocable API key (decision 6): false = warn and ship the org key until it exists

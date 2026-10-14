@@ -46,10 +46,10 @@ lines = lambda: apiledger.rows()   # noqa: E731
 # settings: the daily API cap is $30 (Jake decision 1, 2026-10-09)
 s = cloud.settings()
 check(s["api_daily_cap_usd"] == 30 and s["api_daily_cap_pending_jake"] is False, f"daily cap 30, decided: {s}")
-check(s["api_job_cap_usd"] == {"creative": 17.5, "cut": 1}, "per-job caps creative 17.5 (incl. per-video onboarding, R14) / cut 1")
+check(s["api_job_cap_usd"] == {"creative": 17.5, "cut": 10}, "per-job caps creative 17.5 (incl. per-video onboarding, R14) / cut 10 (Jake 2026-10-14)")
 check(s["require_droplet_key"] is False and s["us_route"]["enabled"] is False, "droplet key + US route defaults")
 check(json.loads(cloud.CFG.read_text())["api_daily_cap_usd"] == 30, "written to the settings file")
-check(apiledger.caps("creative") == (17.5, 30.0) and apiledger.caps("cut") == (1.0, 30.0), "caps by workflow")
+check(apiledger.caps("creative") == (17.5, 30.0) and apiledger.caps("cut") == (10.0, 30.0), "caps by workflow")
 
 # one ledger line per call, priced from the table
 llm.set_context(job="job-a", workflow="creative", stage="graphics")
@@ -92,7 +92,7 @@ check(lines()[-1]["ok"] is False and lines()[-1]["usd"] == 0, "the failed call h
 llm.TRANSPORT = fake
 
 # the per-job cap: a call that would pass it is refused BEFORE it is sent
-apiledger.record({"ts": time.time(), "job": "job-cut", "stage": "takes", "model": "claude-opus-5-5", "usd": 0.97})
+apiledger.record({"ts": time.time(), "job": "job-cut", "stage": "takes", "model": "claude-opus-5-5", "usd": 9.97})   # just under the $10 cut cap
 llm.set_context(job="job-cut", workflow="cut", stage="takes")
 sent.clear()
 before = len(lines())
