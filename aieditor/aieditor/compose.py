@@ -90,7 +90,7 @@ def composite(job, n, events, base, fps_out, out_name, cancelled=lambda: False, 
         if not files:
             continue
         start = int(files[0].stem[1:])
-        ins.append(f"-framerate {fps_out} -start_number {start} -i /g/ev-{m:02d}/f%05d.png")
+        ins.append(f"-reinit_filter 0 -framerate {fps_out} -start_number {start} -i /g/ev-{m:02d}/f%05d.png")   # see compose_long: never rebuild mid-render
         k = len(ins) - 1
         chain.append(f"[{k}:v]setpts=PTS-STARTPTS+{start}/({fps_out}*TB)[g{k}];"
                      f"[{cur}][g{k}]overlay=eof_action=pass:format=auto[v{k}]")

@@ -338,8 +338,14 @@ def screen_templates(segments, video, assets=None, log=print):
     REAL result picture when the job has one). A step with nothing to show keeps its card — never a generic graphic.
     → events marked "screen_template" ({seg, screencast_t})."""
     from . import preflight
+    from . import motiontemplates
+    hook = motiontemplates.hook_s()
     out = []
     for i, seg in enumerate(segments or []):
+        # Jake 2026-10-15: "motion designs prompt versions … only in the first minute" (one at 2:23 showed where he
+        # wasn't talking about a prompt at all) — the body keeps its labelled card
+        if float(seg["t0"]) >= hook:
+            continue
         try:
             ev, note = preflight.fallback_event(seg, assets or {"assets": []}, video, "graphics only: the editor's slot")
         except Exception as e:  # noqa: BLE001 — an optional template never breaks the package
@@ -1196,7 +1202,7 @@ def build(d, k, v, fps, info, cancelled=lambda: False, progress=lambda m, f=None
                 x0, y0, cw, ch = g["box"]
                 crop = f",crop={cw}:{ch}:{x0}:{y0}"
                 g["clips"][0].update(x=x0, y=y0, width=cw, height=ch)
-            _run(f"{AFF} -v error -y -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
+            _run(f"{AFF} -v error -y -reinit_filter 0 -framerate {fps:.8f} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png "
                  f"-frames:v {g['frames']} -vf format=rgba{crop} {PRORES_4444} {out}", [(w / gfx_pkg, "/g"), (tmp_pkg, "/p"), xff], cancelled)
             if g["group"] == "screen":
                 g["clips"][0]["enabled"] = False             # OPTIONAL: the editor switches it on, or records the slot

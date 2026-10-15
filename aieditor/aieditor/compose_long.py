@@ -291,7 +291,10 @@ def _video_graph(job, base, segments, events, size, fps, face, side, gname, bubb
         a, b = ev["start_frame"] / fps, (ev["start_frame"] + ev.get("n_frames", 0)) / fps
         if not inside(a, max(b, a + 1 / fps), "an overlay"):
             continue
-        ins.append(f"-framerate {fps} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png")
+        # -reinit_filter 0: a template whose frames switch rgba → rgb partway (an opaque full-frame motion template)
+        # made ffmpeg REBUILD the filter graph mid-render and drop ~22 s of the A-roll — picture ahead of the sound
+        # for the rest of the chunk (Jake's hand-off preview 0:28–1:11, 2026-10-15). Never rebuild; convert instead.
+        ins.append(f"-reinit_filter 0 -framerate {fps} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png")
         n = len(ins) - 1
         chain.append(f"[{n}:v]setpts=PTS-STARTPTS+{ev['start_frame'] - f0}/({fps}*TB)[g{m}];"
                      f"[{cur}][g{m}]overlay=eof_action=pass:format=auto[vg{m}]")

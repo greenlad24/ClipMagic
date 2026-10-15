@@ -75,7 +75,7 @@ MT.approved = lambda: set(MT.IDS)              # the rest of this file tests eve
 # ── rules.json + registry ──
 R = skill.rules()["motion_templates"]
 check(set(R["ids"]) == set(MT.IDS), f"rules.json ids {sorted(R['ids'])} != module {sorted(MT.IDS)}")
-check(R["hook_s"] == 40.0, "hook = first 40 s (REFERENCE-BASELINE §1a)")
+check(R["hook_s"] == 60.0, "hook = first minute (Jake 2026-10-15: prompt motion designs only in the first minute)")
 for t in MT.IDS:
     check(MT.spec(t)["technique"] == MT.TECHNIQUE[t], f"{t} technique id")
 check(set(director.MOTION_OVERLAYS) == set(MT.IDS) - {"prompt_result"} and
@@ -224,7 +224,7 @@ for u in U:
 plate, notes = planfit.hook_prompt_result(U, long_v, facts_with(), "https://demo.example/")
 check(plate is None and notes[0]["code"] == "covered" and notes[0]["eligible"], "covered by a screencast → re-ask (eligible)")
 # the same line in the BODY stays a screencast
-body_words = ("Intro line here. " * 40 + "You just type one sentence in plain English and it builds you a page. "
+body_words = ("Intro line here. " * 60 + "You just type one sentence in plain English and it builds you a page. "
               + "More words follow here. " * 10).split()
 body_v = {"title": "t", "duration": 0.4 * len(body_words) + 1,
           "words": [{"i": i, "word": w, "start": round(0.4 * i, 3), "end": round(0.4 * i + 0.3, 3)} for i, w in enumerate(body_words)]}
