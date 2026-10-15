@@ -1085,6 +1085,14 @@ def start(job, action):
         # "Generate graphics" on a cut job (run_edit_part → run_handoff) clears an earlier screencast plan's list —
         # HERE too, on the box: a factory run clears only its own copy, and the Lab reads this one (2026-10-14)
         longedit.clear_held(job.d)
+        if not isinstance(job.req.get("music"), dict):
+            # Jake 2026-10-15 ("why is it still with background music?"): no background music unless one was PICKED —
+            # recorded in the job so the dispatch, the package and a later "Change music" all agree
+            job.req["music"] = {"track": "none", "gain_lu": 0.0}
+            rq = job.d / "request.json"
+            r = jload(rq) or {}
+            r["music"] = job.req["music"]
+            rq.write_text(json.dumps(r, indent=1))
     # a new run is not held: an earlier run's flag hid this one's progress in the Lab (Jake 2026-10-14)
     job.save(state="running", message="Starting…", progress=0, error=None, action=action, held=False,
              started_at=now())
