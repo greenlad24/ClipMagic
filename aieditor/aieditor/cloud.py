@@ -903,7 +903,7 @@ def run_remote(job_dir, action, log, cancelled):
             # with progress on the job's status line (Jake 2026-10-14: "I don't see that the render continues in the lab"
             # — a 4K job to lon1 sat on "Starting…" for ~15 min while this copy ran)
             try:
-                skip_top = re.compile(r"^(final-\d+\.mp4|handoff-\d+\.part|handoff-cut-\d+\.mp4|.*\.alpha-orig)$")
+                skip_top = re.compile(r"^(final-\d+\.mp4|handoff-\d+\.part|handoff-\d\d|handoff-cut-\d+\.mp4|.*\.alpha-orig)$")
                 up_total = sum(f.stat().st_size for f in job_dir.rglob("*") if f.is_file() and not skip_top.match(
                     f.relative_to(job_dir).parts[0]) and not any(part.startswith(("tmp-", "profile", "outside-profile-"))
                                                                   or part == "onboard" for part in f.relative_to(job_dir).parts))
@@ -930,6 +930,8 @@ def run_remote(job_dir, action, log, cancelled):
                            # finished 4K finals, a failed run's half-built package, the hand-off's own 4K cut
                            "--exclude", "/" + jid + "/final-*.mp4", "--exclude", "/" + jid + "/handoff-*.part/",
                            "--exclude", "/" + jid + "/handoff-cut-*.mp4", "--exclude", "*.alpha-orig/",
+                           # a finished hand-off package: rebuilt from scratch on the server (8.85 GB here)
+                           "--exclude", "/" + jid + "/handoff-[0-9][0-9]/",
                            on_progress=show_up)
             if screencasts:
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
@@ -1027,6 +1029,12 @@ def run_remote(job_dir, action, log, cancelled):
                 live_excl += ["--exclude", f]
             rsync_progress(f"root@{ip}:{rjob}/", str(job_dir) + "/", *excl, *live_excl, "--exclude", "tmp-*",
                            on_progress=show)
+            # a hand-off package the server REBUILT replaces ours exactly: the plain copy-back merges (no --delete), so
+            # graphics the new build no longer makes stayed in the folder and in the zip (2026-10-15)
+            pkgs = ssh(ip, f"cd {rjob} && ls -d handoff-[0-9][0-9] 2>/dev/null", check=False).split()
+            for pk in pkgs:
+                if re.fullmatch(r"handoff-\d\d", pk):
+                    rsync(f"root@{ip}:{rjob}/{pk}/", str(job_dir / pk) + "/", "--delete", timeout=3600)
             for f in LIVE_FILES:                       # the server's own final status/log/events, last
                 rsync(f"root@{ip}:{rjob}/{f}", str(job_dir) + "/", timeout=300)
             ok_run = True
